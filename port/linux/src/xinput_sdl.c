@@ -124,6 +124,26 @@ static const float look_pitch_rate[10] = {
 rate against that, so the scale is applied once */
 static const float mouse_pixel_scale = 0.0022f;
 static float vertical_sensitivity = 1.f;
+/* a local player's own mouse, set from a match. horizontal 0 uses config */
+static struct
+{
+	int on;
+	int horizontal;
+	int vertical;
+	int invert;
+	int aim_assist;
+} mouse_player;
+
+/* horizontal 1..10, vertical 0 for the same rate, else 1..10. horizontal 0
+clears it and the machine's config.toml is used again */
+void halo_linux_mouse_player(int horizontal, int vertical, int invert, int aim_assist)
+{
+	mouse_player.on = horizontal >= 1;
+	mouse_player.horizontal = horizontal;
+	mouse_player.vertical = vertical;
+	mouse_player.invert = invert;
+	mouse_player.aim_assist = aim_assist;
+}
 
 static int look_step(long sensitivity)
 {
@@ -138,7 +158,23 @@ static float mouse_sensitivity(void)
 {
 	static float sensitivity = 1.f;
 	static unsigned long read_at = (unsigned long)-1;
+	static int was_player = -1;
 
+	if (mouse_player.on)
+	{
+		int yaw_step = look_step(mouse_player.horizontal);
+		int pitch_step = mouse_player.vertical <= 0 ? yaw_step : look_step(mouse_player.vertical);
+
+		was_player = 1;
+		sensitivity = look_yaw_rate[yaw_step] / 120.f;
+		vertical_sensitivity = look_pitch_rate[pitch_step] / 60.f;
+		return sensitivity;
+	}
+	if (was_player != 0)
+	{
+		was_player = 0;
+		read_at = (unsigned long)-1;
+	}
 	if (read_at != config_changes())
 	{
 		long horizontal = config_integer("input.mouse_look_horizontal");
@@ -159,16 +195,30 @@ int halo_linux_mouse_look(short gamepad_index, float *yaw, float *pitch)
 {
 	static int invert;
 	static unsigned long read_at = (unsigned long)-1;
+	static int was_player = -1;
 	float x, y;
 
 	*yaw = 0.0f;
 	*pitch = 0.0f;
 	if (gamepad_index != 0)
 		return FALSE;
-	if (read_at != config_changes())
+	if (mouse_player.on)
 	{
-		read_at = config_changes();
-		invert = config_boolean("input.invert_mouse");
+		was_player = 1;
+		invert = mouse_player.invert;
+	}
+	else
+	{
+		if (was_player != 0)
+		{
+			was_player = 0;
+			read_at = (unsigned long)-1;
+		}
+		if (read_at != config_changes())
+		{
+			read_at = config_changes();
+			invert = config_boolean("input.invert_mouse");
+		}
 	}
 	pthread_mutex_lock(&mouse_lock);
 	x = mouse_pending_x;
@@ -386,12 +436,19 @@ int halo_linux_mouse_aiming(short gamepad_index)
 {
 	static int aim_assist;
 	static unsigned long read_at = (unsigned long)-1;
+	static int was_player = -1;
 	int aiming;
 
 	if (gamepad_index != 0)
 		return FALSE;
-	if (read_at != config_changes())
+	if (mouse_player.on)
 	{
+		was_player = 1;
+		aim_assist = mouse_player.aim_assist;
+	}
+	else if (was_player != 0 || read_at != config_changes())
+	{
+		was_player = 0;
 		read_at = config_changes();
 		aim_assist = config_boolean("input.mouse_aim_assist");
 	}

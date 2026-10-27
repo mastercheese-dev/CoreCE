@@ -227,10 +227,16 @@ void player_profile_stick_scales_end(void);
 boolean player_profile_stick_scales_dirty(void);
 void player_profile_stick_scales_commit(long profile_index);
 void player_profile_stick_scales_apply(long profile_index, short controller_index);
+void player_profile_stick_scales_seed(long key, long look_sensitivity);
+long player_profile_control_key(short local_player_index, long profile_index);
+void player_profile_mouse_begin(long key);
+void player_profile_mouse_apply(long key, short controller_index);
 
 /* ---------- globals */
 
 static long player1_last_used_profile_index = NONE;
+/* port: a local player edited with no saved profile (NONE: a file edit) */
+static short editing_local_player = NONE;
 struct player_ui_globals player_ui_globals = { 0 };
 /* port: the PC options (game_engine.h) of the gametype being edited, as
 edit_profile's variant, and of the multiplayer gametype */
@@ -369,7 +375,8 @@ struct player_profile *player_ui_get_edit_player_profile(
 {
 	struct player_profile *result;
 
-	if (saved_game_file_get_type(player_ui_globals.edit_profile_index) == _saved_game_file_type_player_profile)
+	if (editing_local_player != NONE ||
+		saved_game_file_get_type(player_ui_globals.edit_profile_index) == _saved_game_file_type_player_profile)
 		result = &player_ui_globals.edit_profile.current.player;
 	else
 		result = NULL;
@@ -409,6 +416,27 @@ boolean player_ui_edit_profile_is_dirty(
 	word original_flags, current_flags;
 
 	result = FALSE;
+
+	/* port: the live profile of a local player who has no saved file */
+	if (editing_local_player != NONE)
+	{
+		original_flags = player_ui_globals.edit_profile.original.player.flags;
+		current_flags = player_ui_globals.edit_profile.current.player.flags;
+		player_ui_globals.edit_profile.original.player.flags = 0;
+		player_ui_globals.edit_profile.current.player.flags = 0;
+		if (csmemcmp(
+			&player_ui_globals.edit_profile.original.player,
+			&player_ui_globals.edit_profile.current.player,
+			sizeof(struct player_profile)))
+		{
+			result = TRUE;
+		}
+		player_ui_globals.edit_profile.current.player.flags = current_flags;
+		player_ui_globals.edit_profile.original.player.flags = original_flags;
+		if (player_profile_stick_scales_dirty())
+			result = TRUE;
+		return result;
+	}
 
 	if (player_ui_globals.edit_profile_index != NONE)
 	{
@@ -813,6 +841,7 @@ void player_ui_begin_editing_profile(
 	long type;
 
 	player_profile_stick_scales_end();
+	editing_local_player = NONE;
 	player_ui_globals.edit_profile_index = NONE;
 	type = saved_game_file_get_type(profile_index);
 
@@ -828,6 +857,7 @@ void player_ui_begin_editing_profile(
 					&player_ui_globals.edit_profile.original.player,
 					sizeof(struct player_profile));
 				player_profile_stick_scales_begin(profile_index);
+				player_profile_mouse_begin(profile_index);
 			}
 			else
 			{
@@ -865,11 +895,48 @@ void player_ui_begin_editing_profile(
 	return;
 }
 
+void player_ui_begin_editing_memory_profile(
+	short local_player_index)
+{
+	struct player_profile *profile;
+	long key;
+
+	if (local_player_index < 0 || local_player_index >= MAXIMUM_NUMBER_OF_LOCAL_PLAYERS)
+		return;
+	player_profile_stick_scales_end();
+	player_ui_globals.edit_profile_index = NONE;
+	editing_local_player = local_player_index;
+	profile = &player_ui_globals.local_players[local_player_index].profile;
+	csmemcpy(&player_ui_globals.edit_profile.original.player, profile, sizeof(struct player_profile));
+	csmemcpy(&player_ui_globals.edit_profile.current.player, profile, sizeof(struct player_profile));
+	key = player_profile_control_key(local_player_index, NONE);
+	player_profile_stick_scales_seed(key, profile->controller_settings.look_sensitivity);
+	player_profile_stick_scales_begin(key);
+	player_profile_mouse_begin(key);
+	return;
+}
+
 boolean player_ui_save_profile(
 	void)
 {
 	boolean result = FALSE;
 	char directory_path[256];
+
+	/* port: no saved file. the live profile keeps the change, and the next
+	game on this machine uses it */
+	if (editing_local_player != NONE)
+	{
+		struct player_profile profile;
+		long key;
+		short player = editing_local_player;
+
+		key = player_profile_control_key(player, NONE);
+		player_profile_stick_scales_commit(key);
+		csmemcpy(&profile, &player_ui_globals.edit_profile.current.player, sizeof(profile));
+		player_ui_set_active_player_profile(player, NONE, &profile);
+		clear_profile_edit_data();
+		return TRUE;
+	}
 
 	switch (saved_game_file_get_type(player_ui_globals.edit_profile_index))
 	{
@@ -1377,7 +1444,10 @@ void player_ui_set_active_player_profile(
 	controller_index = player_ui_globals.single_player_controller[local_player_index];
 	if (controller_index == NONE)
 		controller_index = local_player_index;
-	player_profile_stick_scales_apply(profile_index, controller_index);
+	player_profile_stick_scales_apply(
+		player_profile_control_key(local_player_index, profile_index), controller_index);
+	player_profile_mouse_apply(
+		player_profile_control_key(local_player_index, profile_index), controller_index);
 	if (local_player_index == 0)
 		port_server_name_follow_profile(previous_name, profile->player_name);
 	return;
@@ -1441,6 +1511,7 @@ void player_ui_saved_game_file_removed(
 static void clear_profile_edit_data(
 	void)
 {
+	editing_local_player = NONE;
 	player_ui_globals.edit_profile_index = NONE;
 	return;
 }

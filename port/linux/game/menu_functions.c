@@ -11,7 +11,9 @@ calls them from PC_MENU_FUNCTION_BASE on):
   profile, as its settings screens need, and fails with none: the main
   menu's then asks for a new one's name, as the menu's other items do, and
   its handlers open the screens that make the profile ("new campaign
-  decision", after which Settings' is the one being edited);
+  decision", after which Settings' is the one being edited). A game's pause
+  menu edits the local player who opened it. Their profile file is updated
+  when they have one. With no file, the settings stay on that player;
 - "gamespy screen init" hides the server browser's error and filter panels,
   and the title of the mode "mp type set mode" did not choose (Internet or
   LAN);
@@ -364,12 +366,39 @@ static struct
 	unsigned char horizontal;
 	unsigned char vertical;
 	boolean used;
+	/* mouse look for this player, when they set it in a match. unset
+	follows the machine's config.toml */
+	boolean mouse_set;
+	unsigned char mouse_horizontal;
+	unsigned char mouse_vertical;
+	boolean mouse_invert;
+	boolean mouse_aim;
 } stick_scale_cache[32];
 static unsigned char stick_edit_horizontal;
 static unsigned char stick_edit_vertical;
 static unsigned char stick_edit_horizontal_saved;
 static unsigned char stick_edit_vertical_saved;
 static boolean stick_edit_open;
+/* the local player whose pause menu is editing settings, else NONE (the
+main menu, which edits player 1's profile and the machine's mouse) */
+static short in_game_settings_player = NONE;
+static boolean mouse_edit_open;
+static boolean mouse_edit_set;
+static boolean mouse_edit_dirty;
+static unsigned char mouse_edit_horizontal;
+static unsigned char mouse_edit_vertical;
+static boolean mouse_edit_invert;
+static boolean mouse_edit_aim;
+
+/* a player with no saved profile keeps look and mouse beside this key */
+long player_profile_control_key(short local_player_index, long profile_index)
+{
+	if (profile_index != NONE)
+		return profile_index;
+	return (long)(0x41000000UL | (unsigned long)(local_player_index & 3));
+}
+
+void halo_linux_mouse_player(int horizontal, int vertical, int invert, int aim_assist);
 
 void input_abstraction_set_look_rates(short controller_index, real yaw_rate, real pitch_rate);
 
@@ -443,6 +472,11 @@ static short stick_scale_slot(long profile_index)
 	stick_scale_cache[free_slot].profile_index = profile_index;
 	stick_scale_cache[free_slot].horizontal = STICK_SCALE_DEFAULT;
 	stick_scale_cache[free_slot].vertical = STICK_SCALE_DEFAULT;
+	stick_scale_cache[free_slot].mouse_set = FALSE;
+	stick_scale_cache[free_slot].mouse_horizontal = STICK_SCALE_DEFAULT;
+	stick_scale_cache[free_slot].mouse_vertical = 0;
+	stick_scale_cache[free_slot].mouse_invert = FALSE;
+	stick_scale_cache[free_slot].mouse_aim = FALSE;
 	return free_slot;
 }
 
@@ -477,6 +511,17 @@ void player_profile_stick_scales_remember(long profile_index, void const *paddin
 	slot = stick_scale_slot(profile_index);
 	stick_scale_cache[slot].horizontal = horizontal;
 	stick_scale_cache[slot].vertical = vertical;
+	/* 'M', then horizontal index, vertical (0 is the same as horizontal),
+	invert, aim assist. absent: this player uses the machine's mouse */
+	stick_scale_cache[slot].mouse_set = FALSE;
+	if (bytes && size >= 11 && bytes[6] == 0x4D && bytes[7] < STICK_SCALE_COUNT && bytes[8] <= STICK_SCALE_COUNT)
+	{
+		stick_scale_cache[slot].mouse_set = TRUE;
+		stick_scale_cache[slot].mouse_horizontal = bytes[7];
+		stick_scale_cache[slot].mouse_vertical = bytes[8];
+		stick_scale_cache[slot].mouse_invert = bytes[9] ? TRUE : FALSE;
+		stick_scale_cache[slot].mouse_aim = bytes[10] ? TRUE : FALSE;
+	}
 }
 
 void player_profile_stick_scales_store(long profile_index, void *padding, long size)
@@ -492,6 +537,19 @@ void player_profile_stick_scales_store(long profile_index, void *padding, long s
 	bytes[3] = (unsigned char)(STICK_SCALE_MAGIC >> 24);
 	bytes[4] = stick_scale_cache[slot].horizontal;
 	bytes[5] = stick_scale_cache[slot].vertical;
+	if (size >= 11)
+	{
+		if (stick_scale_cache[slot].mouse_set)
+		{
+			bytes[6] = 0x4D;
+			bytes[7] = stick_scale_cache[slot].mouse_horizontal;
+			bytes[8] = stick_scale_cache[slot].mouse_vertical;
+			bytes[9] = stick_scale_cache[slot].mouse_invert ? 1 : 0;
+			bytes[10] = stick_scale_cache[slot].mouse_aim ? 1 : 0;
+		}
+		else
+			bytes[6] = 0;
+	}
 }
 
 void player_profile_stick_scales_begin(long profile_index)
@@ -513,6 +571,62 @@ void player_profile_stick_scales_begin(long profile_index)
 void player_profile_stick_scales_end(void)
 {
 	stick_edit_open = FALSE;
+	mouse_edit_open = FALSE;
+}
+
+void player_profile_stick_scales_seed(long key, long look_sensitivity)
+{
+	short slot;
+	unsigned char step;
+
+	if (stick_scale_find(key, &slot))
+		return;
+	if (look_sensitivity < 1)
+		step = 0;
+	else if (look_sensitivity > STICK_SCALE_COUNT)
+		step = (unsigned char)(STICK_SCALE_COUNT - 1);
+	else
+		step = (unsigned char)(look_sensitivity - 1);
+	slot = stick_scale_slot(key);
+	stick_scale_cache[slot].horizontal = step;
+	stick_scale_cache[slot].vertical = step;
+}
+
+void player_profile_mouse_begin(long key)
+{
+	short slot;
+
+	mouse_edit_set = FALSE;
+	mouse_edit_dirty = FALSE;
+	mouse_edit_horizontal = STICK_SCALE_DEFAULT;
+	mouse_edit_vertical = 0;
+	mouse_edit_invert = FALSE;
+	mouse_edit_aim = FALSE;
+	if (stick_scale_find(key, &slot) && stick_scale_cache[slot].mouse_set)
+	{
+		mouse_edit_set = TRUE;
+		mouse_edit_horizontal = stick_scale_cache[slot].mouse_horizontal;
+		mouse_edit_vertical = stick_scale_cache[slot].mouse_vertical;
+		mouse_edit_invert = stick_scale_cache[slot].mouse_invert;
+		mouse_edit_aim = stick_scale_cache[slot].mouse_aim;
+	}
+	mouse_edit_open = TRUE;
+}
+
+void player_profile_mouse_apply(long key, short controller_index)
+{
+	short slot;
+
+	/* the mouse aims the player on controller 0 */
+	if (controller_index != 0)
+		return;
+	if (stick_scale_find(key, &slot) && stick_scale_cache[slot].mouse_set)
+		halo_linux_mouse_player((int)stick_scale_cache[slot].mouse_horizontal + 1,
+			(int)stick_scale_cache[slot].mouse_vertical,
+			stick_scale_cache[slot].mouse_invert ? 1 : 0,
+			stick_scale_cache[slot].mouse_aim ? 1 : 0);
+	else
+		halo_linux_mouse_player(0, 0, 0, 0);
 }
 
 boolean player_profile_stick_scales_dirty(void)
@@ -557,6 +671,79 @@ void player_profile_stick_scales_apply(long profile_index, short controller_inde
 	input_abstraction_set_look_rates(controller_index, look_yaw_rate[horizontal], look_pitch_rate[vertical]);
 }
 
+/* 0 horizontal, 1 vertical, 2 invert, 3 aim assist, else not a mouse setting */
+static int mouse_setting_which(char const *name)
+{
+	if (!strcmp(name, "input.mouse_look_horizontal"))
+		return 0;
+	if (!strcmp(name, "input.mouse_look_vertical"))
+		return 1;
+	if (!strcmp(name, "input.invert_mouse"))
+		return 2;
+	if (!strcmp(name, "input.mouse_aim_assist"))
+		return 3;
+	return -1;
+}
+
+/* the first change in a match copies the machine's mouse, then keeps this
+player's own */
+static void mouse_edit_capture(void)
+{
+	char text[32];
+
+	if (mouse_edit_set)
+		return;
+	mouse_edit_set = TRUE;
+	mouse_edit_horizontal = STICK_SCALE_DEFAULT;
+	mouse_edit_vertical = 0;
+	if (config_text("input.mouse_look_horizontal", text, sizeof(text)))
+		mouse_edit_horizontal = stick_scale_from_text(text);
+	if (config_text("input.mouse_look_vertical", text, sizeof(text)))
+		mouse_edit_vertical = (unsigned char)atol(text);
+	if (mouse_edit_vertical > STICK_SCALE_COUNT)
+		mouse_edit_vertical = 0;
+	mouse_edit_invert = config_boolean("input.invert_mouse") ? TRUE : FALSE;
+	mouse_edit_aim = config_boolean("input.mouse_aim_assist") ? TRUE : FALSE;
+}
+
+static short controller_for_local_player(short player)
+{
+	short controller = player_ui_get_single_player_local_player_controller(player);
+
+	if (controller == NONE)
+		controller = player;
+	return controller;
+}
+
+/* the pause menu's mouse settings, onto this player and their profile */
+static void mouse_commit(short player)
+{
+	long index;
+	long key;
+	short slot;
+	struct player_profile profile;
+
+	/* only a mouse change on this screen. another settings screen's OK
+	must not write this player's profile */
+	if (player < 0 || player >= MAXIMUM_LOCAL_PLAYERS || !mouse_edit_open || !mouse_edit_dirty)
+		return;
+	index = player_ui_get_active_player_profile_index(player);
+	key = player_profile_control_key(player, index);
+	slot = stick_scale_slot(key);
+	stick_scale_cache[slot].mouse_set = TRUE;
+	stick_scale_cache[slot].mouse_horizontal = mouse_edit_horizontal;
+	stick_scale_cache[slot].mouse_vertical = mouse_edit_vertical;
+	stick_scale_cache[slot].mouse_invert = mouse_edit_invert;
+	stick_scale_cache[slot].mouse_aim = mouse_edit_aim;
+	player_profile_mouse_apply(key, controller_for_local_player(player));
+	if (index != NONE)
+	{
+		player_ui_get_active_player_profile(player, &profile);
+		player_profile_save(index, &profile);
+	}
+	mouse_edit_dirty = FALSE;
+}
+
 /* a setting's value as text, or (default_value) its default: config.toml's,
 or the profile's */
 static boolean setting_text(char const *name, char *text, unsigned int size, boolean default_value)
@@ -564,7 +751,22 @@ static boolean setting_text(char const *name, char *text, unsigned int size, boo
 	short index;
 	short which;
 	unsigned char scale;
+	int mouse;
 
+	mouse = mouse_setting_which(name);
+	if (in_game_settings_player != NONE && mouse_edit_open && mouse >= 0 && !default_value && mouse_edit_set)
+	{
+		if (mouse == 0)
+			snprintf(text, size, "%s", stick_scale_text[mouse_edit_horizontal < STICK_SCALE_COUNT ?
+				mouse_edit_horizontal : STICK_SCALE_DEFAULT]);
+		else if (mouse == 1)
+			snprintf(text, size, "%u", (unsigned)(mouse_edit_vertical <= STICK_SCALE_COUNT ? mouse_edit_vertical : 0));
+		else if (mouse == 2)
+			snprintf(text, size, "%s", mouse_edit_invert ? "true" : "false");
+		else
+			snprintf(text, size, "%s", mouse_edit_aim ? "true" : "false");
+		return TRUE;
+	}
 	if (strncmp(name, "profile.", 8))
 	{
 		if (!(default_value ? config_default(name, text, size) : config_text(name, text, size)))
@@ -643,7 +845,27 @@ static boolean setting_write(char const *name, char const *value)
 {
 	short index;
 	short which;
+	int mouse;
 
+	mouse = mouse_setting_which(name);
+	if (in_game_settings_player != NONE && mouse_edit_open && mouse >= 0)
+	{
+		mouse_edit_capture();
+		if (mouse == 0)
+			mouse_edit_horizontal = stick_scale_from_text(value);
+		else if (mouse == 1)
+		{
+			long number = atol(value);
+
+			mouse_edit_vertical = number < 0 || number > STICK_SCALE_COUNT ? 0 : (unsigned char)number;
+		}
+		else if (mouse == 2)
+			mouse_edit_invert = !strcmp(value, "true") ? TRUE : FALSE;
+		else
+			mouse_edit_aim = !strcmp(value, "true") ? TRUE : FALSE;
+		mouse_edit_dirty = TRUE;
+		return TRUE;
+	}
 	if (strncmp(name, "profile.", 8))
 		return config_write(name, value);
 	which = stick_scale_which(name);
@@ -929,17 +1151,72 @@ static void profile_rows_apply(struct widget_instance *list)
 	}
 }
 
+boolean network_game_is_active(void);
+
+/* the controller's local player: a network game's controller is that
+player. Co-op records which controller is which player */
+static short local_player_for_controller(short controller)
+{
+	short local;
+
+	if (network_game_is_active())
+	{
+		if (controller >= 0 && controller < MAXIMUM_LOCAL_PLAYERS)
+			return controller;
+		return 0;
+	}
+	local = player_ui_get_single_player_local_player_from_controller(controller);
+	if (local != NONE)
+		return local;
+	if (controller >= 0 && controller < MAXIMUM_LOCAL_PLAYERS)
+		return controller;
+	return 0;
+}
+
+/* the player who opened pause settings. their saved profile when they have
+one, else the settings they are already playing with */
+static boolean local_player_settings_begin(short player)
+{
+	long index;
+	struct player_profile live;
+	struct player_profile *edit;
+
+	if (player < 0 || player >= MAXIMUM_LOCAL_PLAYERS)
+		return FALSE;
+	index = player_ui_get_active_player_profile_index(player);
+	if (index != NONE)
+	{
+		player_ui_begin_editing_profile(index);
+		edit = player_ui_get_edit_player_profile();
+		if (!edit)
+			return FALSE;
+		/* the file can still be the previous copy. the screen shows
+		what this player is using */
+		player_ui_get_active_player_profile(player, &live);
+		edit->controller_settings = live.controller_settings;
+		return TRUE;
+	}
+	player_ui_begin_editing_memory_profile(player);
+	return player_ui_get_edit_player_profile() != NULL;
+}
+
 /* "profile set edit begin": Settings, the main menu's and a game's pause
 menu's. With no profile, the main menu's asks for a new one's name, as the
 menu's other items do ("new game if no plyr profiles"), and fails: the
 screens its handler then opens make the profile and edit it
 (new_profile_decision). Without the name asked, they made none, and showed
-"new campaign decision" as failed. The pause menu's has no such screens,
-and only fails. */
+"new campaign decision" as failed. The pause menu edits the player who
+opened it, and opens even when that player has no saved profile. */
 static boolean profile_edit_begin(struct widget_instance *widget, struct event_record *event,
 	boolean *widget_deleted)
 {
 	profile_menu_machine = 1;
+	if (!main_menu_is_active())
+	{
+		in_game_settings_player = local_player_for_controller(event_controller(widget, event));
+		return local_player_settings_begin(in_game_settings_player);
+	}
+	in_game_settings_player = NONE;
 	if (pc_menu_profile_edit_begin())
 		return TRUE;
 	/* (a press: the profile is made on its controller) */
@@ -5113,6 +5390,7 @@ it is edited again from what was saved, for Settings to go on with */
 static boolean profile_settings_save(struct widget_instance *widget)
 {
 	long index = player_ui_get_edit_profile_index();
+	short player = in_game_settings_player;
 
 	settings_each(screen_of(widget), setting_changed_save);
 	if (!player_ui_get_edit_player_profile() || !player_ui_edit_profile_is_dirty())
@@ -5122,6 +5400,10 @@ static boolean profile_settings_save(struct widget_instance *widget)
 		platform_log("menus: could not save the profile's changes");
 		return campaign_fail();
 	}
+	/* the pause menu keeps editing the same player. the main menu goes
+	back to the file it just wrote */
+	if (player != NONE)
+		return local_player_settings_begin(player);
 	player_ui_begin_editing_profile(index);
 	return TRUE;
 }
@@ -7789,6 +8071,8 @@ boolean pc_menu_event_function_invoke(
 		else if (!strcmp(name, "port settings save"))
 		{
 			settings_each(screen_of(widget), setting_changed_save);
+			if (in_game_settings_player != NONE)
+				mouse_commit(in_game_settings_player);
 			platform_display_apply();
 		}
 		else if (!strcmp(name, "port settings defaults"))

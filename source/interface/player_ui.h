@@ -115,6 +115,10 @@ void player_ui_remember_player1_profile(
 	boolean save);
 void player_ui_begin_editing_profile(
 	long profile_index);
+/* port: the local player's live settings, when that player has no saved
+profile. They stay with the player between games. */
+void player_ui_begin_editing_memory_profile(
+	short local_player_index);
 void player_ui_set_active_player_profile(
 	short local_player_index,
 	long profile_index,
