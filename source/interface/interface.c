@@ -1246,6 +1246,8 @@ static void interface_splitscreen_render(
 		views = hardcore_views_window_count();
 		if (views > 1)
 			window_count = views;
+		else if (hardcore_views_blank_split())
+			window_count = 2;
 	}
 
 	if (window_count <= 1)

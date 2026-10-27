@@ -33,6 +33,17 @@ boolean hardcore_views_is_local_window(short window_index);
 split-screen font and line spacing. */
 boolean hardcore_views_split(void);
 
+/* Multiplayer with one local player, when display.force_split is on.
+Campaign stays one pane. A second local player is a real split, and
+teammate views keep their own panes. */
+boolean hardcore_views_blank_split(void);
+
+/* The pane that is the local player in that two-pane split. */
+short hardcore_views_blank_player_slot(void);
+
+/* The other pane. It is cleared and not a camera. */
+boolean hardcore_views_is_blank_window(short window_index);
+
 /* Spare local-player slot this teammate pane borrows so the HUD and the
 first-person weapon will draw. A slot that already has a player is left
 alone. Each pane keeps its own slot, so the weapon animation continues. */

@@ -188,6 +188,10 @@ static const struct config_setting config_settings[] =
 		"\"top\", \"bottom\", \"top_left\", \"top_right\", \"bottom_left\" or\n"
 		"\"bottom_right\". Two panes are top and bottom. Three give a wide top\n"
 		"and two bottoms. Four are the corners." },
+	{ "display.force_split", _config_boolean, "false", "HALO_FORCE_SPLIT", _environment_value, _platform_all,
+		"In multiplayer, split this screen when only one local player is in the\n"
+		"game. The other pane stays black. Your pane is display.teammate_view_slot.\n"
+		"Campaign stays one pane. A second local player there is a real split." },
 	{ "display.scoreboard_team_layout", _config_string, "\"teams\"", "HALO_SCOREBOARD_TEAM_LAYOUT", _environment_value,
 		_platform_all,
 		"How the scoreboard lists a team game's players: \"teams\" in a column for\n"

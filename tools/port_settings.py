@@ -215,10 +215,13 @@ _graphics = {"display.high_res_hud", "display.hud_button_style", "display.campai
 _extra_effects = {"display.shield_glow", "display.shield_glow_intensity"}
 SCREENS["video_settings/graphics"] = {
     "screen": "graphics_settings_screen", "header": _video["header"], "spacing": 22,
+    "help_top": 364, "button_y": 430,
     "same_place": ["anti_aliasing_android"],
     "rows": [row for row in _video["rows"] if row[1] in _graphics] + [
         ("SPLIT SCREEN:", "display.teammate_views", ON_OFF,
          "In a team game, one player sees teammates from\ntheir own eyes, up to four panes.", None),
+        ("FORCE SPLIT:", "display.force_split", ON_OFF,
+         "One local multiplayer player gets two panes, the\nother black. Campaign needs a second player.", None),
         ("YOUR VIEW:", "display.teammate_view_slot",
          [("TOP", "top"), ("BOTTOM", "bottom"), ("TOP LEFT", "top_left"), ("TOP RIGHT", "top_right"),
           ("BOTTOM LEFT", "bottom_left"), ("BOTTOM RIGHT", "bottom_right")],

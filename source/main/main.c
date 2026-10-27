@@ -1468,6 +1468,10 @@ short main_get_window_count(
 
 			if (views > 1)
 				return views;
+			/* port: one local player in multiplayer, the other pane black.
+			   campaign stays one pane unless a second player is local */
+			if (hardcore_views_blank_split())
+				return 2;
 		}
 		return count;
 	}
@@ -3347,13 +3351,16 @@ static void main_game_render(
 		window_count = 1;
 		player_window_count = 1;
 	}
-	/* port: teammate panes share this screen. they are not local players */
+	/* port: teammate panes share this screen. they are not local players.
+	   one local player can still take two panes, the other left black */
 	else if (window_count == 1)
 	{
 		short views = hardcore_views_window_count();
 
 		if (views > 1)
 			player_window_count = views;
+		else if (hardcore_views_blank_split())
+			player_window_count = 2;
 	}
 
 	for (window_index = 0; window_index < player_window_count; window_index++)
@@ -3372,6 +3379,10 @@ static void main_game_render(
 		{
 			window->local_player_index = NONE;
 		}
+		else if (hardcore_views_is_blank_window((short)window_index))
+		{
+			window->local_player_index = NONE;
+		}
 		else if (hardcore_views_is_teammate_window((short)window_index))
 		{
 			/* port: a dead teammate keeps the pane on the death camera, so
@@ -3385,7 +3396,9 @@ static void main_game_render(
 				window->local_player_index = NONE;
 		}
 		else if (hardcore_views_is_local_window((short)window_index) ||
-			window_index < window_count)
+			window_index < window_count ||
+			(hardcore_views_blank_split() &&
+				window_index == hardcore_views_blank_player_slot()))
 		{
 			if (!rasterizer_debug_options.force_all_player_views_to_default_player ||
 				last_local_player_index == NONE)

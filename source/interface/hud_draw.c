@@ -445,7 +445,8 @@ frame and the crosshair scale are that split's */
 boolean hud_split_screen(
 	void)
 {
-	return local_player_count() > 1 || hardcore_views_split();
+	return local_player_count() > 1 || hardcore_views_split() ||
+		hardcore_views_blank_split();
 }
 
 real hud_globals_get_scale(

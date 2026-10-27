@@ -29,6 +29,8 @@ between frames. The slot is a local player only while that pane is drawn. */
 #include "port_config.h"
 #include <string.h>
 
+boolean main_menu_is_active(void);
+
 #define HARDCORE_VIEW_MAXIMUM 4
 
 /* the sight and the aim, kept from the last tick so the pane can draw
@@ -376,6 +378,39 @@ boolean hardcore_views_is_local_window(short window_index)
 boolean hardcore_views_split(void)
 {
 	return hardcore_views_team_screen() && view_count > 1;
+}
+
+/* one local player in a multiplayer match. campaign has no multiplayer
+engine, so it stays one pane unless a second player is actually local */
+static boolean hardcore_views_force_wanted(void)
+{
+	return config_boolean("display.force_split") &&
+		game_in_progress() && game_engine_running() &&
+		!main_menu_is_active() &&
+		hardcore_views_local_count() == 1;
+}
+
+boolean hardcore_views_blank_split(void)
+{
+	hardcore_views_refresh();
+	if (view_count > 1)
+		return FALSE;
+	return hardcore_views_force_wanted();
+}
+
+short hardcore_views_blank_player_slot(void)
+{
+	return hardcore_views_slot(2);
+}
+
+boolean hardcore_views_is_blank_window(short window_index)
+{
+	short slot;
+
+	if (!hardcore_views_blank_split())
+		return FALSE;
+	slot = hardcore_views_blank_player_slot();
+	return window_index >= 0 && window_index < 2 && window_index != slot;
 }
 
 short hardcore_views_hud_slot(short window_index)

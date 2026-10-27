@@ -9,7 +9,7 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/header_profile_video_settings" controller="1" left="35" top="11" width="605" height="59" bitmap="main_menu/settings_select/player_setup/player_profile_edit/video_settings/header_profile_video_settings">
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/help" type="text" controller="1" left="68" top="350" width="482" height="60" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/help_strings" font="ui\large_ui" color="#FFFFFFFF">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/help" type="text" controller="1" left="68" top="364" width="482" height="60" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/help_strings" font="ui\large_ui" color="#FFFFFFFF">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/options_menu" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_children" description="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/help">
 		<data input="port settings help"/>
@@ -24,9 +24,10 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/op_model_detail" x="54" y="227"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/op_match_timer" x="54" y="249"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/op_teammate_views" x="54" y="271"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/op_teammate_view_slot" x="54" y="293"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/op_enabled" x="54" y="315"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/button_bar" y="414"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/op_force_split" x="54" y="293"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/op_teammate_view_slot" x="54" y="315"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/op_enabled" x="54" y="337"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/button_bar" y="430"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/button_defaults" y="1"/>
@@ -133,11 +134,20 @@
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/teammate_views_spinner" type="spinner" left="3" top="0" width="147" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="ON|OFF" setting="display.teammate_views" values="true|false" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 150 15 156">
 		<on event="created" run="port setting load"/>
 	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/op_force_split" width="512" height="20" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds_short" color="#FF2896FF">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/force_split_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/force_split_spinner" x="320" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/force_split_label" type="text" controller="1" width="300" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/labels" string_index="11" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/force_split_spinner" type="spinner" left="3" top="0" width="147" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="ON|OFF" setting="display.force_split" values="true|false" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 150 15 156">
+		<on event="created" run="port setting load"/>
+	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/op_teammate_view_slot" width="512" height="20" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds_short" color="#FF2896FF">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/teammate_view_slot_label"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/teammate_view_slot_spinner" x="286" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/teammate_view_slot_label" type="text" controller="1" width="300" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/labels" string_index="11" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/teammate_view_slot_label" type="text" controller="1" width="300" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/labels" string_index="12" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/teammate_view_slot_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="TOP|BOTTOM|TOP LEFT|TOP RIGHT|BOTTOM LEFT|BOTTOM RIGHT" setting="display.teammate_view_slot" values="top|bottom|top_left|top_right|bottom_left|bottom_right" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="created" run="port setting load"/>
@@ -146,7 +156,7 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/enabled_label"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/enabled_spinner" x="320" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/enabled_label" type="text" controller="1" width="300" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/labels" string_index="12" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/enabled_label" type="text" controller="1" width="300" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/labels" string_index="13" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/graphics/enabled_spinner" type="spinner" left="3" top="0" width="147" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="ON|OFF" setting="streamer.enabled" values="true|false" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 150 15 156">
 		<on event="created" run="port setting load"/>
@@ -173,6 +183,7 @@
 		<string text="MODEL DETAIL:"/>
 		<string text="MATCH TIMER:"/>
 		<string text="SPLIT SCREEN:"/>
+		<string text="FORCE SPLIT:"/>
 		<string text="YOUR VIEW:"/>
 		<string text="STREAMER MODE:"/>
 	</strings>
@@ -189,6 +200,7 @@
 		<string text="Stock picks models' detail by the Xbox's 480 lines;\nnative by this display's; highest, always the best."/>
 		<string text="A clock at the bottom right in multiplayer.\nOn with Voice also plays the map's timer voice."/>
 		<string text="In a team game, one player sees teammates from\ntheir own eyes, up to four panes."/>
+		<string text="One local multiplayer player gets two panes, the\nother black. Campaign needs a second player."/>
 		<string text="Which pane is yours when split screen is on.\nTwo panes are top and bottom."/>
 		<string text="Hide mild slurs and strong swearing.\nInsults stay visible."/>
 	</strings>

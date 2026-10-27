@@ -131,6 +131,8 @@ enum
 static void render_nonplayer_frame(
 	const struct render_window *window,
 	long window_type);
+static void render_blank_window(
+	const struct render_window *window);
 static void render_window(
 	short local_player_index,
 	const struct render_camera *camera,
@@ -241,6 +243,26 @@ static void render_nonplayer_frame(
 	rasterizer_window_end();
 	profile_render_window_end();
 
+	return;
+}
+
+/* the pane force split leaves empty: cleared black, with no world or HUD */
+static void render_blank_window(
+	const struct render_window *window)
+{
+	struct rasterizer_window_begin_parameters parameters;
+
+	profile_render_window_start(FALSE);
+	memset(&parameters, 0, sizeof(parameters));
+	render.camera = window->render_camera;
+	render_camera_build_frustum(&render.camera, NULL, &render.frustum, TRUE);
+	parameters.camera = window->rasterizer_camera;
+	render_camera_build_frustum(&parameters.camera, NULL, &parameters.frustum, TRUE);
+	parameters.rasterizer_target = _render_target_primary;
+	parameters.window_index = (short)render.window_index;
+	rasterizer_window_begin(&parameters);
+	rasterizer_window_end();
+	profile_render_window_end();
 	return;
 }
 
@@ -650,6 +672,11 @@ void render_frame(
 
 		window = &windoze[window_index];
 		render.window_index = window_index;
+		if (hardcore_views_is_blank_window((short)window_index))
+		{
+			render_blank_window(window);
+			continue;
+		}
 		if (window->console_window)
 		{
 			window_type = 0;

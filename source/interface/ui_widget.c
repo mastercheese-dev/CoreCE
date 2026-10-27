@@ -7622,8 +7622,8 @@ static void pause_menu_fit_begin(
 	definition = ui_widget_definition_get(widget->definition_tag_index);
 	design_w = definition->bounds.x1 - definition->bounds.x0;
 	design_h = definition->bounds.y1 - definition->bounds.y0;
-	/* a teammate pane shows the single screen pause menu */
-	if (hardcore_views_split())
+	/* a teammate pane, or the forced empty pane, shows the single screen pause menu */
+	if (hardcore_views_split() || hardcore_views_blank_split())
 	{
 		design_w = 640;
 		design_h = 480;
