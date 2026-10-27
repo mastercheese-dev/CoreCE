@@ -594,11 +594,22 @@ static const struct config_setting config_settings[] =
 		"Public STUN servers that tell this machine its internet address;\n"
 		"comma-separated host:port." },
 	{ "discord.application_id", _config_string, "\"1553978809840050229\"", "HALO_DISCORD_APPLICATION",
-		_environment_value, _platform_desktop,
-		"The Discord application internet play invites go through while the\n"
-		"Discord desktop client runs; empty for none." },
+			_environment_value, _platform_desktop,
+			"The Discord application internet play invites go through while the\n"
+			"Discord desktop client runs; empty for none." },
 
-	{ "update.auto", _config_boolean, "true", "HALO_UPDATE_AUTO", _environment_value, _platform_all,
+		{ "network.bots", _config_integer, "0", "HALO_NET_BOTS", _environment_value, _platform_all,
+			"Number of AI bots to add to multiplayer games hosted on this machine.\n"
+			"Bots are added as players on the host's machine and controlled by AI.\n"
+			"0 to 16. Only applies when hosting a network game." },
+		{ "network.bot_skill", _config_integer, "1", "HALO_NET_BOT_SKILL", _environment_value, _platform_all,
+			"Skill level of AI bots: 0 (easiest) to 3 (hardest).\n"
+			"Controls bot aim accuracy, reaction time, and tactical decisions." },
+		{ "network.bot_teams", _config_string, "\"auto\"", "HALO_NET_BOT_TEAMS", _environment_value, _platform_all,
+			"Team assignment for bots: \"auto\" (balance teams), \"red\", \"blue\",\n"
+			"or \"random\". In FFA games, this setting is ignored." },
+
+		{ "update.auto", _config_boolean, "true", "HALO_UPDATE_AUTO", _environment_value, _platform_all,
 		"Look for a new version when the game starts, and offer to update to it;\n"
 		"false never looks (the game's \"Do not ask again\" writes false here)." },
 	{ "streamer.enabled", _config_boolean, "false", "HALO_STREAMER_MODE", _environment_value, _platform_all,

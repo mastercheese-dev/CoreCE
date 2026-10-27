@@ -115,6 +115,10 @@ symbols in this file:
 #include "memory/data.h"
 #include "networking/network_game_globals.h"
 #include "units/units.h"
+#include "ai/ai.h"
+#include "ai/actors.h"
+#include "objects/objects.h"
+#include "game/game_engine.h"
 
 /* ---------- constants */
 
@@ -238,6 +242,8 @@ static struct update *update_server_get_update(
 static struct update *update_client_get_update(
 	long update_number);
 static void update_server_take_local_actions(
+	void);
+static void update_server_generate_bot_actions(
 	void);
 
 /* ---------- globals */
@@ -408,10 +414,11 @@ void update_server_next_update(
 		0xFA,
 		update_server_globals.initialized);
 	update_server_globals.next_update_number_to_build += 1;
-	if (game_connection() == _game_connection_network_server)
-	{
-		update_server_take_local_actions();
-	}
+		if (game_connection() == _game_connection_network_server)
+		{
+			update_server_take_local_actions();
+			update_server_generate_bot_actions();
+		}
 	update = update_server_get_update(update_number);
 	match_assert(
 		"c:\\halo\\SOURCE\\game\\player_queues_new.c",
@@ -1069,13 +1076,155 @@ static void update_server_take_local_actions(
 			(struct update_server_queue_datum *)datum_try_and_get(update_server_globals.queues, player_index) : NULL;
 
 		if (queue)
-		{
-			queue->current_action = update_client_globals.saved_action_collection.actions[local_player_index];
+				{
+					queue->current_action = update_client_globals.saved_action_collection.actions[local_player_index];
+				}
+			}
 		}
-	}
-}
 
-/* an action fit to take: finite, its choices in range */
+		/* the distributed netcode's host: generate actions for bot players */
+		static void update_server_generate_bot_actions(
+			void)
+		{
+			long player_index;
+			struct player_datum *player;
+			struct unit_datum *unit;
+			struct update_server_queue_datum *queue;
+
+			if (game_connection() != _game_connection_network_server)
+				return;
+
+			/* Iterate over all players in the game */
+			for (player_index = 0; player_index < MAXIMUM_NUMBER_OF_PLAYERS; player_index++)
+			{
+				player = player_get(player_index);
+				if (!player || !network_player_is_valid(&player->network_player_data))
+					continue;
+
+				/* Check if this is a bot (name starts with "Bot") */
+				if (ustrncmp(player->name, L"Bot", 3) != 0)
+					continue;
+
+				/* Get the bot's unit */
+				if (player->unit_index == NONE)
+					continue;
+				unit = unit_get(player->unit_index);
+				if (!unit)
+					continue;
+
+				/* Get the bot's queue */
+				queue = (struct update_server_queue_datum *)datum_try_and_get(update_server_globals.queues, player_index);
+				if (!queue)
+					continue;
+
+				/* Generate simple bot action: move forward and look around */
+				{
+					struct player_action action = { 0 };
+					real yaw, pitch;
+					real_point3d bot_position, target_position;
+					long target_player_index;
+					struct player_datum *target_player;
+					struct unit_datum *target_unit;
+					real best_distance = 999999.0f;
+					boolean found_target = FALSE;
+
+					/* Get bot position */
+					bot_position = unit->object.position;
+
+					/* Find nearest enemy player */
+					for (target_player_index = 0; target_player_index < MAXIMUM_NUMBER_OF_PLAYERS; target_player_index++)
+					{
+						target_player = player_get(target_player_index);
+						if (!target_player || !network_player_is_valid(&target_player->network_player_data))
+							continue;
+						if (target_player == player)
+							continue;
+						if (target_player->unit_index == NONE)
+							continue;
+
+						/* Check if on different team (for team games) */
+						if (game_engine_get_variant()->universal_variant.teams)
+						{
+							if (target_player->network_player_data.team_index == player->network_player_data.team_index)
+								continue; /* Same team, don't attack */
+						}
+
+						target_unit = unit_get(target_player->unit_index);
+						if (!target_unit)
+							continue;
+
+						target_position = target_unit->object.position;
+						{
+							real dx = target_position.x - bot_position.x;
+							real dy = target_position.y - bot_position.y;
+							real dz = target_position.z - bot_position.z;
+							real distance = sqrt(dx*dx + dy*dy + dz*dz);
+
+							if (distance < best_distance)
+							{
+								best_distance = distance;
+								found_target = TRUE;
+							}
+						}
+					}
+
+					if (found_target && best_distance < 100.0f)
+					{
+						/* Aim at target */
+						yaw = atan2(target_position.y - bot_position.y, target_position.x - bot_position.x);
+						pitch = atan2(target_position.z - bot_position.z, best_distance);
+
+						action.desired_facing.yaw = yaw;
+						action.desired_facing.pitch = pitch;
+
+						/* Move towards target if far, strafe if close */
+						if (best_distance > 10.0f)
+						{
+							action.throttle.i = 1.0f; /* forward */
+						}
+						else
+						{
+							/* Strafe randomly */
+							if (rand() % 2)
+							{
+								action.throttle.j = 1.0f; /* right */
+							}
+							else
+							{
+								action.throttle.j = -1.0f; /* left */
+							}
+						}
+
+						/* Fire if aiming at target */
+						action.primary_trigger = 1.0f;
+						action.control_flags |= FLAG(_unit_control_weapon_primary_trigger_bit);
+					}
+					else
+					{
+						/* No target: wander randomly */
+						action.desired_facing.yaw = (real)(rand() % 6283) * 0.001f; /* random yaw */
+						action.desired_facing.pitch = 0.0f;
+
+						if (rand() % 3 == 0)
+						{
+							action.throttle.i = 1.0f; /* forward */
+						}
+						if (rand() % 10 == 0)
+						{
+							action.control_flags |= FLAG(_unit_control_jump_bit); /* jump occasionally */
+						}
+					}
+
+					action.desired_weapon_index = NONE;
+					action.desired_grenade_index = NONE;
+					action.desired_zoom_level = NONE;
+
+					queue->current_action = action;
+				}
+			}
+		}
+
+		/* an action fit to take: finite, its choices in range */
 static boolean distributed_action_valid(
 	struct player_action const *action)
 {

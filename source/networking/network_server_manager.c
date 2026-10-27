@@ -482,6 +482,7 @@ symbols in this file:
 #include "interface/player_ui.h"
 #include "tag_files/tag_files.h"
 #include "map_share.h" /* port: port/linux/game/map_share.c */
+#include "port_config.h" /* for network.bots, network.bot_skill, network.bot_teams */
 
 /* port: internet play's Discord presence (port/linux/src/p2p.c), and the
 server browser's listing of a public game (p2p_lobby.c) */
@@ -794,6 +795,8 @@ static boolean player_name_is_unique(
 static void network_game_server_dump(
 	struct network_game_server *server);
 static void network_game_server_countdown_started(
+	struct network_game_server *server);
+static void network_game_server_add_bot_players(
 	struct network_game_server *server);
 static void network_game_server_variant_options(
 	struct game_variant const *variant,
@@ -4344,6 +4347,115 @@ static void network_game_server_countdown_started(
 {
 	(void)server;
 	csmemset(network_game_server_countdown_slowed, 0, sizeof(network_game_server_countdown_slowed));
+	network_game_server_add_bot_players(server);
+}
+
+static void network_game_server_add_bot_players(
+	struct network_game_server *server)
+{
+	long bot_count;
+	long bot_skill;
+	char bot_teams[16];
+	long i;
+	long player_index;
+	long controller_index;
+	long team_index;
+	long player_count_by_team[2] = { 0, 0 };
+	struct network_player *player;
+	struct network_game_server_client_machine *host_machine;
+
+	bot_count = config_integer("network.bots");
+	if (bot_count <= 0 || bot_count > 16)
+		return;
+
+	bot_skill = config_integer("network.bot_skill");
+	if (bot_skill < 0) bot_skill = 0;
+	if (bot_skill > 3) bot_skill = 3;
+
+	config_text("network.bot_teams", bot_teams, sizeof(bot_teams));
+
+	host_machine = network_game_server_get_client_machine_at_index(server, 0);
+	if (!host_machine)
+		return;
+
+	/* Count existing players on the host machine to find free controller indices */
+	controller_index = 0;
+	for (i = 0; i < MAXIMUM_NETWORK_PLAYER_COUNT; i++)
+	{
+		player = &server->game.players[i];
+		if (network_player_is_valid(player) && player->machine_index == 0)
+		{
+			if (player->controller_index >= controller_index)
+				controller_index = player->controller_index + 1;
+			if (player->team_index >= 0 && player->team_index < 2)
+				player_count_by_team[player->team_index]++;
+		}
+	}
+
+	/* Add bot players */
+	for (i = 0; i < bot_count && controller_index < MAXIMUM_LOCAL_PLAYERS; i++, controller_index++)
+	{
+		/* Find a free player slot */
+		player_index = NONE;
+		for (player_index = 0; player_index < MAXIMUM_NETWORK_PLAYER_COUNT; player_index++)
+		{
+			if (!network_player_is_valid(&server->game.players[player_index]))
+				break;
+		}
+		if (player_index >= MAXIMUM_NETWORK_PLAYER_COUNT)
+			break;
+
+		player = &server->game.players[player_index];
+		csmemset(player, 0, sizeof(*player));
+
+		/* Set up bot player */
+		player->machine_index = 0;
+		player->controller_index = (short)controller_index;
+		player->team_index = 0; /* will be set below based on bot_teams */
+
+		/* Assign team based on bot_teams setting */
+		if (server->game.variant.universal_variant.teams)
+		{
+			if (!strcmp(bot_teams, "red"))
+				team_index = 0;
+			else if (!strcmp(bot_teams, "blue"))
+				team_index = 1;
+			else if (!strcmp(bot_teams, "random"))
+				team_index = (rand() % 2);
+			else /* "auto" - balance teams */
+				team_index = (player_count_by_team[1] < player_count_by_team[0]) ? 1 : 0;
+
+			player->team_index = (short)team_index;
+			player_count_by_team[team_index]++;
+		}
+		else
+		{
+			player->team_index = -1; /* FFA */
+		}
+
+		/* Generate bot name */
+		{
+			wchar_t bot_name[16];
+			swprintf(bot_name, 16, L"Bot%ld", i + 1);
+			ustrncpy(player->name, bot_name, NETWORK_PLAYER_NAME_LENGTH - 1);
+			player->name[NETWORK_PLAYER_NAME_LENGTH - 1] = 0;
+		}
+
+		/* Set bot color */
+		player->primary_color_index = (short)(rand() % 20);
+
+		/* Mark as bot for AI control (name prefix "Bot" is used) */
+		/* player->flags |= 0x8000; custom flag to identify bots */
+
+		network_event("added bot player: %s (team %d, controller %d)",
+			player->name[0] ? "Bot" : "Bot", player->team_index, controller_index);
+	}
+
+	/* Update the start_players array with the new players */
+	csmemcpy(network_game_server_start_players, server->game.players,
+		sizeof(network_game_server_start_players));
+
+	p2p_set_game_player_counts(server->game.player_count, server->game.maximum_players);
 }
 
 void get_unique_random_name(
