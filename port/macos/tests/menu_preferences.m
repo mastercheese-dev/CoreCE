@@ -131,7 +131,7 @@ static void migrationFixtures(NSURL *test, NSURL *valid, NSURL *image) {
     const char *previousOverride = getenv("HALO_SAVE_ROOT");
     NSString *savedOverride = previousOverride ? @(previousOverride) : nil;
     setenv("HALO_SAVE_ROOT", test.fileSystemRepresentation, 1);
-    NSURL *canonical = [NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/CoreCE"] isDirectory:YES];
+    NSURL *canonical = HaloDefaultSupportDirectory();
     assert(!HaloSupportDirectoryNeedsMigration(canonical));
     if (savedOverride) setenv("HALO_SAVE_ROOT", savedOverride.UTF8String, 1);
     else unsetenv("HALO_SAVE_ROOT");
@@ -205,11 +205,23 @@ int main(int argc, const char **argv) {
         assert([[NSData dataWithContentsOfURL:settings] isEqual:unchanged]);
         NSURL *image = [test URLByAppendingPathComponent:@"disc.iso"];
         NSURL *imported = HaloImportDiscImage(image, support, progress, NULL, &error);
-        assert(imported && progressCalls == 2);
+        assert(imported);
+        NSURL *privateImage = [imported URLByAppendingPathComponent:@"disc.iso"];
+        assert([[NSData dataWithContentsOfURL:privateImage] isEqual:[NSData dataWithContentsOfURL:image]]);
+        NSDictionary *manifest = [NSDictionary dictionaryWithContentsOfURL:[imported URLByAppendingPathComponent:@"integrity.plist"]];
+        assert([manifest[@"sha256"] length] == 64);
+        assert([manifest[@"file_bytes"] unsignedLongLongValue] == [[NSData dataWithContentsOfURL:image] length]);
+        NSURL *movedImage = [image URLByAppendingPathExtension:@"offline"];
+        assert([NSFileManager.defaultManager moveItemAtURL:image toURL:movedImage error:&error]);
+        assert(HaloValidateGameData(imported, &error));
+        assert([[NSData dataWithContentsOfURL:privateImage] isEqual:[NSData dataWithContentsOfURL:movedImage]]);
+        assert([NSFileManager.defaultManager moveItemAtURL:movedImage toURL:image error:&error]);
+
+        assert(imported && progressCalls > 2); // private image copy plus map extraction
         assert([preferences.dataPath isEqualToString:valid.path]);
         assert([[NSData dataWithContentsOfURL:[imported URLByAppendingPathComponent:@"maps/ui.map"]]
             isEqualToData:[NSData dataWithContentsOfURL:[valid URLByAppendingPathComponent:@"maps/ui.map"]]]);
-        assert([preferences selectDataRoot:imported iso:image error:&error]);
+        assert([preferences selectDataRoot:imported iso:privateImage error:&error]);
         before = [NSData dataWithContentsOfURL:settings];
         NSURL *imports = [support URLByAppendingPathComponent:@"Game Data"];
         NSUInteger count = [NSFileManager.defaultManager contentsOfDirectoryAtURL:imports
@@ -221,7 +233,7 @@ int main(int argc, const char **argv) {
             assert([[NSData dataWithContentsOfURL:settings] isEqualToData:before]);
         }
         preferences = [[HaloPreferences alloc] initWithSupportDirectory:support];
-        assert(preferences.windowed && [preferences.isoPath isEqualToString:image.path]);
+        assert(preferences.windowed && [preferences.isoPath isEqualToString:privateImage.path]);
         assert([preferences.dataPath isEqualToString:imported.path]);
         saved = [NSJSONSerialization JSONObjectWithData:before options:0 error:nil];
         assert([saved[@"future_setting"] isEqualToString:@"preserve me"]);

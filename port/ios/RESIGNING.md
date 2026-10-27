@@ -1,8 +1,8 @@
 # Install the unsigned IPA with your own Apple account
 
 Use an Apple Silicon Mac with Xcode 26+ and Python 3. This runtime requires
-iOS/iPadOS 26+ and a profile granting Extended Virtual Addressing; a paid
-development team was required in upstream testing. Start with a device IPA
+iOS/iPadOS 26+. Build 17 and newer choose their guest arena dynamically and
+do not request Extended Virtual Addressing or Increased Memory Limit. Start with a device IPA
 provided by the builder, or build one using [the iOS build instructions](README.md)
 and `tools/ios_package.py`. Download the unsigned device IPA and re-signing kit from the
 [PR #1 testing release](https://github.com/AttilaTheFun/halo-ce-universal/releases/tag/apple-ios-pr1-20261013). The release is built from
@@ -21,7 +21,7 @@ you use your own account.
    iPhone, trust the Mac, and enable Developer Mode if requested.
 2. If you do not already have a suitable iOS development profile, create a
    temporary iOS App project in Xcode. Select your team, enable automatic
-   signing, add the **Extended Virtual Addressing** capability, and set a unique bundle identifier such as `com.yourname.haloce`.
+   signing, and set a unique bundle identifier such as `com.yourname.haloce`.
    Build/run that temporary app on your phone so Xcode creates the identity
    and a profile covering the device. Then delete the temporary app from
    the phone before installing Halo with the same identifier.
@@ -87,42 +87,34 @@ repository; they contain your signing/device information.
 
 ## AltStore / similar sideloaders
 
-Do not assume that a free Apple ID plus AltStore Classic will run this build.
-The runtime requires `com.apple.developer.kernel.extended-virtual-addressing`;
-the provisioning profile must authorize it and the re-signer must retain it.
-Our tested setup uses a paid Apple Developer team. Personal Team provisioning
-and third-party sideloaders have not been validated for this port.
+Build 17 and newer no longer require a special memory entitlement. Free-account
+AltStore/SideStore and LiveContainer installation still need testing; removing
+this requirement is not proof of compatibility with every signing service.
+The tested signing workflow uses a locally held Apple development identity.
 
-The unsigned IPA has no embedded profile or code signature. The kit includes
-`Required-entitlements.plist` for tools that accept an entitlement file, but
-adding that file does not grant the capability: the profile must contain it.
-If a sideloader cannot provision or preserve it, use the script above with an
-appropriate profile. Installation alone is not proof of a working runtime.
-This is a manually re-signable test artifact, not an AltStore PAL listing.
+The unsigned IPA has no embedded profile or code signature. The kit's
+`Required-entitlements.plist` is empty for build 17 onward. Older IPAs (up to
+build 16) still require Extended Virtual Addressing: a new signing kit cannot
+change their compiled memory layout. The script checks IPA metadata and retains
+the requirement for those older builds. This is not an AltStore PAL listing.
 
 ## LiveContainer and memory reservation errors
 
-A reported iPhone 17 Pro Max / iOS 26.0 LiveContainer launch failed with
-`Guest arena reservation: (os/kern) invalid address` after ISO import. This
-happens before the game image starts, not while parsing the ISO. Re-importing
-or reinstalling the same image does not change process address-space limits.
+Builds up to 16 reserved a fixed arena at 448 GiB and required Extended Virtual
+Addressing. An iPhone 17 Pro Max / iOS 26.0 LiveContainer report failed there.
+[LiveContainer does not apply guest entitlements to its host](https://github.com/LiveContainer/LiveContainer#limitations).
 
-[LiveContainer documents](https://github.com/LiveContainer/LiveContainer#limitations)
-that guest entitlements are not applied to its host process. Granting Extended
-Virtual Addressing to the Halo guest therefore does not prove the hosting
-process has it. The file-picker workaround does not grant memory capabilities.
-The error is consistent with a missing process capability or an incompatible
-address-space layout; the log alone does not distinguish them.
+Build 17 replaces that fixed address with an OS-selected, 4-GiB-aligned region.
+Compiler pointer translation, GL arguments, import stubs and host services all
+use its runtime address. Executable code remains in the signed app image; no
+JIT or writable executable memory is introduced. See the
+[memory-layout validation record](../../docs/apple-ios-dynamic-arena.md).
 
-Try the standalone installation described above with a profile authorizing
-Extended Virtual Addressing. LiveContainer remains unverified even if its host
-is entitled: the required address range must also be available. Do not change
-the compiled runtime's fixed base address as a signing workaround.
-
-The startup preflight now checks memory before importing an ISO. Failures show
-a scrollable native screen with **Copy details** and **Close**, and log the
-requested address/size and kernel result in `Documents/save/halo.log` (or the
-existing legacy save directory). Existing imports and saves are preserved.
+A sufficiently large aligned region must still be available in the process.
+If reservation fails inside LiveContainer, try a fresh launch or standalone
+installation and share `Documents/save/halo.log` (not signing credentials).
+The preflight runs before ISO import; its scrollable error screen provides
+**Copy details** and **Close**. Existing imports and saves are preserved.
 
 ## Build it yourself
 
@@ -132,11 +124,10 @@ cd halo-ce-universal
 ```
 
 Follow [the build instructions](README.md#build), supplying your own team and
-unique bundle ID. Source builds need the same Extended Virtual Addressing
-capability; compiling locally does not remove that requirement.
+unique bundle ID. No special memory capability is required by the current source.
 
 The public IPA is checked by re-signing it locally and verifying the nested
-framework and app signatures and required entitlement. This does not establish
+framework and app signatures. This does not establish
 compatibility with every device or signing service.
 
 Apple references: [signing setup](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices),

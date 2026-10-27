@@ -143,6 +143,7 @@ void host_ios_touch_reset(void) {
 @property(nonatomic,strong) HaloStick *moveStick;
 @property(nonatomic,strong) HaloStick *lookStick;
 @property(nonatomic,strong) NSMutableArray<HaloButton *> *buttons;
+@property(nonatomic,strong) UIButton *settingsButton;
 @end
 static __weak HaloControls *activeControls;
 void host_ios_touch_focus(void) {[activeControls becomeFirstResponder];}
@@ -152,7 +153,7 @@ void host_ios_touch_focus(void) {[activeControls becomeFirstResponder];}
     if(motion==UIEventSubtypeMotionShake)halo_debug_present();
     else [super motionEnded:motion withEvent:event];
 }
-- (void)openGraphicsDebug:(id)sender {(void)sender;halo_debug_present();}
+- (void)openGraphicsDebug:(id)sender {(void)sender;[self reset];halo_debug_present();}
 - (void)buildMenuWithBuilder:(id<UIMenuBuilder>)builder {
     [super buildMenuWithBuilder:builder];
     if(builder.system==UIMenuSystem.mainSystem) {
@@ -170,6 +171,14 @@ void host_ios_touch_focus(void) {[activeControls becomeFirstResponder];}
     if(!(self=[super initWithFrame:frame]))return nil;
     self.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
     self.multipleTouchEnabled=YES;self.buttons=[NSMutableArray array];
+    self.settingsButton=[UIButton buttonWithType:UIButtonTypeSystem];
+    [self.settingsButton setImage:[UIImage systemImageNamed:@"gearshape.fill"] forState:UIControlStateNormal];
+    self.settingsButton.tintColor=UIColor.whiteColor;
+    self.settingsButton.backgroundColor=[UIColor colorWithWhite:0 alpha:.28];
+    self.settingsButton.layer.cornerRadius=12;
+    self.settingsButton.accessibilityLabel=@"Graphics and controller settings";
+    [self.settingsButton addTarget:self action:@selector(openGraphicsDebug:) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:self.settingsButton];
     self.moveStick=[[HaloStick alloc]init];self.moveStick.firstAxis=SDL_GAMEPAD_AXIS_LEFTX;self.moveStick.caption=@"MOVE";
     self.lookStick=[[HaloStick alloc]init];self.lookStick.firstAxis=SDL_GAMEPAD_AXIS_RIGHTX;self.lookStick.caption=@"LOOK";
     for(HaloStick *s in @[self.moveStick,self.lookStick]){s.backgroundColor=UIColor.clearColor;s.isAccessibilityElement=YES;s.accessibilityLabel=s.caption;[self addSubview:s];}
@@ -207,6 +216,8 @@ void host_ios_touch_focus(void) {[activeControls becomeFirstResponder];}
     [super layoutSubviews];CGRect r=UIEdgeInsetsInsetRect(self.bounds,self.safeAreaInsets);
     CGFloat left=r.origin.x+16,right=CGRectGetMaxX(r)-16,bottom=CGRectGetMaxY(r)-12,top=r.origin.y+10;
     CGFloat stick=MIN(136,r.size.height*.32),s=44,gap=4;
+    // Settings remain reachable when a physical controller hides the gamepad.
+    self.settingsButton.frame=CGRectMake(right-44,top,44,44);
     self.moveStick.frame=CGRectMake(left,bottom-stick,stick,stick);
     self.lookStick.frame=CGRectMake(right-3*s-20-stick,bottom-stick,stick,stick);
     // Four face buttons in the traditional diamond.
@@ -249,8 +260,13 @@ void host_ios_touch_attach(SDL_Window *window) {
     activeControls=controls;
     [controls becomeFirstResponder];
     [UIMenuSystem.mainSystem setNeedsRebuild];
-    if([NSProcessInfo.processInfo.environment[@"HALO_IOS_TEST_DEBUG_UI"] boolValue])
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC*3),dispatch_get_main_queue(),^{[native.rootViewController motionEnded:UIEventSubtypeMotionShake withEvent:nil];});
+    NSString *debugTest=NSProcessInfo.processInfo.environment[@"HALO_IOS_TEST_DEBUG_UI"];
+    if([debugTest boolValue] || [debugTest isEqualToString:@"button"])
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC*3),dispatch_get_main_queue(),^{
+            if([debugTest isEqualToString:@"button"])
+                [controls.settingsButton sendActionsForControlEvents:UIControlEventTouchUpInside];
+            else [native.rootViewController motionEnded:UIEventSubtypeMotionShake withEvent:nil];
+        });
     host_logf(HOST_LOG_INFO,"touch controls attached, %.0fx%.0f",root.bounds.size.width,root.bounds.size.height);
 }
 

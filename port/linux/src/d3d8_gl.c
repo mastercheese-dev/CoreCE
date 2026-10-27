@@ -1470,8 +1470,12 @@ static GLuint framebuffer_find(GLuint color, GLuint depth, BOOL renderbuffers)
 			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, depth, 0);
 	}
 	glDrawBuffers(1, &draw_buffer);
-	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-		platform_log("framebuffer %u/%u%s is incomplete", color, depth, renderbuffers ? " (multisampled)" : "");
+	{
+		GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+		if (status != GL_FRAMEBUFFER_COMPLETE)
+			platform_log("framebuffer %u/%u%s is incomplete (status 0x%x, GL error 0x%x)",
+				color, depth, renderbuffers ? " (multisampled)" : "", status, glGetError());
+	}
 	xgpu_gl_state_invalidate();
 	entry->next = framebuffers;
 	framebuffers = entry;

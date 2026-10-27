@@ -106,15 +106,13 @@ int main(int argc, char **argv) {
         // Fail before asking the user to spend time importing a large image.
         if ([NSProcessInfo.processInfo.environment[@"HALO_IOS_TEST_STARTUP_ERROR"] boolValue] ||
             host_memory_initialize(HALO_IOS_IMAGE_BASE, HALO_IOS_IMAGE_SIZE))
-            host_fatal("iOS could not reserve the game's required memory range (0x%llx, %llu MiB).\n\n"
-                "The running process needs Extended Virtual Addressing. A missing signing capability "
-                "or a container's address-space restrictions can cause this failure.\n\n"
-                "Try installing this app directly using the re-signing guide and a profile that grants "
-                "Extended Virtual Addressing. LiveContainer does not inherit a guest app's entitlements; "
-                "Fix File Picker does not change memory permissions. LiveContainer compatibility is not verified.\n\n"
-                "Your imported game and saves have not been removed. Re-importing the ISO will not fix "
-                "this memory error. Details are in save/halo.log.",
-                (unsigned long long)HALO_MACOS_BIAS,(unsigned long long)(HALO_ARENA_SIZE/(1024*1024)));
+            host_fatal("iOS could not reserve an aligned %llu MiB virtual memory region for the game.\n\n"
+                "This build does not require Extended Virtual Addressing. The running process may "
+                "have insufficient contiguous address space, particularly inside an app container.\n\n"
+                "Try closing and reopening the app, or installing it directly instead of inside "
+                "LiveContainer. Your imported game and saves have not been removed. Re-importing "
+                "the ISO will not fix this memory error. Details are in save/halo.log.",
+                (unsigned long long)(HALO_ARENA_SIZE/(1024*1024)));
         NSString *data = halo_game_store_current(documents);
         NSString *legacy = [documents stringByAppendingPathComponent:@"GameData"];
         // Existing innerhat extracted maps and our retained ISO generations
@@ -137,11 +135,6 @@ int main(int argc, char **argv) {
                                          options:NSDataWritingAtomic error:&brokerError])
             host_logf(HOST_LOG_ERROR, "Cannot install server discovery brokers: %s",
                       brokerError.localizedDescription.UTF8String ?: "bundled brokers.txt is missing");
-        NSURL *film = [NSBundle.mainBundle URLForResource:@"opening_frames" withExtension:@"bin"];
-        if (film)
-            setenv("HALO_OPENING_FILM", film.fileSystemRepresentation, 1);
-        else
-            host_logf(HOST_LOG_ERROR, "bundled opening film is missing");
         // A sandbox-relative shortcut for opt-in device frame profiling.
         const char *profile = getenv("HALO_PERF_LOG");
         if (profile && !strcmp(profile, "1"))

@@ -6,6 +6,12 @@
 #include <unistd.h>
 #include <CommonCrypto/CommonDigest.h>
 
+NSURL *HaloDefaultSupportDirectory(void) {
+    NSURL *support = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                        inDomains:NSUserDomainMask].firstObject;
+    return [support URLByAppendingPathComponent:@"CoreCE" isDirectory:YES];
+}
+
 static NSError *failure(NSString *message) {
     return [NSError errorWithDomain:@"HaloGameData" code:1
                           userInfo:@{NSLocalizedDescriptionKey: message}];
@@ -142,6 +148,9 @@ NSURL *HaloValidateGameData(NSURL *selection, NSError **error) {
     return root;
 }
 
+static NSDictionary *migrationCopyFile(NSURL *source, NSURL *target, NSURL *staging,
+    unsigned long long *done, unsigned long long total, xiso_progress_proc progress, void *context, NSError **error);
+
 NSURL *HaloImportDiscImage(NSURL *image, NSURL *supportDirectory,
                           xiso_progress_proc progress, void *context, NSError **error) {
     /* A new directory for every import. Failed imports never replace working data. */
@@ -149,13 +158,34 @@ NSURL *HaloImportDiscImage(NSURL *image, NSURL *supportDirectory,
                           URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES];
     if (![NSFileManager.defaultManager createDirectoryAtURL:destination withIntermediateDirectories:YES
                                                 attributes:nil error:error]) return nil;
+    /* Retain a verified private image, not a bookmark to removable user data.
+       Security scope remains open through copy and validation, including when
+       this function is called from a background import queue. */
+    BOOL scoped = [image startAccessingSecurityScopedResource];
+    NSURL *privateImage = [destination URLByAppendingPathComponent:@"disc.iso"];
+    unsigned long long done = 0;
+    NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:image.path error:error];
+    NSDictionary *integrity = attributes ? migrationCopyFile(image, privateImage, destination,
+        &done, [attributes[NSFileSize] unsignedLongLongValue], progress, context, error) : nil;
+    if (scoped) [image stopAccessingSecurityScopedResource];
     char detail[512] = {0};
-    BOOL extracted = xiso_extract_maps(image.fileSystemRepresentation, destination.fileSystemRepresentation,
-                                      progress, context, detail, sizeof(detail));
+    BOOL extracted = integrity && xiso_extract_maps(privateImage.fileSystemRepresentation,
+        destination.fileSystemRepresentation, progress, context, detail, sizeof(detail));
     NSURL *validated = extracted ? HaloValidateGameData(destination, error) : nil;
+    if (validated) {
+        NSMutableDictionary *manifest = [integrity mutableCopy];
+        manifest[@"version"] = @1;
+        manifest[@"originalName"] = image.lastPathComponent;
+        if (![manifest writeToURL:[destination URLByAppendingPathComponent:@"integrity.plist"] atomically:YES]) {
+            if (error) *error = failure(@"Could not save the disc image integrity record.");
+            validated = nil;
+        }
+        [destination setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:nil];
+    }
     if (!validated) {
         [NSFileManager.defaultManager removeItemAtURL:destination error:nil];
-        if (!extracted && error) *error = failure([NSString stringWithUTF8String:detail] ?: @"The disc image could not be read.");
+        if (integrity && !extracted && error)
+            *error = failure([NSString stringWithUTF8String:detail] ?: @"The disc image could not be read.");
     }
     return validated;
 }
@@ -309,7 +339,7 @@ static BOOL migrationCompleted(NSURL *legacy, NSURL *destination) {
         [record[@"destination_path"] isEqual:destination.path];
 }
 static NSURL *supportParent(void) {
-    return [NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support"] isDirectory:YES];
+    return [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
 }
 static BOOL supportDirectoryExists(NSURL *directory) {
     struct stat info;
@@ -317,16 +347,16 @@ static BOOL supportDirectoryExists(NSURL *directory) {
 }
 NSURL *HaloLegacySupportDirectory(void) {
     NSURL *parent = supportParent();
-    NSURL *renamed = [parent URLByAppendingPathComponent:@"OpenCE" isDirectory:YES];
-    if (supportDirectoryExists(renamed)) return renamed;
-    NSURL *previous = [parent URLByAppendingPathComponent:@"Halo OG" isDirectory:YES];
+    NSURL *previous = [parent URLByAppendingPathComponent:@"OpenCE" isDirectory:YES];
+    if (supportDirectoryExists(previous)) return previous;
+    previous = [parent URLByAppendingPathComponent:@"Halo OG" isDirectory:YES];
     if (supportDirectoryExists(previous)) return previous;
     NSURL *older = [parent URLByAppendingPathComponent:@"Halo CE Universal" isDirectory:YES];
     return supportDirectoryExists(older) ? older : nil;
 }
 BOOL HaloSupportDirectoryNeedsMigration(NSURL *directory) {
     if (getenv("HALO_SAVE_ROOT")) return NO;
-    NSURL *canonical = [supportParent() URLByAppendingPathComponent:@"CoreCE" isDirectory:YES].URLByStandardizingPath.URLByResolvingSymlinksInPath;
+    NSURL *canonical = HaloDefaultSupportDirectory().URLByStandardizingPath.URLByResolvingSymlinksInPath;
     if (![directory.URLByStandardizingPath.URLByResolvingSymlinksInPath.path isEqual:canonical.path]) return NO;
     /* The finished record stores the standardized paths. Compare those, or a
        completed copy looks unfinished and the launch window returns. */

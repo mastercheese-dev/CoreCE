@@ -48,7 +48,8 @@ def main():
         if ios:
             out += [f"\tmovz w16, #:abs_g0_nc:__host_import_table+{offset}",
                     f"\tmovk w16, #:abs_g1_nc:__host_import_table+{offset}",
-                    f"\torr x16, x16, #{'0x10000000000' if simulator else '0x7000000000'}", "\tldr x16, [x16]"]
+                    "\tmov x17, sp", "\tand x17, x17, #0xffffffff00000000",
+                    "\torr x16, x16, x17", "\tldr x16, [x16]"]
         else:
             out += [f"\tadrp x16, __host_import_table+{offset}",
                     f"\tldr x16, [x16, :lo12:__host_import_table+{offset}]"]

@@ -1,5 +1,8 @@
 #import <Foundation/Foundation.h>
 
+/* Foundation resolves this inside the sandbox container in sandboxed builds. */
+NSURL *HaloDefaultSupportDirectory(void);
+
 /* User data stays outside the signed app and survives an application update. */
 @interface HaloPreferences : NSObject
 @property(nonatomic, readonly) NSURL *supportDirectory;

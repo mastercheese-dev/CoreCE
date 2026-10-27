@@ -1,10 +1,22 @@
 # iPhone development build
 
-This port targets iPhone 17 Pro Max, arm64, iOS 26.0 or later. It uses the
-existing game and Xbox SDK inputs from the local Mac setup. The renderer uses
-ANGLE's Metal backend and inherits the Mac vertex-upload and occlusion-query
-fixes. The first build uses the display's landscape aspect ratio at a 480-pixel
-internal height, scaled to the native drawable.
+Native ARM64 iOS/iPadOS 26+ build using innerhat's signed ILP32 runtime and
+ANGLE Metal renderer. Both iPhone and iPad are supported by the app bundle.
+No game data is packaged: first launch presents **Choose Halo ISO** in Files.
+Import validates supported original Xbox PAL/NTSC-US maps, verifies a retained
+private image by SHA-256 readback, and atomically publishes the new map cache.
+Subsequent launches reuse it. Existing imports/saves from our earlier branch
+and existing innerhat `Documents/GameData/maps` installations remain readable
+when the same bundle ID and account are used. Different IDs have separate data.
+
+## Historical test IPA
+
+[Download the unsigned IPA and re-signing kit](https://github.com/AttilaTheFun/halo-ce-universal/releases/tag/apple-ios-pr1-20261013) from the earlier PR revision. That download is not a build of the refreshed branch.
+Follow [the re-signing guide](RESIGNING.md). Source builds starting at build 17
+no longer require Extended Virtual Addressing. Free-account AltStore and
+LiveContainer installation remain unverified; older downloads still require it.
+You supply your own game image on first launch. No device ID needs to be sent
+to the maintainer when you use your own signing account.
 
 ## Build
 
@@ -18,13 +30,11 @@ Sign into Xcode → Settings → Accounts with your own Apple account. Connect a
 unlock the iPhone, trust the Mac, and enable Developer Mode in Settings →
 Privacy & Security (restart and confirm when prompted).
 
-A paid development team was required to provision
-`com.apple.developer.kernel.extended-virtual-addressing` in testing; Xcode rejected
-this capability for Personal Teams. The generic capability is in
-[Halo.entitlements](Halo.entitlements). It expands virtual address space without
-allocating that amount of physical RAM. If provisioning fails, check that your
-team/profile supports this capability; removing it will not produce a working
-physical-device build.
+The current source does not request Extended Virtual Addressing or Increased
+Memory Limit. The guest arena is selected at runtime; no JIT entitlement is
+required. Your signing profile must still cover the chosen app identifier and
+the device. A paid development identity was used for our tests; free-account
+sideloading is not independently verified on this refreshed branch.
 
 Find your own Team ID in your Apple developer membership, and choose a unique
 reverse-DNS app identifier. Replace both example values below:
@@ -38,8 +48,10 @@ This compiles the game, builds SDL and the native host, and asks Xcode to
 provision/sign with your local account. Game data is imported in the app. No signing identity is
 provided by this repository. Outputs:
 
-- `build/ios/device/Release-iphoneos/Halo.app`
-- `build/ios/device/HaloIOS.xcodeproj` (select the **Halo** scheme)
+The runtime reserves an OS-selected aligned virtual arena without Extended
+Virtual Addressing or Increased Memory Limit. No JIT entitlement is used. A development
+or Ad Hoc profile must cover the installing device. See the [IPA re-signing
+guide](RESIGNING.md) for a locally held identity/profile workflow.
 
 Omit `--sign` and `--team` for an unsigned compile check. To use the Xcode UI,
 open the generated project, choose your team under Signing & Capabilities,
@@ -49,7 +61,7 @@ source, so pass your team and bundle ID on subsequent signed command-line builds
 
 `--host-only` reuses the compiled game image for signing/UI-only changes. Omit it
 when game sources, compiler code or generated bridges change. `--platform both`
-builds the simulator and device hosts from the same engine image.
+builds separate simulator and device products from the same source.
 
 ## Install on a phone
 
@@ -149,14 +161,12 @@ are embedded into the app's signed Mach-O `__TEXT,__halo` section at build time.
 The ELF is an intermediate build artifact, not runtime-loaded executable code.
 No JIT, writable executable mapping or runtime instruction patching is used.
 
-The LLVM adapter materializes original game addresses and translates data
-accesses into a separate non-executable arena at `0x7000000000` on a device.
-The simulator uses the Mac arena at `0x10000000000`. Only the span
-below guest address `0x90000000` is reserved (2.25 GB of virtual space); actual
-memory is committed as used. Indirect calls add an immutable code-image delta.
-Native callbacks use the same translation. Thread-local control blocks are
-lowered before rebasing. iOS has a distinct ABI version to prevent mixing its
-image with the Mac or Android loaders.
+The LLVM adapter translates original 32-bit game addresses into an OS-selected,
+4-GiB-aligned non-executable arena on iOS, including the simulator. The reserved
+span is 2.25 GiB of virtual space; physical memory is committed as used. Compiler
+pointer translation, import stubs and graphics bridges share its runtime base.
+Executable code stays in the signed image, and indirect calls use its immutable
+code-image delta. See [the dynamic arena design](../../docs/apple-ios-dynamic-arena.md).
 
 ## Verification
 
@@ -201,3 +211,18 @@ rows cover different workloads; these short checks do not establish a sustained
 Bink movies remain unsupported, as in the Mac port. Multiplayer, sustained
 thermal behavior, background/resume behavior and the full campaign require
 separate device testing before treating this as a finished iPhone release.
+
+## Graphics and controller settings
+
+Tap the gear button at the top right of the game view, or shake the phone, to
+open Graphics & Diagnostics. The gear remains available with a paired controller.
+For split screen, enable **Touch as a separate player**, relaunch, then use
+**Add Player** and select the additional profile with the physical controller.
+By default, touch and the primary hardware controller share player one, and
+pairing hardware hides the touch gamepad. Disconnecting it restores touch.
+
+## Server compatibility
+
+This CoreCE-based branch uses protocol 34 and CoreCE's discovery namespace.
+It cannot discover or join mainline OpenCE protocol-38 servers. Build success or
+a populated CoreCE browser must not be presented as proof of mainline cross-play.

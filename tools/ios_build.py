@@ -36,8 +36,11 @@ def build_app(platform, args):
         settings += ['CODE_SIGNING_ALLOWED=NO']
     else:
         settings += ['-allowProvisioningUpdates']
-    run(cmake, '--build', directory, '--config', 'Release', '--target', 'Halo', '--', *settings)
     app = directory / f'Release-{sdk}' / 'Halo.app'
+    # Xcode retains removed resources in incremental products. Remove the old
+    # bundled film before the build/sign phase, including automatically signed builds.
+    (app / 'opening_frames.bin').unlink(missing_ok=True)
+    run(cmake, '--build', directory, '--config', 'Release', '--target', 'Halo', '--', *settings)
     if platform == 'simulator':
         for framework in sorted((app / 'Frameworks').glob('*.framework')):
             run('codesign', '--force', '--sign', '-', framework)
@@ -67,8 +70,7 @@ def main():
         build_plugin()
         return
     for platform in (['simulator', 'device'] if args.platform == 'both' else [args.platform]):
-        # The device image sits above iOS's GPU carveout. The simulator image
-        # uses the Mac arena. One image cannot boot in both places.
+        # Keep platform artifacts separate, even though both use a dynamic arena.
         os.environ['HALO_IOS_SIMULATOR'] = '1' if platform == 'simulator' else '0'
         guest = ROOT / ('build/ios-simulator' if platform == 'simulator' else 'build/ios')
         if not args.host_only:

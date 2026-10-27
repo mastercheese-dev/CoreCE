@@ -12,14 +12,10 @@
 #include "halo_android_abi.h"
 
 #ifdef HALO_IOS
-#if defined(HALO_IOS_SIMULATOR)
-#define HALO_MACOS_BIAS UINT64_C(0x10000000000)
-#else
-/* iOS reserves 64 GB through 448 GB for the GPU. Extended virtual
-   addressing ends at 512 GB, so the device arena starts after that
-   carveout and stays under the limit. */
-#define HALO_MACOS_BIAS UINT64_C(0x7000000000)
-#endif
+/* Chosen by vm_map with 4-GB alignment, within the process's normal VA.
+ * Guest stacks share these upper bits; generated code derives its bias from SP. */
+extern uintptr_t host_ios_arena;
+#define HALO_MACOS_BIAS host_ios_arena
 /* The allocator, Xbox window and linked image all fit below 0x90000000.
  * Reserve only that span so UIKit/Metal can use the rest of the address space. */
 #define HALO_ARENA_SIZE UINT64_C(0x90000000)

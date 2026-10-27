@@ -8,6 +8,7 @@
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.3.0</string>
 <key>CFBundleVersion</key><string>12</string>
+<key>HaloRequiresExtendedVirtualAddressing</key><false/>
 <key>LSRequiresIPhoneOS</key><true/>
 <key>MinimumOSVersion</key><string>26.0</string>
 <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string><string>metal</string></array>

@@ -42,8 +42,6 @@ def main():
         parser.error('Provisioning profile has expired.')
     if 'iOS' not in profile.get('Platform', []):
         parser.error('An iOS provisioning profile is required.')
-    if not profile['Entitlements'].get('com.apple.developer.kernel.extended-virtual-addressing'):
-        parser.error('This runtime requires a profile with Extended Virtual Addressing enabled.')
     devices = profile.get('ProvisionedDevices', [])
     if not devices:
         parser.error('Use a development or Ad Hoc profile containing registered devices, not an App Store profile.')
@@ -66,10 +64,8 @@ def main():
         parser.error('Select one installed signing identity whose certificate is included in the profile. '
                      'Use security find-identity -v -p codesigning to list identities.')
     identity = matches[0][0]
-    # Keep the required memory capability, but do not inherit unrelated
-    # entitlements from the old signature or grant every profile entitlement.
+    # Grant only required capabilities, not every entitlement in the profile.
     entitlements = {'application-identifier': app_id,
-                    'com.apple.developer.kernel.extended-virtual-addressing': True,
                     'com.apple.developer.team-identifier': team,
                     'get-task-allow': bool(allowed.get('get-task-allow', False))}
     if any(permits(pattern, app_id) for pattern in allowed.get('keychain-access-groups', [])):
@@ -91,6 +87,13 @@ def main():
         app = apps[0]
         info_path = app/'Info.plist'
         info = plistlib.loads(info_path.read_bytes())
+        # Older IPAs still hardcode the extended-VA arena. Missing metadata
+        # must retain their entitlement requirement when using a newer kit.
+        if info.get('HaloRequiresExtendedVirtualAddressing', True) is not False:
+            capability = 'com.apple.developer.kernel.extended-virtual-addressing'
+            if not allowed.get(capability):
+                parser.error('This older IPA requires Extended Virtual Addressing. Download build 17 or newer.')
+            entitlements[capability] = True
         if (info.get('CFBundleExecutable') not in ('Halo', 'HaloCE')
                 or info.get('CFBundleSupportedPlatforms') != ['iPhoneOS']
                 or not (app/info['CFBundleExecutable']).is_file()):

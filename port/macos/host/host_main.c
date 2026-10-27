@@ -173,11 +173,8 @@ int main(int argc, char **argv) {
             fclose(setting);
         }
     }
-    const char *home = getenv("HOME");
-    if (!home)
-        host_fatal("HOME is not set");
-    snprintf(default_saves, sizeof(default_saves),
-             "%s/Library/Application Support/CoreCE", home);
+    if (!host_menu_default_support(default_saves, sizeof(default_saves)))
+        host_fatal("Cannot locate private application storage");
     const char *saves = getenv("HALO_SAVE_ROOT");
     if (!saves)
         saves = !image_argument ? default_saves : "build/macos/saves";

@@ -583,7 +583,7 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     host_sdl_release_mouse();
     NSOpenPanel *panel = NSOpenPanel.openPanel;
     panel.title = @"Choose Your Xbox Halo Disc Image";
-    panel.message = @"The app imports only the maps from your local disc image.";
+    panel.message = @"CoreCE copies and verifies your disc image in its private storage.";
     panel.canChooseDirectories = NO;
     panel.canChooseFiles = YES;
     panel.allowsMultipleSelection = NO;
@@ -620,7 +620,7 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
             self.importing = NO;
             [window orderOut:self];
             NSError *selectionError = error;
-            BOOL succeeded = imported && [self.preferences selectDataRoot:imported iso:image error:&selectionError];
+            BOOL succeeded = imported && [self.preferences selectDataRoot:imported iso:[imported URLByAppendingPathComponent:@"disc.iso"] error:&selectionError];
             if (!succeeded) {
                 if (imported) [NSFileManager.defaultManager removeItemAtURL:imported error:nil];
                 showError(selectionError);
@@ -662,7 +662,7 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     [self showSettings:nil];
     NSOpenPanel *panel = NSOpenPanel.openPanel;
     panel.title = @"Choose Your Xbox Halo Disc Image";
-    panel.message = @"The app imports only the maps from your local disc image.";
+    panel.message = @"CoreCE copies and verifies your disc image in its private storage.";
     panel.canChooseDirectories = NO;
     panel.canChooseFiles = YES;
     panel.allowsMultipleSelection = NO;
@@ -985,5 +985,11 @@ void host_menu_finish_game(int exit_code) {
                 [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
         }
         if (menu.status) [NSStatusBar.systemStatusBar removeStatusItem:menu.status];
+    }
+}
+
+int host_menu_default_support(char *path, size_t capacity) {
+    @autoreleasepool {
+        return [HaloDefaultSupportDirectory() getFileSystemRepresentation:path maxLength:capacity];
     }
 }
