@@ -54,6 +54,9 @@ and entry points used below that ES lacks */
 #ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
 #define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84fe
 #endif
+#ifndef GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84ff
+#endif
 #ifndef GL_TEXTURE_BORDER_COLOR
 #define GL_TEXTURE_BORDER_COLOR 0x1004
 #endif
@@ -3125,11 +3128,47 @@ static GLuint sampler_get(int stage, const DWORD *inputs)
 	return sampler;
 }
 
+/* display.anisotropic_filtering: the most texels along a pixel's footprint
+that a texture with mip levels is sampled with where the game filters it
+linearly. 0 or 1 keeps the game's own filtering. The Xbox game asks for none
+(it never sets D3DTEXF_ANISOTROPIC or D3DTSS_MAXANISOTROPY), so floors, walls
+and terrain seen at a grazing angle blur toward their smaller mip levels.
+At most the GPU's most, and none on GLES without
+GL_EXT_texture_filter_anisotropic. */
+static long anisotropic_level = -1;
+static unsigned long anisotropic_level_read_at;
+
+static DWORD anisotropic_filtering(void)
+{
+	if (anisotropic_level < 0 || anisotropic_level_read_at != config_changes())
+	{
+		long level = config_integer("display.anisotropic_filtering");
+		GLint maximum = 1;
+
+		anisotropic_level_read_at = config_changes();
+#ifdef HALO_GLES
+		if (xgpu_capabilities.anisotropy)
+			glGetIntegerv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maximum);
+#else
+		glGetIntegerv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maximum);
+#endif
+		if (level > (long)maximum)
+			level = (long)maximum;
+		if (level < 1)
+			level = 1;
+		if (level != anisotropic_level)
+			platform_log("anisotropic filtering: %ldx (the GPU's most %dx)", level, (int)maximum);
+		anisotropic_level = level;
+	}
+	return (DWORD)anisotropic_level;
+}
+
 /* hires: a high-res HUD texture (hud_hires.h), drawn smaller than it is, so
 filtered and, when it has mip levels, from those whatever the game asks. A
 picture with one level is sampled from that level. The HUD's meters are
-point sampled for one player, to keep the Xbox bitmaps' texels sharp */
-static void configure_sampler(int stage, BOOL mipmapped, BOOL hires)
+point sampled for one player, to keep the Xbox bitmaps' texels sharp.
+rendered: a render target the game draws into (the water's ripples, shadows) */
+static void configure_sampler(int stage, BOOL mipmapped, BOOL hires, BOOL rendered)
 {
 	/* the texture stage state each stage's sampler was last chosen by */
 	static DWORD configured[D3DTSS_MAXSTAGES][SAMPLER_STATE_WORDS];
@@ -3150,6 +3189,16 @@ static void configure_sampler(int stage, BOOL mipmapped, BOOL hires)
 	inputs[8] = state[D3DTSS_MAXANISOTROPY];
 	inputs[9] = state[D3DTSS_BORDERCOLOR];
 	inputs[10] = hires;
+	/* display.anisotropic_filtering, over the game's linear filtering of the
+	maps' textures with mip levels. Not of what the game renders: at 16x the
+	water's ripple map turned the far ocean into noise. */
+	if (!hires && mipmapped && !rendered && inputs[1] != D3DTEXF_NONE &&
+		(inputs[0] == D3DTEXF_LINEAR || inputs[0] == D3DTEXF_ANISOTROPIC) && anisotropic_filtering() > 1)
+	{
+		inputs[0] = D3DTEXF_ANISOTROPIC;
+		if (inputs[8] < anisotropic_filtering())
+			inputs[8] = anisotropic_filtering();
+	}
 	if (!configured_sampler[stage] || memcmp(configured[stage], inputs, sizeof(inputs)))
 	{
 		memcpy(configured[stage], inputs, sizeof(inputs));
@@ -3491,7 +3540,7 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 			}
 			gl_targets[stage] = gl_target;
 			gl_textures[stage] = gl_texture;
-			configure_sampler(stage, description.levels > 1, description.hires);
+			configure_sampler(stage, description.levels > 1, description.hires, target != NULL);
 			texture_border_key(key, stage, gl_target, &description);
 			if (stage == 0)
 			{

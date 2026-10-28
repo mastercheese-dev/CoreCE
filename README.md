@@ -131,6 +131,7 @@ The game keeps the Xbox look until a setting says otherwise.
 | Option | What it does | Default |
 | --- | --- | --- |
 | ANTI-ALIASING | FXAA, SMAA, MSAA, or SSAA | Off, as on the Xbox |
+| TEXTURE FILTERING | Sample floors, walls and terrain along a grazing angle, 2x to 16x | Off, as on the Xbox |
 | SHADOW RESOLUTION | Object shadows at 128 (the Xbox's), 256, 512, or 1024 pixels | 128 |
 | PER-PIXEL LIGHTING | Lights models for each pixel | Off |
 | MODEL DETAIL | Stock uses the Xbox's 480 lines. Native uses this display. Highest keeps the most detail. | Stock |

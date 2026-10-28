@@ -21,6 +21,9 @@ struct metal_draw_texture {
      * rendered aliases and optional hires replacements, not its old header. */
     uint32_t present, sampler_type, width, height, levels;
     uint32_t linear, hires, hires_coverage, hires_point_threshold, ce_meter_channels;
+    /* 1 when the bound resource is a render target or a composite of one
+     * (water ripples, shadows). Those keep the game's own filtering. */
+    uint32_t rendered;
 };
 struct metal_draw_state_input {
     const uint32_t *render_state;                 /* [144] */
@@ -62,6 +65,9 @@ struct metal_draw_state_input {
      * reconstruction with an otherwise identical opaque-white companion.
      * Only the two cap8192 sampling footprints and anisotropy1 are supported. */
     uint32_t native_volume_border;
+    /* display.anisotropic_filtering, already clamped to 1..16. 1 keeps the
+     * game's own filtering. Appended so earlier field offsets stay put. */
+    uint32_t anisotropic_level;
 };
 struct metal_draw_vertex_uniforms {
     float c[192][4], viewport_scale[4], viewport_offset[4];

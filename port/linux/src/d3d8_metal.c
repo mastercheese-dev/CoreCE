@@ -1934,6 +1934,24 @@ static struct native_program *program_get(struct vertex_shader_object *vertex,ui
     program_buckets[lookup&(NATIVE_PROGRAM_BUCKETS-1)]=entry;
     return entry;
 }
+/* display.anisotropic_filtering, clamped to the range Metal's sampler path
+validates (1..16). 1 is the Xbox's own filtering. Read again when a setting
+changes, so the Graphics screen applies without a restart. */
+static uint32_t metal_anisotropic_level(void) {
+    static long level=-1;
+    static unsigned long read_at;
+    if (level<0 || read_at!=config_changes()) {
+        long chosen=config_integer("display.anisotropic_filtering");
+        read_at=config_changes();
+        if (chosen>16) chosen=16;
+        if (chosen<1) chosen=1;
+        if (chosen!=level)
+            platform_log("anisotropic filtering: %ldx",chosen);
+        level=chosen;
+    }
+    return (uint32_t)level;
+}
+
 static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD *indices,BOOL immediate) {
     if (!count || !device.ready) return;
     struct vertex_shader_object *vertex=device.fixed_function_selected ? &fixed_function_vertex:current_program();
@@ -2009,6 +2027,7 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
     input.native_alpha_border=(transport.reply.capabilities&HALO_METAL_CAP_ALPHA_BORDER)!=0;
     input.native_volume=(transport.reply.capabilities&HALO_METAL_CAP_VOLUME)!=0;
     input.native_volume_border=(transport.reply.capabilities&HALO_METAL_CAP_VOLUME_BORDER)!=0;
+    input.anisotropic_level=metal_anisotropic_level();
     input.native_depth_contract=METAL_DRAW_DEPTH_RAW_D24;
     input.original_auto_depth_format=device.presentation.AutoDepthStencilFormat;
     input.depth_surface_format_word=device.depth_stencil ? device.depth_stencil->Format:0;
@@ -2031,7 +2050,8 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
         input.textures[stage]=(struct metal_draw_texture){1,bound[stage]->volume ? _xgpu_sampler_3d:
             d->cube_map ? _xgpu_sampler_cube:_xgpu_sampler_2d,
             d->width,d->height,d->levels,original.linear,d->hires,d->hires_coverage,
-            d->hires_point_threshold,meter_channels};
+            d->hires_point_threshold,meter_channels,
+            bound[stage]->mip_composite || (bound[stage]->usage&HALO_METAL_RENDER_TARGET) ? 1u : 0u};
         input.texture_depth[stage]=bound[stage]->volume ? d->depth:0;
     }
     struct native_resource *color=target_get(device.render_target);

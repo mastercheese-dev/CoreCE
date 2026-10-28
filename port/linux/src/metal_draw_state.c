@@ -211,7 +211,7 @@ int metal_draw_state_pack(const struct metal_draw_state_input *in,
         const struct metal_draw_texture *t=&in->textures[stage];
         struct halo_metal_sampler *sampler=&out.samplers[stage];
         uint32_t mode=(k.texture_modes>>(5*stage))&31;
-        uint32_t min_filter,mag_filter,mip_filter,max_mip,axes,mip_limit,dimension;
+        uint32_t min_filter,mag_filter,mip_filter,max_mip,axes,mip_limit,dimension,anisotropy;
 #define TS_BAD(index,value,message) return fail(error,HALO_METAL_UNSUPPORTED,stage,index,value,message)
         k.alpha_kill[stage]=ts[D3DTSS_ALPHAKILL]==D3DTALPHAKILL_ENABLE;
         k.color_sign[stage]=(unsigned char)((ts[D3DTSS_COLORSIGN]>>28)&15);
@@ -229,7 +229,7 @@ int metal_draw_state_pack(const struct metal_draw_state_input *in,
             continue;
         }
         if(t->present!=1 || t->linear>1 || t->hires>1 || t->hires_coverage>1 ||
-            t->hires_point_threshold>1 || t->ce_meter_channels>1 ||
+            t->hires_point_threshold>1 || t->ce_meter_channels>1 || t->rendered>1 ||
             !t->width || !t->height || !t->levels)
             TS_BAD(0,0,"invalid effective texture metadata");
         if(t->sampler_type!=_xgpu_sampler_2d && t->sampler_type!=_xgpu_sampler_cube && t->sampler_type!=_xgpu_sampler_3d)
@@ -273,6 +273,20 @@ int metal_draw_state_pack(const struct metal_draw_state_input *in,
         mag_filter=t->hires?D3DTEXF_LINEAR:ts[D3DTSS_MAGFILTER];
         mip_filter=t->hires?D3DTEXF_LINEAR:ts[D3DTSS_MIPFILTER];
         max_mip=t->hires?0:ts[D3DTSS_MAXMIPLEVEL];
+        anisotropy=ts[D3DTSS_MAXANISOTROPY];
+        /* Map textures the game filters linearly, along the pixel's footprint.
+         * Volumes and border-addressed samplers stay as validated: Metal
+         * rejects anisotropic volumes, and the border paths require anisotropy 1.
+         * Render targets stay as the game asked (the water's ripple map). */
+        if(in->anisotropic_level>1 && !t->hires && !t->rendered && t->levels>1 &&
+            t->sampler_type!=_xgpu_sampler_3d && mip_filter!=D3DTEXF_NONE &&
+            (min_filter==D3DTEXF_LINEAR || min_filter==D3DTEXF_ANISOTROPIC) &&
+            ts[D3DTSS_ADDRESSU]!=D3DTADDRESS_BORDER && ts[D3DTSS_ADDRESSV]!=D3DTADDRESS_BORDER &&
+            ts[D3DTSS_ADDRESSW]!=D3DTADDRESS_BORDER) {
+            uint32_t level=in->anisotropic_level>16?16:in->anisotropic_level;
+            min_filter=D3DTEXF_ANISOTROPIC;
+            if(anisotropy<level) anisotropy=level;
+        }
         /* The replacement is drawn at the original HUD size. Match the GL
          * override's unbiased trilinear footprint instead of applying a bias
          * or minimum mip chosen for the much smaller Xbox bitmap. */
@@ -286,7 +300,7 @@ int metal_draw_state_pack(const struct metal_draw_state_input *in,
         sampler->min_filter=min_filter!=D3DTEXF_POINT;
         sampler->mag_filter=mag_filter!=D3DTEXF_POINT;
         sampler->mip_filter=t->levels>1?mip_filter:0;
-        sampler->max_anisotropy=min_filter==D3DTEXF_ANISOTROPIC && ts[D3DTSS_MAXANISOTROPY]>1?ts[D3DTSS_MAXANISOTROPY]:1;
+        sampler->max_anisotropy=min_filter==D3DTEXF_ANISOTROPIC && anisotropy>1?anisotropy:1;
         if(sampler->max_anisotropy>16) TS_BAD(D3DTSS_MAXANISOTROPY,sampler->max_anisotropy,"native anisotropy exceeds validated limit");
         if(t->sampler_type==_xgpu_sampler_3d && sampler->max_anisotropy!=1)
             TS_BAD(D3DTSS_MAXANISOTROPY,sampler->max_anisotropy,"volume anisotropy unverified");
