@@ -80,6 +80,11 @@ boolean network_game_client_idle(
 boolean network_game_client_add_player(
 	struct network_game_client *client,
 	short local_player_index);
+boolean network_game_client_add_named_player(
+	struct network_game_client *client,
+	short controller_index,
+	wchar_t const *name,
+	short color_index);
 boolean network_game_client_address_matches_server(
 	struct network_game_client *client,
 	struct transport_address *address);

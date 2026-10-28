@@ -133,12 +133,15 @@ unsigned long system_milliseconds(void);
 boolean ui_widget_port_dispatch_event(struct widget_instance *widget, short event_type, short controller_index,
 	boolean *deleted);
 void ui_widget_port_go_back(struct widget_instance *widget);
+/* back, skipping the screen under this one (the profile list, once a player is assigned) */
+void ui_widget_port_back_skipping_one(struct widget_instance *widget);
 short ui_widget_port_list_index(struct widget_instance *list_widget);
 boolean ui_widget_port_saved_game(char const **map_name, short *level, short *difficulty);
 char const *ui_widget_event_handler_function_name(long function_index);
 short main_get_solo_level_from_name(char const *name);
 boolean player_name_clean(wchar_t *name, long count);
 short players_port_local_player_count(void);
+short players_port_human_local_player_count(void);
 
 boolean pc_menu_event_function_invoke(struct widget_instance *widget, struct event_record *event,
 	long function_index, boolean *widget_deleted);
@@ -2479,7 +2482,8 @@ static void profile_list_update(struct widget_instance *list)
 	boolean bot;
 
 	profile_list_read(FALSE);
-	profile_list_bot_row = list->name && !strcmp(list->name, "player_profile_list");
+	if (!(list->name && !strcmp(list->name, "player_profile_list")))
+		profile_list_bot_row = FALSE;
 	item = list_scroll(list, &profile_list.first, profile_list_slots(), profile_list_rows());
 	if (item != NONE)
 		profile_list.chosen = item;
@@ -3479,6 +3483,8 @@ struct network_game *network_game_client_get_game(void *client);
 struct network_game *network_game_server_get_game(void *server);
 short network_game_client_get_local_machine_index(void);
 boolean network_game_client_add_player(void *client, short local_player_index);
+boolean network_game_client_add_named_player(void *client, short controller_index,
+	wchar_t const *name, short color_index);
 short network_game_client_get_seconds_to_game_start(void *client);
 boolean network_player_is_valid(struct network_player *player);
 boolean playlist_profile_get(long index, struct game_variant *variant);
@@ -5469,20 +5475,26 @@ gametype, the countdown */
 static struct network_player *lobby_players[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
 static short lobby_player_count;
 
-/* split screen: up to 4 players on this machine. In the lobby, a controller
-not playing presses START to join ("port lobby join"), then chooses a
-profile (its screen, "port lobby player choose"); ADD PLAYER ("port lobby
-add player") gives one gamepad its own controller first (as it shares
-player 1's: pc_menu_split_players). A player's B leaves the game alone ("port
-lobby leave"; the machine's last leaves it). In game, a player's pause menu's
-QUIT is theirs (the Xbox's "mp game player quit") */
+/* split screen: up to 4 players on this machine. ADD PLAYER opens the profile
+list at once ("port lobby add player"). A profile then asks for START on the
+controller, or ENTER for the keyboard ("port lobby assign"). A bot does not:
+it joins on a free seat and takes no pad. A player's B leaves the game alone
+("port lobby leave"; the machine's last leaves it). In game, a player's pause
+menu's QUIT is theirs (the Xbox's "mp game player quit") */
 static struct
 {
-	/* ADD PLAYER chosen: one gamepad is the new player's */
+	/* the profile list is open: one gamepad is its own controller, not
+	sharing player 1's with the keyboard */
 	boolean adding;
-	/* the controller choosing its profile, NONE if none */
+	/* the controller assigned to the profile, NONE until START or ENTER */
 	short controller;
-} lobby_join = { FALSE, NONE };
+	/* the profile chosen, NONE until then */
+	long profile;
+} lobby_join = { FALSE, NONE, NONE };
+
+/* the previewed game, found again among the client's (NULL: gone). defined
+with the preview screen, below */
+static struct advertised_game *preview_game(void);
 
 /* the client's player of the controller on this machine, NULL if none */
 static struct network_player *lobby_local_player(short controller)
@@ -5523,14 +5535,33 @@ static short lobby_local_player_count(void)
 	return count;
 }
 
-/* (xinput_sdl.c) whether this machine has, or is adding, a second player: co-op,
-or split screen in a network game (a player who quit keeps their part of the
-screen until the game ends). Then one gamepad is its own controller, not
-sharing player 1's with the keyboard */
+/* humans only. A bot keeps a controller index so it can be told from the
+other players, and that index is not a second view. */
+static short lobby_view_player_count(void)
+{
+	short controller, count = 0;
+	short machine = network_game_client_get_local_machine_index();
+
+	if (!global_network_game_client_get())
+		return 0;
+	for (controller = 0; controller < MAXIMUM_LOCAL_PLAYERS; controller++)
+	{
+		if (bot_controller_is_bot(machine, controller))
+			continue;
+		count += lobby_controller_playing(controller) ? 1 : 0;
+	}
+	return count;
+}
+
+/* (xinput_sdl.c) whether this machine has, or is adding, a second person:
+co-op, or split screen in a network game (a player who quit keeps their part
+of the screen until the game ends). Then one gamepad is its own controller,
+not sharing player 1's with the keyboard. A bot is not that person, and a
+spare view for one does not take the gamepad. */
 unsigned char pc_menu_split_players(void)
 {
 	return player_spawn_count >= 2 || lobby_join.adding || lobby_join.controller != NONE ||
-		lobby_local_player_count() >= 2 || players_port_local_player_count() >= 2;
+		lobby_view_player_count() >= 2 || players_port_human_local_player_count() >= 2;
 }
 
 /* the lobby's widget that has the focus (the one a press goes to) */
@@ -5548,6 +5579,37 @@ static boolean lobby_join_reset(void)
 {
 	lobby_join.adding = FALSE;
 	lobby_join.controller = NONE;
+	lobby_join.profile = NONE;
+	return TRUE;
+}
+
+/* room for another player on this machine, and in the game (the lobby's, or
+the preview's advertisement when that is what is open) */
+static boolean lobby_seat_available(void)
+{
+	void *client = global_network_game_client_get();
+	struct network_game *game = client ? network_game_client_get_game(client) : NULL;
+	struct advertised_game *preview;
+	short state_data;
+
+	if (lobby_local_player_count() >= MAXIMUM_LOCAL_PLAYERS)
+		return campaign_fail();
+	if (game && network_game_client_get_state(client, &state_data) == _client_state_pregame)
+	{
+		if (lobby_player_count >= game->maximum_players)
+		{
+			display_error_text_deferred(L"The game is full.", NONE);
+			return campaign_fail();
+		}
+		return TRUE;
+	}
+	preview = preview_game();
+	if (!preview || !preview->open ||
+		preview->player_count + lobby_local_player_count() >= preview->maximum_player_count)
+	{
+		display_error_text_deferred(preview ? L"The game is full." : L"The game is gone.", NONE);
+		return campaign_fail();
+	}
 	return TRUE;
 }
 
@@ -5558,39 +5620,28 @@ static boolean lobby_open(struct widget_instance *screen)
 	return TRUE;
 }
 
-/* "port lobby add player" (ADD PLAYER): the next START of another controller
-joins (one gamepad leaves the keyboard's controller for its own) */
+/* "port lobby add player" (ADD PLAYER): the profile list, at once. Which
+controller or the keyboard is chosen after a profile */
 static boolean lobby_add_player(void)
 {
-	if (lobby_local_player_count() >= MAXIMUM_LOCAL_PLAYERS)
-		return campaign_fail();
+	if (!lobby_seat_available())
+		return FALSE;
 	lobby_join.adding = TRUE;
+	lobby_join.controller = NONE;
+	lobby_join.profile = NONE;
 	return TRUE;
 }
 
-/* "port lobby join" (START): a controller not playing joins, choosing its
-profile next (FALSE: no profile screen); a player's START is the focused
-button's */
+/* "port lobby join" (START on the lobby): a controller not playing opens the
+same list; a player's START is the focused button's */
 static boolean lobby_join_start(struct widget_instance *widget, short controller, boolean *widget_deleted)
 {
-	void *client = global_network_game_client_get();
-	struct network_game *game = client ? network_game_client_get_game(client) : NULL;
-	short state_data;
-
 	if (lobby_controller_playing(controller))
 	{
 		ui_widget_port_dispatch_event(focused_leaf(widget), BUTTON_START, controller, widget_deleted);
 		return FALSE;
 	}
-	if (!game || network_game_client_get_state(client, &state_data) != _client_state_pregame)
-		return campaign_fail();
-	if (lobby_player_count >= game->maximum_players)
-	{
-		display_error_text_deferred(L"The game is full.", NONE);
-		return campaign_fail();
-	}
-	lobby_join.controller = controller;
-	return TRUE;
+	return lobby_add_player();
 }
 
 /* "port lobby leave" (B): a player leaves the game, the machine's last
@@ -5599,12 +5650,20 @@ ADD PLAYER */
 static boolean lobby_leave(struct widget_instance *widget, struct event_record *event, short controller,
 	boolean *widget_deleted)
 {
+	boolean left;
+
 	if (!lobby_controller_playing(controller))
 	{
 		lobby_join_reset();
 		return FALSE;
 	}
-	return ui_widget_port_unjoin_player(widget, event, widget_deleted);
+	left = ui_widget_port_unjoin_player(widget, event, widget_deleted);
+	/* leaving the lobby (the machine's last player). ADD PLAYER and a
+	profile still being chosen would keep this gamepad on its own port, and
+	the screen we return to only reads the first one */
+	if (left)
+		lobby_join_reset();
+	return left;
 }
 
 /* "port lobby player list initialize": on the joining controller's profile,
@@ -5614,7 +5673,7 @@ static boolean lobby_player_list_initialize(struct widget_instance *list)
 	long mine = lobby_join.controller != NONE ? player_ui_get_active_player_profile_index(lobby_join.controller) : NONE;
 	short index, controller;
 
-	profile_list_bot_row = TRUE;
+	profile_list_bot_row = multiplayer.mode == _multiplayer_mode_host_lan;
 	profile_list_read(TRUE);
 	profile_list.chosen = 0;
 	for (index = profile_list.count - 1; index >= 0; index--)
@@ -5643,27 +5702,24 @@ static boolean lobby_player_list_initialize(struct widget_instance *list)
 /* the next Bot name nobody in this game, or joining from here, already has */
 static wchar_t const *lobby_bot_name(void)
 {
-	static wchar_t const *const names[] = {
-		L"Bot1", L"Bot2", L"Bot3", L"Bot4",
-		L"Bot5", L"Bot6", L"Bot7", L"Bot8",
-		L"Bot9", L"Bot10", L"Bot11", L"Bot12",
-		L"Bot13", L"Bot14", L"Bot15", L"Bot16"
-	};
+	static wchar_t name[12];
 	void *client = global_network_game_client_get();
 	struct network_game *game = client ? network_game_client_get_game(client) : NULL;
-	short name_index;
+	short number;
 
-	for (name_index = 0; name_index < (short)NUMBEROF(names); name_index++)
+	for (number = 1; number < BOT_CONTROLLER_LIMIT; number++)
 	{
 		short index;
 		boolean taken = FALSE;
 
+		usnprintf(name, NUMBEROF(name) - 1, L"Bot%d", (int)number);
+		name[NUMBEROF(name) - 1] = 0;
 		for (index = 0; game && index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
 		{
 			struct network_player *player = &game->players[index];
 
 			if (network_player_is_valid(player) && player->player_list_index != NONE &&
-				!ustrcmp(player->name, names[name_index]))
+				!ustrcmp(player->name, name))
 				taken = TRUE;
 		}
 		for (index = 0; index < MAXIMUM_LOCAL_PLAYERS; index++)
@@ -5673,13 +5729,15 @@ static wchar_t const *lobby_bot_name(void)
 			if (!player_ui_local_player_wants_to_play_multiplayer(index))
 				continue;
 			player_ui_get_active_player_profile(index, &profile);
-			if (!ustrcmp(profile.player_name, names[name_index]))
+			if (!ustrcmp(profile.player_name, name))
 				taken = TRUE;
 		}
 		if (!taken)
-			return names[name_index];
+			return name;
 	}
-	return names[0];
+	usnprintf(name, NUMBEROF(name) - 1, L"Bot");
+	name[NUMBEROF(name) - 1] = 0;
+	return name;
 }
 
 /* the bot being set up on the add player screen, before it joins */
@@ -5692,6 +5750,9 @@ static boolean lobby_bot_begin(void)
 {
 	wchar_t const *name = lobby_bot_name();
 
+	/* ADD PLAYER had marked a second person, which moves the only gamepad
+	off the player who is already in. A bot does not take that pad. */
+	lobby_join_reset();
 	csmemset(lobby_bot_edit_name, 0, sizeof(lobby_bot_edit_name));
 	ustrncpy(lobby_bot_edit_name, name, NUMBEROF(lobby_bot_edit_name) - 1);
 	lobby_bot_skill = 1;
@@ -5712,7 +5773,7 @@ static void lobby_bot_update(struct widget_instance *list)
 		lobby_bot_skill_set = TRUE;
 	}
 	if (spinner && spinner->parameters.list.selected_index >= 0 &&
-		spinner->parameters.list.selected_index <= 3)
+		spinner->parameters.list.selected_index <= BOT_SKILL_IMPOSSIBLE)
 		lobby_bot_skill = spinner->parameters.list.selected_index;
 }
 
@@ -5722,8 +5783,8 @@ static boolean lobby_bot_rename(void)
 	return virtual_keyboard_launch(lobby_bot_edit_name, sizeof(lobby_bot_edit_name), 8);
 }
 
-/* a controller index this machine is not already playing on. The pad that
-opened this screen is left for that player */
+/* a controller index past the four pads. Those stay the people on this
+machine. A bot does not take one. */
 static short lobby_bot_seat(void)
 {
 	void *client = global_network_game_client_get();
@@ -5731,14 +5792,12 @@ static short lobby_bot_seat(void)
 	short machine = network_game_client_get_local_machine_index();
 	short controller;
 
-	for (controller = 0; controller < MAXIMUM_LOCAL_PLAYERS; controller++)
+	for (controller = MAXIMUM_LOCAL_PLAYERS; controller < BOT_CONTROLLER_LIMIT; controller++)
 	{
 		short index;
 		boolean taken = FALSE;
 
-		if (controller == lobby_join.controller ||
-			player_ui_local_player_wants_to_play_multiplayer(controller) ||
-			bot_controller_is_bot(machine, controller))
+		if (bot_controller_is_bot(machine, controller))
 			continue;
 		for (index = 0; game && index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
 		{
@@ -5759,12 +5818,15 @@ player who added it, and the screen goes back so another bot can be added */
 static boolean lobby_bot_add(void)
 {
 	void *client = global_network_game_client_get();
-	struct player_profile saved;
 	struct player_profile bot;
-	long saved_index;
 	long skill;
 	short seat;
 
+	if (multiplayer.mode != _multiplayer_mode_host_lan)
+	{
+		display_error_text_deferred(L"Bots can only be added in a LAN game.", NONE);
+		return FALSE;
+	}
 	if (!client || !global_network_game_server_get())
 	{
 		display_error_text_deferred(L"Only the host can add a bot.", NONE);
@@ -5777,7 +5839,7 @@ static boolean lobby_bot_add(void)
 		return FALSE;
 	}
 	skill = lobby_bot_skill;
-	if (skill < 0 || skill > 3)
+	if (skill < 0 || skill > BOT_SKILL_IMPOSSIBLE)
 		skill = 1;
 	if (!player_name_clean(lobby_bot_edit_name, NUMBEROF(lobby_bot_edit_name)) || !lobby_bot_edit_name[0])
 	{
@@ -5786,38 +5848,104 @@ static boolean lobby_bot_add(void)
 		csmemset(lobby_bot_edit_name, 0, sizeof(lobby_bot_edit_name));
 		ustrncpy(lobby_bot_edit_name, name, NUMBEROF(lobby_bot_edit_name) - 1);
 	}
-	player_ui_get_active_player_profile(0, &bot);
-	csmemset(bot.player_name, 0, sizeof(bot.player_name));
-	ustrncpy(bot.player_name, lobby_bot_edit_name, NUMBEROF(bot.player_name) - 1);
-	saved_index = player_ui_get_active_player_profile_index(seat);
-	player_ui_get_active_player_profile(seat, &saved);
-	player_ui_set_active_player_profile(seat, NONE, &bot);
-	if (!network_game_client_add_player(client, seat))
 	{
-		player_ui_set_active_player_profile(seat, saved_index, &saved);
-		return campaign_fail();
+		struct network_game *game = network_game_client_get_game(client);
+		short index;
+		short seated = 0;
+		short humans = 0;
+
+		/* bots fill the seats the lobby has left. One seat stays a person,
+		so a 4 player game allows 3 bots, and fewer once more people join */
+		for (index = 0; game && index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
+		{
+			struct network_player *player = &game->players[index];
+
+			if (!network_player_is_valid(player) || player->player_list_index == NONE)
+				continue;
+			seated++;
+			if (!bot_controller_is_bot(player->machine_index, player->controller_index))
+				humans++;
+		}
+		if (!game || seated >= game->maximum_players ||
+			(humans < 1 && seated >= game->maximum_players - 1))
+		{
+			display_error_text_deferred(L"The lobby is full.", NONE);
+			return FALSE;
+		}
 	}
-	player_ui_set_active_player_profile(seat, saved_index, &saved);
+	player_ui_get_active_player_profile(0, &bot);
+	if (!network_game_client_add_named_player(client, seat, lobby_bot_edit_name, bot.primary_color_index))
+		return campaign_fail();
 	bot_controller_set(network_game_client_get_local_machine_index(), seat, skill);
+	lobby_join_reset();
 	return TRUE;
 }
 
-/* "port lobby player choose": the joining controller's player on the profile
-chosen (the lobby's "net splitscreen prejoin players" adds them). BOT opens
-the bot screen instead, and does not take this controller */
+/* "port lobby player choose": a profile opens the screen that asks for START
+or ENTER. BOT opens the bot screen instead, on a free seat, and does not take
+a controller */
 static boolean lobby_player_choose(void)
 {
-	short controller = lobby_join.controller;
-
-	if (controller == NONE)
-		return campaign_fail();
 	if (profile_list_bot_row && profile_list.chosen == profile_list.count)
-		return FALSE;
-	if (profile_list.chosen >= profile_list.count ||
-		!ui_widget_port_multiplayer_player(controller, profile_list.indices[profile_list.chosen]))
 	{
+		lobby_join_reset();
+		return FALSE;
+	}
+	if (profile_list.chosen >= profile_list.count)
+		return campaign_fail();
+	lobby_join.profile = profile_list.indices[profile_list.chosen];
+	return TRUE;
+}
+
+/* "port lobby assign begin": whose profile was chosen, and how to give them
+a controller or the keyboard */
+static boolean lobby_assign_begin(struct widget_instance *screen)
+{
+	struct player_profile profile;
+	wchar_t text[160];
+	wchar_t const *name = L"";
+
+	if (lobby_join.profile != NONE && player_profile_get(lobby_join.profile, &profile))
+		name = profile.player_name;
+	usnprintf(text, NUMBEROF(text) - 1,
+		L"%s\r\n\r\nPress START on a controller,\r\nor ENTER for the keyboard and mouse.\r\nA click uses the keyboard too.\r\n\r\nB goes back.", name);
+	text[NUMBEROF(text) - 1] = 0;
+	text_set_length(named(screen, "player_assign_text", 0), text, NUMBEROF(text));
+	return TRUE;
+}
+
+/* "port lobby assign": START gives the profile that controller. ENTER (A on
+the keyboard's controller) gives it the keyboard and mouse. A bot never
+comes here */
+static boolean lobby_assign(struct widget_instance *widget, struct event_record *event, short controller,
+	boolean *widget_deleted)
+{
+	boolean keyboard = event && event->data.button.index == BUTTON_A;
+
+	if (keyboard && controller != 0)
+	{
+		display_error_text_deferred(L"Press START on this controller,\r\nor ENTER for the keyboard.", NONE);
 		return campaign_fail();
 	}
+	if (keyboard)
+		controller = 0;
+	if (lobby_join.profile == NONE)
+		return campaign_fail();
+	if (lobby_controller_playing(controller))
+	{
+		display_error_text_deferred(keyboard ?
+			L"The keyboard is already in the game.\r\nPress START on a controller." :
+			L"That controller is already in the game.", NONE);
+		return campaign_fail();
+	}
+	if (!lobby_seat_available())
+		return FALSE;
+	if (!ui_widget_port_multiplayer_player(controller, lobby_join.profile))
+		return campaign_fail();
+	lobby_join.controller = controller;
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+	ui_widget_port_back_skipping_one(widget);
+	*widget_deleted = TRUE;
 	return TRUE;
 }
 
@@ -5826,20 +5954,9 @@ static void lobby_join_help(struct widget_instance *list)
 {
 	struct widget_instance *help = named(screen_of(list), "lobby_join_help", 0);
 	wchar_t const *text = L"";
-	short controller;
 
-	if (lobby_join.adding)
-	{
-		text = L"New player: press START.";
-	}
-	else if (lobby_local_player_count() < MAXIMUM_LOCAL_PLAYERS)
-	{
-		for (controller = 0; controller < MAXIMUM_LOCAL_PLAYERS; controller++)
-		{
-			if (input_has_gamepad(controller) && !lobby_controller_playing(controller))
-				text = L"Another controller: START joins.";
-		}
-	}
+	if (lobby_local_player_count() < MAXIMUM_LOCAL_PLAYERS)
+		text = L"ADD PLAYER adds someone here.";
 	text_set(help, text);
 }
 
@@ -5856,7 +5973,10 @@ static void lobby_row_text(short row, wchar_t *text)
 	else
 		usnprintf(text, ROW_TEXT_LENGTH - 1, L"%s", name);
 	/* (this machine's players, when it has more than one: their controllers) */
-	if (lobby_local_player_count() >= 2 && (short)player->machine_index == network_game_client_get_local_machine_index())
+	if (lobby_view_player_count() >= 2 &&
+		(short)player->machine_index == network_game_client_get_local_machine_index() &&
+		player->controller_index >= 0 && player->controller_index < MAXIMUM_LOCAL_PLAYERS &&
+		!bot_controller_is_bot(player->machine_index, player->controller_index))
 	{
 		size_t length = ustrlen(text);
 
@@ -6126,28 +6246,11 @@ static void preview_update(struct widget_instance *list)
 	profile_name_show(description);
 }
 
-/* "port lobby preview add" (START): as the lobby's ("port lobby join"), a
-controller not joining chooses its profile, to join with the others; a
-joining player's START is the focused button's */
+/* "port lobby preview add" (START): the same list as ADD PLAYER. A player
+already joining has their START go to the focused button */
 static boolean preview_add(struct widget_instance *widget, short controller, boolean *widget_deleted)
 {
-	struct advertised_game *game = preview_game();
-	short count = lobby_local_player_count();
-
-	if (lobby_controller_playing(controller))
-	{
-		ui_widget_port_dispatch_event(focused_leaf(widget), BUTTON_START, controller, widget_deleted);
-		return FALSE;
-	}
-	if (!game || !game->open || count >= MAXIMUM_LOCAL_PLAYERS)
-		return campaign_fail();
-	if (game->player_count + count >= game->maximum_player_count)
-	{
-		display_error_text_deferred(L"The game is full.", NONE);
-		return campaign_fail();
-	}
-	lobby_join.controller = controller;
-	return TRUE;
+	return lobby_join_start(widget, controller, widget_deleted);
 }
 
 /* "port lobby preview leave" (B): a joining player stays out, the last of
@@ -8336,6 +8439,14 @@ boolean pc_menu_event_function_invoke(
 		else if (!strcmp(name, "port lobby player choose"))
 		{
 			return lobby_player_choose();
+		}
+		else if (!strcmp(name, "port lobby assign begin"))
+		{
+			return lobby_assign_begin(widget);
+		}
+		else if (!strcmp(name, "port lobby assign"))
+		{
+			return lobby_assign(widget, event, controller, widget_deleted);
 		}
 		else if (!strcmp(name, "port lobby bot begin"))
 		{

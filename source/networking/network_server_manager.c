@@ -2654,6 +2654,17 @@ boolean network_game_server_add_player_to_game(
 			player->team_index = player_count_by_team[1] < player_count_by_team[0] ? 1 : 0;
 		}
 
+		/* a controller past the four local players is a bot on this host.
+		another machine stays at its own pads */
+		if (player->controller_index >= MAXIMUM_LOCAL_PLAYERS &&
+			player->machine_index != network_game_client_get_local_machine_index())
+		{
+			network_event(
+				"refused player on controller #%d from machine #%d",
+				player->controller_index, player->machine_index);
+			return FALSE;
+		}
+
 		/* (the name comes from the wire) */
 		player->name[NETWORK_PLAYER_NAME_LENGTH - 1] = 0;
 		if (!player->name[0])
@@ -4402,7 +4413,7 @@ static void network_game_server_add_bot_players(
 			controller_index = player->controller_index + 1;
 	}
 
-	for (i = existing; i < bot_count && controller_index < MAXIMUM_PLAYERS_PER_MACHINE; i++, controller_index++)
+	for (i = existing; i < bot_count && controller_index < BOT_CONTROLLER_LIMIT; i++, controller_index++)
 	{
 		struct network_player bot;
 		long team_index;
@@ -4435,8 +4446,8 @@ static void network_game_server_add_bot_players(
 
 			if (bot_skill < 0)
 				bot_skill = 0;
-			if (bot_skill > 3)
-				bot_skill = 3;
+			if (bot_skill > BOT_SKILL_IMPOSSIBLE)
+				bot_skill = BOT_SKILL_IMPOSSIBLE;
 			bot_controller_set(host_machine, (short)controller_index, bot_skill);
 		}
 		if (!network_game_add_player(&server->game, &bot))

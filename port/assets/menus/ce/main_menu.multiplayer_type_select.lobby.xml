@@ -113,8 +113,8 @@
 		<on event="right_trigger" run="mouse emit accept event"/>
 </widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_add" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="ADD PLAYER" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
-		<on event="a" run="port lobby add player"/>
-		<on event="start" run="port lobby add player"/>
+		<on event="a" run="port lobby add player" open="main_menu/multiplayer_type_select/lobby/player_profile_screen"/>
+		<on event="start" run="port lobby add player" open="main_menu/multiplayer_type_select/lobby/player_profile_screen"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_team" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="SWITCH TEAM" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
@@ -145,7 +145,7 @@
 		<data input="3wide player profile list update"/>
 		<on event="created" run="port lobby player list initialize"/>
 		<on event="deleted" run="player profile list dispose"/>
-		<on event="custom_activation" run="port lobby player choose" back="true" branch="true"/>
+		<on event="custom_activation" run="port lobby player choose" open="main_menu/multiplayer_type_select/lobby/player_assign_screen" branch="true"/>
 		<conditional widget="main_menu/multiplayer_type_select/lobby/bot_screen" if_failed="true"/>
 		<child widget="main_menu/multiplayer_type_select/coop/list_item_0" x="20" y="73"/>
 		<child widget="main_menu/multiplayer_type_select/coop/list_item_1" x="20" y="103"/>
@@ -161,6 +161,19 @@
 		<child widget="main_menu/multiplayer_type_select/coop/player_2_button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/player_profile_help" type="text" width="350" height="24" text="The new player's profile." font="ui\small_ui" color="#FF2896FF" text_y="5" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/lobby/player_assign_screen" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/gradient">
+		<on event="created" run="net server defer start"/>
+		<on event="created" run="port lobby assign begin"/>
+		<on event="start" run="port lobby assign"/>
+		<on event="a" run="port lobby assign"/>
+		<on event="b" back="true"/>
+		<on event="back" back="true"/>
+		<child widget="main_menu/new_select/sel_list_desc_bkd"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/header_add_player"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/player_assign_text" x="40" y="150"/>
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/lobby/player_assign_text" type="text" width="560" height="220" font="ui\large_ui" color="#FF2896FF" align="center" text_flags="no_focus_test">
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/preview_screen" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/gradient">
 		<on event="created" run="port lobby open"/>
@@ -191,8 +204,8 @@
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/preview_button_add" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="ADD PLAYER" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
-		<on event="a" run="port lobby add player"/>
-		<on event="start" run="port lobby add player"/>
+		<on event="a" run="port lobby add player" open="main_menu/multiplayer_type_select/lobby/player_profile_screen"/>
+		<on event="start" run="port lobby add player" open="main_menu/multiplayer_type_select/lobby/player_profile_screen"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/preview_button_back" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="BACK" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
@@ -230,7 +243,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/bot_difficulty_label" type="text" controller="1" width="200" height="24" text="DIFFICULTY" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="4">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/bot_difficulty_spinner" type="spinner" left="3" top="0" width="180" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="EASY|NORMAL|HEROIC|LEGENDARY" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 180 15 186">
+	<widget name="main_menu/multiplayer_type_select/lobby/bot_difficulty_spinner" type="spinner" left="3" top="0" width="180" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="EASY|NORMAL|HEROIC|LEGENDARY|IMPOSSIBLE" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 180 15 186">
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/bot_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		<child widget="main_menu/multiplayer_type_select/lobby/bot_button_add" x="250" y="1"/>

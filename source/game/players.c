@@ -244,6 +244,7 @@ symbols in this file:
 #include "game.h"
 #include "game/game_globals.h"
 #include "game_engine.h"
+#include "game/bots.h"
 #include "hardcore_rules.h" /* port: hardcore manual pickup and fireteams */
 #include "input.h"
 #include "interface/hud.h"
@@ -763,6 +764,34 @@ short players_port_local_player_count(
 	void)
 {
 	return players_globals ? players_globals->local_player_count : 0;
+}
+
+/* port: people at this machine, not a bot that was given a spare view.
+The input uses this to decide whether the one gamepad leaves player 1. */
+short players_port_human_local_player_count(
+	void)
+{
+	short index;
+	short count;
+
+	if (!players_globals || !player_data || !player_data->valid)
+		return 0;
+	count = 0;
+	for (index = 0; index < MAXIMUM_LOCAL_PLAYERS; index++)
+	{
+		struct player_datum *player;
+
+		if (players_globals->local_players[index] == NONE)
+			continue;
+		player = player_try_and_get(players_globals->local_players[index]);
+		if (!player)
+			continue;
+		if (bot_controller_is_bot(player->network_player_data.machine_index,
+				player->network_player_data.controller_index))
+			continue;
+		count++;
+	}
+	return count;
 }
 
 short local_player_get_next(
@@ -4307,6 +4336,8 @@ static void player_examine_nearby_item(
 		{
 			return;
 		}
+		if (bot_refuses_weapon(player->unit_index, weapon_item_index))
+			return;
 
 		weapon_definition = weapon_definition_get(weapon->definition_index);
 		weapon_trigger_active =

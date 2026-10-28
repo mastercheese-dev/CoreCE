@@ -611,8 +611,8 @@ static const struct config_setting config_settings[] =
 		"0 is none, and 16 is the most. A bot does not take a pad or a view.\n"
 		"Campaign is unchanged." },
 	{ "network.bot_skill", _config_integer, "1", "HALO_NET_BOT_SKILL", _environment_value, _platform_all,
-		"How well those bots aim and how often they fire: 0 is the loosest and\n"
-		"3 is the tightest." },
+		"How well those bots aim and how often they fire: 0 is easy and\n"
+		"4 is impossible." },
 	{ "network.bot_teams", _config_string, "\"auto\"", "HALO_NET_BOT_TEAMS", _environment_value, _platform_all,
 		"Where team games put the bots: \"auto\" fills the smaller team, \"red\",\n"
 		"\"blue\", or \"random\". A free for all ignores this." },

@@ -380,6 +380,7 @@ symbols in this file:
 #include "hardcore_rules.h" /* port: hardcore rules from the host */
 #include "performance_audio.h"
 #endif
+#include "game/bots.h"
 #include "game/local_players.h"
 #include "game/player_queues_new.h"
 #include "game/players.h"
@@ -1522,15 +1523,95 @@ boolean network_game_client_request_remove_player(
 	return success;
 }
 
+static boolean network_game_client_submit_add_player(
+	struct network_game_client *client,
+	struct network_player *player)
+{
+	boolean success = TRUE;
+	struct message_client_add_player_request add_player_request;
+	message_header *message;
+
+	network_event(
+		"requesting a player addition (controller index #%d)",
+		player->controller_index);
+
+	switch (client->state)
+	{
+	case _network_game_client_state_searching:
+	case _network_game_client_state_joining:
+		network_event("can't add players to a game until after a game is joined");
+		success = FALSE;
+		break;
+
+	case _network_game_client_state_pregame:
+		csmemcpy(&add_player_request, player, sizeof(add_player_request));
+
+		message = create_network_game_message(
+			_message_client_add_player_request_pregame,
+			&add_player_request,
+			sizeof(add_player_request));
+		if (message)
+		{
+			if (!(success = network_game_client_write(
+				client->connection,
+				message,
+				GET_MESSAGE_SIZE(*message),
+				NULL,
+				1)))
+			{
+				network_event("network_game_client_write() failed while sending a message_client_add_player_request_pregame message");
+			}
+		}
+		else
+		{
+			network_event("failed to create a message_client_add_player_request_pregame message");
+		}
+		break;
+
+	case _network_game_client_state_ingame:
+		csmemcpy(&add_player_request, player, sizeof(add_player_request));
+
+		message = create_network_game_message(
+			_message_client_add_player_request_ingame,
+			&add_player_request,
+			sizeof(add_player_request));
+		if (message)
+		{
+			if (!(success = network_game_client_write(
+				client->connection,
+				message,
+				GET_MESSAGE_SIZE(*message),
+				NULL,
+				1)))
+			{
+				network_event("network_game_client_write() failed while sending a message_client_add_player_request_ingame message");
+			}
+		}
+		else
+		{
+			network_event("failed to create a message_client_add_player_request_ingame message");
+		}
+		break;
+
+	case _network_game_client_state_postgame:
+		network_event("client tried to add a new player in post-game");
+		success = FALSE;
+		break;
+
+	default:
+		network_event("client is in an unknown state");
+		break;
+	}
+
+	return success;
+}
+
 boolean network_game_client_add_player(
 	struct network_game_client *client,
 	short local_player_index)
 {
-	boolean success = TRUE;
 	struct network_player player;
-	struct message_client_add_player_request add_player_request;
 	struct player_profile profile;
-	message_header *message;
 
 	match_assert(
 		"c:\\halo\\SOURCE\\networking\\network_client_manager.c",
@@ -1570,79 +1651,35 @@ boolean network_game_client_add_player(
 	player.team_index = NONE;
 	player.player_list_index = NONE;
 
-	network_event(
-		"requesting a player addition (controller index #%d)",
-		player.controller_index);
+	return network_game_client_submit_add_player(client, &player);
+}
 
-	switch (client->state)
-	{
-	case _network_game_client_state_searching:
-	case _network_game_client_state_joining:
-		network_event("can't add players to a game until after a game is joined");
-		success = FALSE;
-		break;
+/* a lobby bot. It does not use a local profile slot, and its controller
+index is past the four pads. */
+boolean network_game_client_add_named_player(
+	struct network_game_client *client,
+	short controller_index,
+	wchar_t const *name,
+	short color_index)
+{
+	struct network_player player;
 
-	case _network_game_client_state_pregame:
-		csmemcpy(&add_player_request, &player, sizeof(add_player_request));
+	if (!client || !name || !name[0] ||
+		controller_index < 0 || controller_index >= BOT_CONTROLLER_LIMIT)
+		return FALSE;
+	if (map_share_holds_players())
+		return TRUE;
 
-		message = create_network_game_message(
-			_message_client_add_player_request_pregame,
-			&add_player_request,
-			sizeof(add_player_request));
-		if (message)
-		{
-			if (!(success = network_game_client_write(
-				client->connection,
-				message,
-				GET_MESSAGE_SIZE(*message),
-				NULL,
-				1)))
-			{
-				network_event("network_game_client_write() failed while sending a message_client_add_player_request_pregame message");
-			}
-		}
-		else
-		{
-			network_event("failed to create a message_client_add_player_request_pregame message");
-		}
-		break;
-
-	case _network_game_client_state_ingame:
-		csmemcpy(&add_player_request, &player, sizeof(add_player_request));
-
-		message = create_network_game_message(
-			_message_client_add_player_request_ingame,
-			&add_player_request,
-			sizeof(add_player_request));
-		if (message)
-		{
-			if (!(success = network_game_client_write(
-				client->connection,
-				message,
-				GET_MESSAGE_SIZE(*message),
-				NULL,
-				1)))
-			{
-				network_event("network_game_client_write() failed while sending a message_client_add_player_request_ingame message");
-			}
-		}
-		else
-		{
-			network_event("failed to create a message_client_add_player_request_ingame message");
-		}
-		break;
-
-	case _network_game_client_state_postgame:
-		network_event("client tried to add a new player in post-game");
-		success = FALSE;
-		break;
-
-	default:
-		network_event("client is in an unknown state");
-		break;
-	}
-
-	return success;
+	csmemset(&player, 0, sizeof(player));
+	player.controller_index = (char)controller_index;
+	player.machine_index = (char)client->machine_index;
+	ustrncpy(player.name, name, NETWORK_PLAYER_NAME_LENGTH - 1);
+	player.name[NETWORK_PLAYER_NAME_LENGTH - 1] = 0;
+	player.primary_color_index = color_index;
+	player.icon_index = NONE;
+	player.team_index = NONE;
+	player.player_list_index = NONE;
+	return network_game_client_submit_add_player(client, &player);
 }
 
 boolean network_game_client_handle_game_update(
@@ -1716,6 +1753,61 @@ boolean network_game_client_begin_game(
 	return network_game_client_game_has_started(client);
 }
 
+/* a bot shares a view only with a person on this machine who is on its
+team. Free for all gives every player their own team, so none of them do.
+The four view slots stay the engine's. People are seated first. */
+static boolean network_game_client_bot_on_local_team(
+	struct network_game_client *client,
+	struct network_player *bot)
+{
+	long index;
+
+	if (!client->game.variant.universal_variant.teams)
+		return FALSE;
+	if (!bot_controller_is_bot(bot->machine_index, bot->controller_index))
+		return FALSE;
+	if (bot->team_index != 0 && bot->team_index != 1)
+		return FALSE;
+	for (index = 0; index < MAXIMUM_NUMBER_OF_PLAYERS; index++)
+	{
+		struct network_player *other = &client->game.players[index];
+
+		if (!network_player_is_valid(other) || other == bot)
+			continue;
+		if (other->machine_index != client->machine_index)
+			continue;
+		if (bot_controller_is_bot(other->machine_index, other->controller_index))
+			continue;
+		if (other->team_index == bot->team_index)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+static void network_game_client_assign_bot_view(
+	struct network_game_client *client,
+	struct network_player *bot,
+	long player_index)
+{
+	short slot;
+
+	if (player_index == NONE || !network_game_client_bot_on_local_team(client, bot))
+		return;
+	for (slot = 0; slot < MAXIMUM_LOCAL_PLAYERS; slot++)
+	{
+		if (local_player_get_player_index(slot) == player_index)
+			return;
+	}
+	for (slot = 0; slot < MAXIMUM_LOCAL_PLAYERS; slot++)
+	{
+		if (local_player_get_player_index(slot) == NONE)
+		{
+			local_player_set_player_index(slot, player_index);
+			return;
+		}
+	}
+}
+
 boolean network_game_client_game_has_started(
 	struct network_game_client *client)
 {
@@ -1742,10 +1834,26 @@ boolean network_game_client_game_has_started(
 			struct network_player *player = &client->game.players[network_player_index];
 
 			if (network_player_is_valid(player) &&
-				player->machine_index == client->machine_index)
+				player->machine_index == client->machine_index &&
+				player->controller_index >= 0 &&
+				player->controller_index < MAXIMUM_LOCAL_PLAYERS &&
+				!bot_controller_is_bot(player->machine_index, player->controller_index))
 			{
 				local_player_set_player_index(
 					player->controller_index,
+					unstrip_player_index(player->player_list_index));
+			}
+		}
+		for (network_player_index = 0;
+			network_player_index < MAXIMUM_NUMBER_OF_PLAYERS;
+			network_player_index++)
+		{
+			struct network_player *player = &client->game.players[network_player_index];
+
+			if (network_player_is_valid(player) &&
+				player->machine_index == client->machine_index)
+			{
+				network_game_client_assign_bot_view(client, player,
 					unstrip_player_index(player->player_list_index));
 			}
 		}
@@ -2074,12 +2182,17 @@ boolean network_game_client_add_player_to_game(
 
 						game_engine_player_added(player_index);
 					}
-					if (player->machine_index == client->machine_index)
+					if (player->machine_index == client->machine_index &&
+						player->controller_index >= 0 &&
+						player->controller_index < MAXIMUM_LOCAL_PLAYERS &&
+						!bot_controller_is_bot(player->machine_index, player->controller_index))
 					{
 						local_player_set_player_index(
 							player->controller_index,
 							player_index);
 					}
+					else if (player->machine_index == client->machine_index)
+						network_game_client_assign_bot_view(client, player, player_index);
 
 					update_client_add_player(player_index);
 
@@ -2476,14 +2589,13 @@ local players); the record's strings made to end in their fields */
 static boolean network_game_client_game_record_is_valid(
 	struct network_game *game)
 {
-	short machine_players[HALO_PORT_MAXIMUM_NETWORK_MACHINES][MAXIMUM_LOCAL_PLAYERS];
 	short index;
+	short earlier;
 
 	game->name[NUMBEROF(game->name) - 1] = 0;
 	game->variant.human_readable_game_description[NUMBEROF(game->variant.human_readable_game_description) - 1] = 0;
 	for (index = 0; index < NUMBEROF(game->machines); index++)
 		game->machines[index].name[NUMBEROF(game->machines[index].name) - 1] = 0;
-	csmemset(machine_players, 0, sizeof(machine_players));
 	for (index = 0; index < NUMBEROF(game->players); index++)
 	{
 		struct network_player *player = &game->players[index];
@@ -2491,8 +2603,15 @@ static boolean network_game_client_game_record_is_valid(
 		player->name[NUMBEROF(player->name) - 1] = 0;
 		if (!network_player_is_valid(player))
 			continue;
-		if (machine_players[player->machine_index][player->controller_index]++)
-			return FALSE;
+		for (earlier = 0; earlier < index; earlier++)
+		{
+			struct network_player *other = &game->players[earlier];
+
+			if (network_player_is_valid(other) &&
+				other->machine_index == player->machine_index &&
+				other->controller_index == player->controller_index)
+				return FALSE;
+		}
 	}
 
 	return TRUE;

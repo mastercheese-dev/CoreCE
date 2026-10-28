@@ -358,7 +358,7 @@ boolean network_game_add_player(
 	if (game->player_count < game->maximum_players)
 	{
 		if (VALID_INDEX(player->machine_index, MAXIMUM_NETWORK_MACHINE_COUNT) &&
-			VALID_INDEX(player->controller_index, MAXIMUM_LOCAL_PLAYERS))
+			VALID_INDEX(player->controller_index, BOT_CONTROLLER_LIMIT))
 		{
 			for (player_index = 0; player_index < NETWORK_GAME_PLAYER_SLOTS; player_index++)
 			{
@@ -438,7 +438,7 @@ boolean network_player_is_valid(
 {
 	if (player &&
 		player->controller_index >= 0 &&
-		player->controller_index < MAXIMUM_LOCAL_PLAYERS &&
+		player->controller_index < BOT_CONTROLLER_LIMIT &&
 		player->machine_index >= 0 &&
 		/* the Xbox game checks the machine against the split screen limit,
 		which only works while both are 4 */
