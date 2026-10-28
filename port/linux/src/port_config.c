@@ -606,6 +606,16 @@ static const struct config_setting config_settings[] =
 		_environment_value, _platform_desktop,
 		"The Discord application internet play invites go through while the\n"
 		"Discord desktop client runs; empty for none." },
+	{ "network.bots", _config_integer, "0", "HALO_NET_BOTS", _environment_value, _platform_all,
+		"How many AI players this machine adds when it hosts a multiplayer game.\n"
+		"0 is none, and 16 is the most. A bot does not take a pad or a view.\n"
+		"Campaign is unchanged." },
+	{ "network.bot_skill", _config_integer, "1", "HALO_NET_BOT_SKILL", _environment_value, _platform_all,
+		"How well those bots aim and how often they fire: 0 is the loosest and\n"
+		"3 is the tightest." },
+	{ "network.bot_teams", _config_string, "\"auto\"", "HALO_NET_BOT_TEAMS", _environment_value, _platform_all,
+		"Where team games put the bots: \"auto\" fills the smaller team, \"red\",\n"
+		"\"blue\", or \"random\". A free for all ignores this." },
 
 	{ "update.auto", _config_boolean, "true", "HALO_UPDATE_AUTO", _environment_value, _platform_all,
 		"Look for a new version when the game starts, and offer to update to it;\n"

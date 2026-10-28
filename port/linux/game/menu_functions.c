@@ -87,6 +87,8 @@ their handlers open opens.
 #include "game/game_engine_playlist.h"
 #include "networking/network_game_manager.h"
 #include "networking/network_server_manager.h"
+#include "game/bots.h"
+#include "interface/virtual_keyboard.h"
 #include "saved games/player_profile.h"
 #include "tag_files/tag_groups.h"
 #include "text/text_group.h"
@@ -2377,6 +2379,15 @@ static struct
 	long to_delete;
 } profile_list;
 
+/* the lobby's add player list also offers a bot, between the profiles and
+the row that makes a new one */
+static boolean profile_list_bot_row;
+
+static short profile_list_slots(void)
+{
+	return (short)(profile_list.count + 1 + (profile_list_bot_row ? 1 : 0));
+}
+
 /* the profiles, read again when they are not those read last */
 static void profile_list_read(boolean always)
 {
@@ -2406,7 +2417,7 @@ static void profile_list_read(boolean always)
 
 static short profile_list_rows(void)
 {
-	return (short)MIN(profile_list.count + 1, PROFILE_ROWS);
+	return (short)MIN(profile_list_slots(), PROFILE_ROWS);
 }
 
 /* "player profile list initialize": on player 1's profile */
@@ -2415,6 +2426,7 @@ static boolean profile_list_initialize(struct widget_instance *list)
 	long active = player_ui_get_active_player_profile_index(0);
 	short index;
 
+	profile_list_bot_row = FALSE;
 	profile_list_read(TRUE);
 	if (active == NONE)
 		active = player_ui_get_player1_last_used_profile_index();
@@ -2439,6 +2451,11 @@ static void profile_row_text(short row, wchar_t *text)
 		ustrncpy(text, profile_list.profiles[item].player_name, MAXIMUM_PLAYER_PROFILE_NAME_LENGTH);
 		text[MAXIMUM_PLAYER_PROFILE_NAME_LENGTH] = 0;
 	}
+	else if (profile_list_bot_row && item == profile_list.count)
+	{
+		ustrncpy(text, L"BOT", MAXIMUM_PLAYER_PROFILE_NAME_LENGTH);
+		text[MAXIMUM_PLAYER_PROFILE_NAME_LENGTH] = 0;
+	}
 	else
 	{
 		string_get("pc\\main_menu\\player_profiles_select\\profile_description_labels", 4, text);
@@ -2459,16 +2476,24 @@ static void profile_list_update(struct widget_instance *list)
 	struct widget_instance *widget;
 	short item;
 	boolean profile;
+	boolean bot;
 
 	profile_list_read(FALSE);
-	item = list_scroll(list, &profile_list.first, (short)(profile_list.count + 1), profile_list_rows());
+	profile_list_bot_row = list->name && !strcmp(list->name, "player_profile_list");
+	item = list_scroll(list, &profile_list.first, profile_list_slots(), profile_list_rows());
 	if (item != NONE)
 		profile_list.chosen = item;
 	rows_update(list, profile_list_rows(), profile_row_text);
 	profile = profile_list.chosen < profile_list.count;
+	bot = profile_list_bot_row && profile_list.chosen == profile_list.count;
 	text_set(named(description, "player_profile_right_name", 0),
-		profile ? profile_list.profiles[profile_list.chosen].player_name : L"");
-	visible_set(named(description, "empty_profile_slot_text", 0), !profile);
+		profile ? profile_list.profiles[profile_list.chosen].player_name : (bot ? L"BOT" : L""));
+	visible_set(named(description, "empty_profile_slot_text", 0), !profile && !bot);
+	if (profile_list_bot_row)
+	{
+		text_set(named(screen_of(list), "player_profile_help", 0),
+			bot ? L"An AI player. Set its name and difficulty." : L"The new player's profile.");
+	}
 	visible_set(named(description, "qtr_screen_profile_color_pic", 0), profile);
 	visible_set(named(description, "current_level_label", 0), profile);
 	visible_set(named(description, "current_level", 0), profile);
@@ -3453,6 +3478,7 @@ short network_game_client_get_state(void *client, short *state_data);
 struct network_game *network_game_client_get_game(void *client);
 struct network_game *network_game_server_get_game(void *server);
 short network_game_client_get_local_machine_index(void);
+boolean network_game_client_add_player(void *client, short local_player_index);
 short network_game_client_get_seconds_to_game_start(void *client);
 boolean network_player_is_valid(struct network_player *player);
 boolean playlist_profile_get(long index, struct game_variant *variant);
@@ -5588,6 +5614,7 @@ static boolean lobby_player_list_initialize(struct widget_instance *list)
 	long mine = lobby_join.controller != NONE ? player_ui_get_active_player_profile_index(lobby_join.controller) : NONE;
 	short index, controller;
 
+	profile_list_bot_row = TRUE;
 	profile_list_read(TRUE);
 	profile_list.chosen = 0;
 	for (index = profile_list.count - 1; index >= 0; index--)
@@ -5608,18 +5635,185 @@ static boolean lobby_player_list_initialize(struct widget_instance *list)
 			profile_list.chosen = index;
 	}
 	profile_list.first = (short)PIN(profile_list.chosen - PROFILE_ROWS / 2, 0,
-		MAX(0, profile_list.count + 1 - PROFILE_ROWS));
+		MAX(0, profile_list_slots() - PROFILE_ROWS));
 	focus_row(list, (short)(profile_list.chosen - profile_list.first));
 	return TRUE;
 }
 
+/* the next Bot name nobody in this game, or joining from here, already has */
+static wchar_t const *lobby_bot_name(void)
+{
+	static wchar_t const *const names[] = {
+		L"Bot1", L"Bot2", L"Bot3", L"Bot4",
+		L"Bot5", L"Bot6", L"Bot7", L"Bot8",
+		L"Bot9", L"Bot10", L"Bot11", L"Bot12",
+		L"Bot13", L"Bot14", L"Bot15", L"Bot16"
+	};
+	void *client = global_network_game_client_get();
+	struct network_game *game = client ? network_game_client_get_game(client) : NULL;
+	short name_index;
+
+	for (name_index = 0; name_index < (short)NUMBEROF(names); name_index++)
+	{
+		short index;
+		boolean taken = FALSE;
+
+		for (index = 0; game && index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
+		{
+			struct network_player *player = &game->players[index];
+
+			if (network_player_is_valid(player) && player->player_list_index != NONE &&
+				!ustrcmp(player->name, names[name_index]))
+				taken = TRUE;
+		}
+		for (index = 0; index < MAXIMUM_LOCAL_PLAYERS; index++)
+		{
+			struct player_profile profile;
+
+			if (!player_ui_local_player_wants_to_play_multiplayer(index))
+				continue;
+			player_ui_get_active_player_profile(index, &profile);
+			if (!ustrcmp(profile.player_name, names[name_index]))
+				taken = TRUE;
+		}
+		if (!taken)
+			return names[name_index];
+	}
+	return names[0];
+}
+
+/* the bot being set up on the add player screen, before it joins */
+static wchar_t lobby_bot_edit_name[12];
+static boolean lobby_bot_skill_set;
+static long lobby_bot_skill;
+
+/* "port lobby bot begin": the next free name, and Normal until they change it */
+static boolean lobby_bot_begin(void)
+{
+	wchar_t const *name = lobby_bot_name();
+
+	csmemset(lobby_bot_edit_name, 0, sizeof(lobby_bot_edit_name));
+	ustrncpy(lobby_bot_edit_name, name, NUMBEROF(lobby_bot_edit_name) - 1);
+	lobby_bot_skill = 1;
+	lobby_bot_skill_set = FALSE;
+	return TRUE;
+}
+
+/* "port lobby bot update": the name, and the difficulty on its first look */
+static void lobby_bot_update(struct widget_instance *list)
+{
+	struct widget_instance *spinner;
+
+	text_set(named(list, "bot_name_value", 0), lobby_bot_edit_name);
+	spinner = named(list, "bot_difficulty_spinner", 0);
+	if (spinner && !lobby_bot_skill_set)
+	{
+		spinner->parameters.list.selected_index = 1;
+		lobby_bot_skill_set = TRUE;
+	}
+	if (spinner && spinner->parameters.list.selected_index >= 0 &&
+		spinner->parameters.list.selected_index <= 3)
+		lobby_bot_skill = spinner->parameters.list.selected_index;
+}
+
+/* "port lobby bot rename": the on screen keyboard writes the name */
+static boolean lobby_bot_rename(void)
+{
+	return virtual_keyboard_launch(lobby_bot_edit_name, sizeof(lobby_bot_edit_name), 8);
+}
+
+/* a controller index this machine is not already playing on. The pad that
+opened this screen is left for that player */
+static short lobby_bot_seat(void)
+{
+	void *client = global_network_game_client_get();
+	struct network_game *game = client ? network_game_client_get_game(client) : NULL;
+	short machine = network_game_client_get_local_machine_index();
+	short controller;
+
+	for (controller = 0; controller < MAXIMUM_LOCAL_PLAYERS; controller++)
+	{
+		short index;
+		boolean taken = FALSE;
+
+		if (controller == lobby_join.controller ||
+			player_ui_local_player_wants_to_play_multiplayer(controller) ||
+			bot_controller_is_bot(machine, controller))
+			continue;
+		for (index = 0; game && index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
+		{
+			struct network_player *player = &game->players[index];
+
+			if (network_player_is_valid(player) && player->player_list_index != NONE &&
+				player->machine_index == machine && player->controller_index == controller)
+				taken = TRUE;
+		}
+		if (!taken)
+			return controller;
+	}
+	return NONE;
+}
+
+/* "port lobby bot add": the bot joins on a free seat. This pad stays the
+player who added it, and the screen goes back so another bot can be added */
+static boolean lobby_bot_add(void)
+{
+	void *client = global_network_game_client_get();
+	struct player_profile saved;
+	struct player_profile bot;
+	long saved_index;
+	long skill;
+	short seat;
+
+	if (!client || !global_network_game_server_get())
+	{
+		display_error_text_deferred(L"Only the host can add a bot.", NONE);
+		return FALSE;
+	}
+	seat = lobby_bot_seat();
+	if (seat == NONE)
+	{
+		display_error_text_deferred(L"This machine has no free seat for another bot.", NONE);
+		return FALSE;
+	}
+	skill = lobby_bot_skill;
+	if (skill < 0 || skill > 3)
+		skill = 1;
+	if (!player_name_clean(lobby_bot_edit_name, NUMBEROF(lobby_bot_edit_name)) || !lobby_bot_edit_name[0])
+	{
+		wchar_t const *name = lobby_bot_name();
+
+		csmemset(lobby_bot_edit_name, 0, sizeof(lobby_bot_edit_name));
+		ustrncpy(lobby_bot_edit_name, name, NUMBEROF(lobby_bot_edit_name) - 1);
+	}
+	player_ui_get_active_player_profile(0, &bot);
+	csmemset(bot.player_name, 0, sizeof(bot.player_name));
+	ustrncpy(bot.player_name, lobby_bot_edit_name, NUMBEROF(bot.player_name) - 1);
+	saved_index = player_ui_get_active_player_profile_index(seat);
+	player_ui_get_active_player_profile(seat, &saved);
+	player_ui_set_active_player_profile(seat, NONE, &bot);
+	if (!network_game_client_add_player(client, seat))
+	{
+		player_ui_set_active_player_profile(seat, saved_index, &saved);
+		return campaign_fail();
+	}
+	player_ui_set_active_player_profile(seat, saved_index, &saved);
+	bot_controller_set(network_game_client_get_local_machine_index(), seat, skill);
+	return TRUE;
+}
+
 /* "port lobby player choose": the joining controller's player on the profile
-chosen (the lobby's "net splitscreen prejoin players" adds them) */
+chosen (the lobby's "net splitscreen prejoin players" adds them). BOT opens
+the bot screen instead, and does not take this controller */
 static boolean lobby_player_choose(void)
 {
 	short controller = lobby_join.controller;
 
-	if (controller == NONE || profile_list.chosen >= profile_list.count ||
+	if (controller == NONE)
+		return campaign_fail();
+	if (profile_list_bot_row && profile_list.chosen == profile_list.count)
+		return FALSE;
+	if (profile_list.chosen >= profile_list.count ||
 		!ui_widget_port_multiplayer_player(controller, profile_list.indices[profile_list.chosen]))
 	{
 		return campaign_fail();
@@ -8143,6 +8337,18 @@ boolean pc_menu_event_function_invoke(
 		{
 			return lobby_player_choose();
 		}
+		else if (!strcmp(name, "port lobby bot begin"))
+		{
+			return lobby_bot_begin();
+		}
+		else if (!strcmp(name, "port lobby bot rename"))
+		{
+			return lobby_bot_rename();
+		}
+		else if (!strcmp(name, "port lobby bot add"))
+		{
+			return lobby_bot_add();
+		}
 		else if (!strcmp(name, "port lobby preview add"))
 		{
 			return preview_add(widget, controller, widget_deleted);
@@ -8285,6 +8491,8 @@ void pc_menu_game_data_function_invoke(
 		color_list_update(widget);
 	else if (!strcmp(name, "3wide player profile list update"))
 		profile_list_update(widget);
+	else if (!strcmp(name, "port lobby bot update"))
+		lobby_bot_update(widget);
 	else if (!strcmp(name, "load game list update"))
 		saved_game_list_update(widget);
 	else if (!strcmp(name, "port gamepad layout preview"))

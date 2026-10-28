@@ -461,6 +461,7 @@ symbols in this file:
 #endif
 #include "game/player_queues_new.h"
 #include "game/players.h"
+#include "game/bots.h"
 #include "interface/ui_widget.h"
 #include "main/main.h"
 #include "math/real_math.h"
@@ -482,6 +483,7 @@ symbols in this file:
 #include "interface/player_ui.h"
 #include "tag_files/tag_files.h"
 #include "map_share.h" /* port: port/linux/game/map_share.c */
+#include "port_config.h"
 
 /* port: internet play's Discord presence (port/linux/src/p2p.c), and the
 server browser's listing of a public game (p2p_lobby.c) */
@@ -794,6 +796,8 @@ static boolean player_name_is_unique(
 static void network_game_server_dump(
 	struct network_game_server *server);
 static void network_game_server_countdown_started(
+	struct network_game_server *server);
+static void network_game_server_add_bot_players(
 	struct network_game_server *server);
 static void network_game_server_variant_options(
 	struct game_variant const *variant,
@@ -4342,8 +4346,111 @@ boolean network_game_server_client_machine_may_slow_countdown(
 static void network_game_server_countdown_started(
 	struct network_game_server *server)
 {
-	(void)server;
 	csmemset(network_game_server_countdown_slowed, 0, sizeof(network_game_server_countdown_slowed));
+	network_game_server_add_bot_players(server);
+}
+
+/* players named Bot1 and on, on this machine's free controllers, so the
+host's update can drive them. A second countdown does not add them again */
+static void network_game_server_add_bot_players(
+	struct network_game_server *server)
+{
+	long bot_count;
+	long existing;
+	long controller_index;
+	long i;
+	long player_index;
+	short host_machine;
+	long team_counts[2];
+	char teams[16];
+	static wchar_t const *const bot_names[16] = {
+		L"Bot1", L"Bot2", L"Bot3", L"Bot4",
+		L"Bot5", L"Bot6", L"Bot7", L"Bot8",
+		L"Bot9", L"Bot10", L"Bot11", L"Bot12",
+		L"Bot13", L"Bot14", L"Bot15", L"Bot16"
+	};
+
+	bot_count = config_integer("network.bots");
+	if (bot_count <= 0)
+		return;
+	if (bot_count > (long)NUMBEROF(bot_names))
+		bot_count = (long)NUMBEROF(bot_names);
+
+	host_machine = network_game_client_get_local_machine_index();
+	if (!VALID_INDEX(host_machine, MAXIMUM_NETWORK_MACHINE_COUNT))
+		return;
+
+	config_text("network.bot_teams", teams, sizeof(teams));
+	team_counts[0] = 0;
+	team_counts[1] = 0;
+	controller_index = 0;
+	existing = 0;
+
+	for (player_index = 0; player_index < MAXIMUM_NETWORK_PLAYER_COUNT; player_index++)
+	{
+		struct network_player *player;
+
+		player = &server->game.players[player_index];
+		if (player->player_list_index == NONE || !network_player_is_valid(player))
+			continue;
+		if (player->team_index >= 0 && player->team_index < 2)
+			team_counts[player->team_index]++;
+		if (ustrncmp(player->name, L"Bot", 3) == 0 ||
+			bot_controller_is_bot(player->machine_index, player->controller_index))
+			existing++;
+		if (player->machine_index == host_machine && player->controller_index >= controller_index)
+			controller_index = player->controller_index + 1;
+	}
+
+	for (i = existing; i < bot_count && controller_index < MAXIMUM_PLAYERS_PER_MACHINE; i++, controller_index++)
+	{
+		struct network_player bot;
+		long team_index;
+
+		csmemset(&bot, 0, sizeof(bot));
+		bot.machine_index = (char)host_machine;
+		bot.controller_index = (char)controller_index;
+		bot.player_list_index = NONE;
+		bot.team_index = NONE;
+		ustrncpy(bot.name, bot_names[i], NETWORK_PLAYER_NAME_LENGTH - 1);
+		bot.name[NETWORK_PLAYER_NAME_LENGTH - 1] = 0;
+
+		if (server->game.variant.universal_variant.teams)
+		{
+			if (!strcmp(teams, "red"))
+				team_index = 0;
+			else if (!strcmp(teams, "blue"))
+				team_index = 1;
+			else if (!strcmp(teams, "random"))
+				team_index = rand() % 2;
+			else
+				team_index = team_counts[1] < team_counts[0] ? 1 : 0;
+			bot.team_index = (char)team_index;
+			team_counts[team_index]++;
+		}
+
+		get_unique_random_color(server, &bot);
+		{
+			long bot_skill = config_integer("network.bot_skill");
+
+			if (bot_skill < 0)
+				bot_skill = 0;
+			if (bot_skill > 3)
+				bot_skill = 3;
+			bot_controller_set(host_machine, (short)controller_index, bot_skill);
+		}
+		if (!network_game_add_player(&server->game, &bot))
+		{
+			bot_controller_clear(host_machine, (short)controller_index);
+			break;
+		}
+		network_event("added bot player on controller #%ld, team %d",
+			controller_index, (int)bot.team_index);
+	}
+
+	csmemcpy(network_game_server_start_players, server->game.players,
+		sizeof(network_game_server_start_players));
+	p2p_set_game_player_counts(server->game.player_count, server->game.maximum_players);
 }
 
 void get_unique_random_name(

@@ -93,6 +93,7 @@ symbols in this file:
 #include "objects/objects.h"
 #include "units/units.h"
 #include "text/unicode.h"
+#include "game/bots.h"
 #include "opening_film.h"
 
 #include <xtl.h>
@@ -515,6 +516,10 @@ boolean network_game_spawn_player(
 		network_player_is_valid(player));
 
 	controller_index = network_game_player_is_local(player) ? player->controller_index : NONE;
+	/* a lobby bot keeps a controller index so the game can tell it from the
+	other players on this machine, and does not take that pad or a view */
+	if (bot_controller_is_bot(player->machine_index, player->controller_index))
+		controller_index = NONE;
 	/* (the datum at the player's slot, with the identifier datum_new would
 	give it) */
 	if (VALID_INDEX(player->player_list_index, NETWORK_GAME_PLAYER_SLOTS))
@@ -699,6 +704,8 @@ boolean network_game_remove_player(
 					error(2, "tried to remove a player from a game of %d players", game->player_count);
 					break;
 				}
+				bot_controller_clear(game->players[player_index].machine_index,
+					game->players[player_index].controller_index);
 				network_game_invalidate_player(&game->players[player_index]);
 				game->player_count--;
 				result = TRUE;
