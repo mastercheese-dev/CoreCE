@@ -164,8 +164,8 @@ static void stock_fallback_and_disabled(void) {
     assert(menu && spinner);
     render_pb(root);
     struct ui_mouse_target *target=ui_mouse_target_at(54+366-3,73+1+10);
-    assert(target && target->kind==_ui_mouse_target_item && target->widget==spinner->parent);
-    assert(click_at(root,54+366-3,73+1+10)==_gamepad_analog_button_a);
+    assert(target && target->kind==_ui_mouse_target_value && target->widget==spinner);
+    assert(click_at(root,54+366-3,73+1+10)==_widget_event_dpad_left);
     /* Existing stock value halves still generate their ordinary d-pad input. */
     assert(click_at(root,54+366+45,73+1+10)==_widget_event_dpad_right);
     close_pb(root);

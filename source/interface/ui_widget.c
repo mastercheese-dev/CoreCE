@@ -2634,25 +2634,64 @@ static struct widget_instance *widget_instance_find_by_tag_index_recursive(
 /* port: leaving a row clears the child it was passing events to. the
 lobby's split rows are that way: once a bottom button has had the focus,
 left and right never reach the spinner, and only the pointer can move it.
-a row that only passes events gets that child back */
+coming back from the lobby can leave the screen's list with no child at
+all, and the d-pad then changes nothing until a click focuses a row.
+a row that passes events, and a list that tabs through its children, gets
+that child back */
 static void widget_instance_refocus_passthrough(
 	struct widget_instance *widget)
 {
 	struct ui_widget_definition *definition;
 	struct widget_instance *child;
+	boolean tabs_children;
 
-	if (!widget || widget->focused_child || widget_instance_can_handle_events(widget))
+	if (!widget || widget->focused_child ||
+		widget->type == _ui_widget_type_spinner_list)
+	{
 		return;
+	}
 	definition = ui_widget_definition_get(widget->definition_tag_index);
-	if (!TEST_FLAG(definition->flags, _widget_pass_unhandled_events_to_children_bit))
+	tabs_children = widget->type == _ui_widget_type_column_list &&
+		(TEST_FLAG(definition->flags, _widget_dpad_updown_tabs_thru_children_bit) ||
+		TEST_FLAG(definition->flags, _widget_dpad_leftright_tabs_thru_children_bit));
+	if (widget_instance_can_handle_events(widget) && !tabs_children &&
+		!(TEST_FLAG(definition->flags, _widget_pass_unhandled_events_to_children_bit) &&
+		widget->type != _ui_widget_type_column_list))
+	{
 		return;
+	}
+	if (!tabs_children &&
+		!TEST_FLAG(definition->flags, _widget_pass_unhandled_events_to_children_bit) &&
+		widget->type != _ui_widget_type_column_list)
+	{
+		return;
+	}
 	for (child = widget->child; child; child = child->next)
 	{
-		if (widget_instance_can_handle_events(child))
+		if (widget->type == _ui_widget_type_column_list &&
+			pc_menu_tag(widget->definition_tag_index) &&
+			widget_instance_port_is_label(child))
+		{
+			continue;
+		}
+		if (widget_instance_can_handle_events(child) ||
+			child->type == _ui_widget_type_spinner_list ||
+			child->type == _ui_widget_type_column_list)
 		{
 			widget->focused_child = child;
 			return;
 		}
+	}
+}
+
+/* the focus, and every list or row under it, has a child to pass events to */
+static void widget_instance_refocus_chain(
+	struct widget_instance *widget)
+{
+	while (widget)
+	{
+		widget_instance_refocus_passthrough(widget);
+		widget = widget->focused_child;
 	}
 }
 
@@ -2700,7 +2739,7 @@ static void widget_instance_give_focus_directly(
 			focused_child->parent)
 		{
 			new_focus->parent->focused_child = new_focus;
-			widget_instance_refocus_passthrough(leaf);
+			widget_instance_refocus_chain(leaf);
 
 			return;
 		}
@@ -2715,7 +2754,7 @@ static void widget_instance_give_focus_directly(
 		new_focus->parent->focused_child = new_focus;
 		new_focus = new_focus->parent;
 	}
-	widget_instance_refocus_passthrough(leaf);
+	widget_instance_refocus_chain(leaf);
 
 	return;
 }
@@ -3288,13 +3327,15 @@ static void widget_instance_set_focused_child_by_index(
 
 		for (child = parent->child, index = 0; child; child = child->next, index++)
 		{
-			if (child->type == _ui_widget_type_spinner_list &&
-				ui_widget_definition_get(child->definition_tag_index)->child_widgets.count > 1)
-			{
-				return;
-			}
 			if (index == child_index)
 			{
+				/* a spinner that shows several items owns their focus. an
+				earlier one of those must not abandon the child we came back to */
+				if (child->type == _ui_widget_type_spinner_list &&
+					ui_widget_definition_get(child->definition_tag_index)->child_widgets.count > 1)
+				{
+					return;
+				}
 				widget_instance_give_focus_directly(widget, child);
 				if (child->parent &&
 					(child->parent->type == _ui_widget_type_spinner_list ||
@@ -3371,6 +3412,9 @@ static void widget_instance_go_back_to_previous(
 				data.focused_child_parent_widget_tag,
 				new_widget,
 				data.focused_child_index);
+			/* the screen we came back to, so the controller moves it without
+			a click first (a list left with no focused child ignores the d-pad) */
+			widget_instance_refocus_chain(new_widget);
 		}
 	}
 	/* port: that list has no screen before it. Back would leave the
@@ -4046,6 +4090,23 @@ short ui_widget_port_list_index(
 void ui_widget_port_go_back(
 	struct widget_instance *widget)
 {
+	widget_instance_go_back_to_previous(widget);
+}
+
+/* port: back two screens. the profile list stays on the stack under the
+assign screen, and a joined player returns to the lobby or the preview */
+void ui_widget_port_back_skipping_one(
+	struct widget_instance *widget)
+{
+	short widget_stack = (widget->local_player_index == NONE) ? 0 : widget->local_player_index;
+	struct widget_stack_node *top = widget_globals.widget_stack[widget_stack];
+
+	if (top && top->next)
+	{
+		struct widget_stack_data discarded;
+
+		pop_widget(&widget_globals.widget_stack[widget_stack], &discarded);
+	}
 	widget_instance_go_back_to_previous(widget);
 }
 
@@ -5379,6 +5440,193 @@ static boolean ui_widget_port_text_wrap(
 	return fits;
 }
 
+/* A value longer than the box it is drawn in slides across that box and
+back, so the rest of it can be read. Text that fits is left as authored.
+bounds and clip are that box, already placed on screen. */
+#define MENU_VALUE_SCROLL_SLOTS 32
+#define MENU_VALUE_SCROLL_PAUSE 1100ul
+#define MENU_VALUE_SCROLL_SPEED 24ul
+
+struct menu_value_scroll
+{
+	struct widget_instance *widget;
+	unsigned long text_hash;
+	unsigned long started;
+	unsigned long seen;
+};
+
+static struct menu_value_scroll menu_value_scrolls[MENU_VALUE_SCROLL_SLOTS];
+
+static unsigned long menu_value_text_hash(
+	wchar_t const *text)
+{
+	unsigned long hash = 2166136261ul;
+
+	if (!text)
+		return 0;
+	while (*text)
+	{
+		hash ^= (unsigned long)(unsigned short)*text++;
+		hash *= 16777619ul;
+	}
+	return hash;
+}
+
+static boolean menu_value_text_is_one_line(
+	wchar_t const *text)
+{
+	wchar_t const *character;
+
+	if (!text)
+		return FALSE;
+	for (character = text; *character; character++)
+	{
+		if (*character == L'\n' || *character == L'\r')
+			return FALSE;
+	}
+	return TRUE;
+}
+
+static struct menu_value_scroll *menu_value_scroll_slot(
+	struct widget_instance *widget,
+	unsigned long text_hash)
+{
+	long index;
+	long free_slot = NONE;
+	long steal = 0;
+	unsigned long steal_age = 0;
+	boolean have_steal = FALSE;
+	unsigned long now = widget_globals.current_system_milliseconds;
+
+	for (index = 0; index < MENU_VALUE_SCROLL_SLOTS; index++)
+	{
+		struct menu_value_scroll *slot = &menu_value_scrolls[index];
+		unsigned long age;
+
+		if (slot->widget == widget)
+		{
+			/* a new string, or the row left the screen, starts at the
+			beginning again */
+			if (slot->text_hash != text_hash || now - slot->seen > 200ul)
+			{
+				slot->text_hash = text_hash;
+				slot->started = now;
+			}
+			slot->seen = now;
+			return slot;
+		}
+		if (!slot->widget)
+		{
+			if (free_slot == NONE)
+				free_slot = index;
+			continue;
+		}
+		age = now - slot->seen;
+		if (!have_steal || age >= steal_age)
+		{
+			have_steal = TRUE;
+			steal_age = age;
+			steal = index;
+		}
+	}
+	if (free_slot == NONE)
+		free_slot = steal;
+	menu_value_scrolls[free_slot].widget = widget;
+	menu_value_scrolls[free_slot].text_hash = text_hash;
+	menu_value_scrolls[free_slot].started = now;
+	menu_value_scrolls[free_slot].seen = now;
+	return &menu_value_scrolls[free_slot];
+}
+
+static short menu_value_scroll_pixels(
+	struct widget_instance *widget,
+	wchar_t const *text,
+	short overflow)
+{
+	struct menu_value_scroll *slot =
+		menu_value_scroll_slot(widget, menu_value_text_hash(text));
+	unsigned long now = widget_globals.current_system_milliseconds;
+	unsigned long travel = ((unsigned long)overflow * 1000ul) / MENU_VALUE_SCROLL_SPEED;
+	unsigned long span;
+	unsigned long t;
+
+	if (travel < 350ul)
+		travel = 350ul;
+	span = MENU_VALUE_SCROLL_PAUSE + travel;
+	t = now - slot->started;
+	t %= span + span;
+	if (t < MENU_VALUE_SCROLL_PAUSE)
+		return 0;
+	t -= MENU_VALUE_SCROLL_PAUSE;
+	if (t < travel)
+		return (short)((t * (unsigned long)overflow) / travel);
+	t -= travel;
+	if (t < MENU_VALUE_SCROLL_PAUSE)
+		return overflow;
+	t -= MENU_VALUE_SCROLL_PAUSE;
+	return (short)(overflow - (short)((t * (unsigned long)overflow) / travel));
+}
+
+static void menu_value_scroll(
+	struct widget_instance *widget,
+	wchar_t const *text,
+	long font_index,
+	short justification,
+	real_argb_color const *color,
+	rectangle2d *bounds,
+	rectangle2d *clip)
+{
+	rectangle2d measure;
+	rectangle2d text_bounds;
+	rectangle2d cursor_bounds;
+	rectangle2d window;
+	short width;
+	short text_width;
+	short bearing;
+	short overflow;
+	short offset;
+
+	window = *bounds;
+	width = (short)(window.x1 - window.x0);
+	if (!menu_value_text_is_one_line(text) || !text[0] || width < 8)
+	{
+		draw_string_set_draw_mode(font_index, NONE, justification, 0, color);
+		return;
+	}
+	measure.x0 = 0;
+	measure.y0 = window.y0;
+	measure.x1 = 8000;
+	measure.y1 = window.y1;
+	draw_string_set_draw_mode(font_index, NONE, _text_justification_left, 0, color);
+	draw_unicode_string_compute_bounds(&measure, text, &text_bounds, &cursor_bounds);
+	if (text_bounds.x0 >= text_bounds.x1)
+	{
+		draw_string_set_draw_mode(font_index, NONE, justification, 0, color);
+		return;
+	}
+	text_width = (short)(text_bounds.x1 - text_bounds.x0);
+	/* a couple of pixels of a glyph's bearing still counts as fitting */
+	if (text_width <= (short)(width + 2))
+	{
+		draw_string_set_draw_mode(font_index, NONE, justification, 0, color);
+		return;
+	}
+	overflow = (short)(text_width - width);
+	offset = menu_value_scroll_pixels(widget, text, overflow);
+	if (clip->x0 < window.x0)
+		clip->x0 = window.x0;
+	if (clip->y0 < window.y0)
+		clip->y0 = window.y0;
+	if (clip->x1 > window.x1)
+		clip->x1 = window.x1;
+	if (clip->y1 > window.y1)
+		clip->y1 = window.y1;
+	bearing = (short)(text_bounds.x0 - measure.x0);
+	bounds->x0 = (short)(window.x0 - offset - bearing);
+	bounds->x1 = (short)(bounds->x0 + bearing + text_width + 64);
+	draw_string_set_draw_mode(font_index, NONE, _text_justification_left, 0, color);
+}
+
 static void widget_instance_render_text_box(
 	struct widget_instance *widget,
 	struct ui_widget_definition *definition,
@@ -5555,6 +5803,13 @@ static void widget_instance_render_text_box(
 			}
 		}
 		ui_widget_port_text_wrap(*text, &bounds, width);
+	}
+	/* port: a menu row's name that does not fit between its arrows slides
+	so the rest of it can be read */
+	if (widget->name && !strcmp(widget->name, "list_item_text") &&
+		!string_has_icons_to_draw(*text))
+	{
+		menu_value_scroll(widget, *text, font_index, justification, &color, &bounds, &clip);
 	}
 	if (string_has_icons_to_draw(*text))
 		draw_string_and_hack_in_icons(&bounds, &clip, NULL, 0, *text, FALSE);
@@ -5791,12 +6046,16 @@ static void widget_instance_render_spinner_list(
 							SECONDS_PER_MILLISECOND * 3.0f) + 1.0f) * 0.5f) *
 						color.alpha;
 				}
-				draw_string_set_draw_mode(
+				/* port: a left or right setting's value that does not fit
+				between its arrows slides so the rest of it can be read */
+				menu_value_scroll(
+					widget,
+					item_text,
 					definition->text_font.index,
-					NONE,
 					definition->justification,
-					0,
-					&color);
+					&color,
+					&bounds,
+					&clip);
 				rasterizer_draw_unicode_string(&bounds, &clip, NULL, 0, item_text);
 			}
 		}
@@ -6333,17 +6592,38 @@ static void ui_mouse_note_target(
 		if (!parent)
 			return;
 		kind = _ui_mouse_target_value;
-#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-		if (game_settings_is_native_spinner(widget) || performance_editor_is_spinner(widget))
 		{
-			/* Native option arrows sit just outside the text rectangle. A
-			 * missed arrow would select the row and send its Accept button. */
-			bounds.x0 = MIN(bounds.x0, definition->list_header_bounds.x0 + offset.x);
-			bounds.x1 = MAX(bounds.x1, definition->list_footer_bounds.x1 + offset.x);
-			bounds.y0 = MIN(bounds.y0, definition->list_header_bounds.y0 + offset.y);
-			bounds.y1 = MAX(bounds.y1, definition->list_footer_bounds.y1 + offset.y);
+			/* the arrows sit just outside the text. a click on either picture
+			steps the value. missing them would do nothing, or press Accept
+			on the row behind them */
+			short extra = spinner_string_list_extra_count(definition->text_label_string_list.index) ?
+				SPINNER_EXTRA_WIDTH : 0;
+			rectangle2d arrow = definition->list_header_bounds;
+
+			if (arrow.x0 < arrow.x1 && arrow.y0 < arrow.y1)
+			{
+				arrow.x0 = (short)(arrow.x0 - extra + offset.x);
+				arrow.x1 = (short)(arrow.x1 - extra + offset.x);
+				arrow.y0 = (short)(arrow.y0 + offset.y);
+				arrow.y1 = (short)(arrow.y1 + offset.y);
+				bounds.x0 = MIN(bounds.x0, arrow.x0);
+				bounds.x1 = MAX(bounds.x1, arrow.x1);
+				bounds.y0 = MIN(bounds.y0, arrow.y0);
+				bounds.y1 = MAX(bounds.y1, arrow.y1);
+			}
+			arrow = definition->list_footer_bounds;
+			if (arrow.x0 < arrow.x1 && arrow.y0 < arrow.y1)
+			{
+				arrow.x0 = (short)(arrow.x0 + offset.x);
+				arrow.x1 = (short)(arrow.x1 + offset.x);
+				arrow.y0 = (short)(arrow.y0 + offset.y);
+				arrow.y1 = (short)(arrow.y1 + offset.y);
+				bounds.x0 = MIN(bounds.x0, arrow.x0);
+				bounds.x1 = MAX(bounds.x1, arrow.x1);
+				bounds.y0 = MIN(bounds.y0, arrow.y0);
+				bounds.y1 = MAX(bounds.y1, arrow.y1);
+			}
 		}
-#endif
 	}
 	else if (ui_mouse_widget_is_item(widget))
 	{
@@ -8000,6 +8280,7 @@ static void widget_instance_tab_to_next_valid_widget(
 		if (!child)
 			child = widget->child;
 	}
+	widget_instance_refocus_chain(widget->focused_child);
 
 	return;
 }
@@ -8043,6 +8324,7 @@ static void widget_instance_tab_to_previous_valid_widget(
 		else
 			child = widget_instance_get_tail_child_widget(widget);
 	}
+	widget_instance_refocus_chain(widget->focused_child);
 
 	return;
 }
@@ -9033,6 +9315,7 @@ void process_ui_widgets(
 							data.focused_child_parent_widget_tag,
 							new_widget,
 							data.focused_child_index);
+						widget_instance_refocus_chain(new_widget);
 					}
 				}
 			}

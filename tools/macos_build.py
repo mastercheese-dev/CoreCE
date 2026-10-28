@@ -323,7 +323,7 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
     licenses = resources / "Licenses"
     licenses.mkdir(exist_ok=True)
     for source, name in (
-        (ROOT / "LICENSE.md", "Project.txt"),
+        (ROOT / "LICENSE", "Project.txt"),
         (ROOT / "libs/d3d8/LICENSE.GPL-3.0", "D3D8-GPL-3.0.txt"),
         (ROOT / "port/macos/licenses/ANGLE.txt", "ANGLE.txt"),
         (SDL / "share/licenses/SDL3/LICENSE.txt", "SDL3.txt"),

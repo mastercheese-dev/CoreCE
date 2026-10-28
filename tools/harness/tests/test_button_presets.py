@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, enum_with, function, mutated, read, run, structure  # noqa: E402
 
-CASES = ["every-preset", "bumper-jumper", "unknown-preset"]
+CASES = ["every-preset", "bumper-jumper", "recon", "fishsticks", "unknown-preset"]
 
 # a fault in player_ui.c and the cases that must catch it
 NEGATIVE_CONTROLS = {

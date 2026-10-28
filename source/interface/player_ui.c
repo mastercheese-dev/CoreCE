@@ -1359,14 +1359,16 @@ static void set_local_player_controls_from_player_profile(
 		preferences.game_control_to_xbox_buttons[11] = _gamepad_binary_button_right_thumb;
 		break;
 
-	/* port: MCC Recon layout - Use/Reload on Right Bumper (black), Switch Grenades on Left Bumper (white), Flashlight on X */
+	/* port: Recon. Indices are input_abstraction.c's game controls. The
+	shoulders are the Duke's white (left) and black (right). D-pad down is
+	push to talk, not one of these */
 	case _button_preset_recon:
-		preferences.game_control_to_xbox_buttons[0] = _gamepad_analog_button_a;           // Jump
-		preferences.game_control_to_xbox_buttons[1] = _gamepad_analog_button_x;           // Switch Grenades -> Left Bumper (white)
-		preferences.game_control_to_xbox_buttons[2] = _gamepad_analog_button_b;           // Action/Reload -> Right Bumper (black)
-		preferences.game_control_to_xbox_buttons[3] = _gamepad_analog_button_y;           // Flashlight -> X
-		preferences.game_control_to_xbox_buttons[4] = _gamepad_analog_button_black;       // Melee
-		preferences.game_control_to_xbox_buttons[5] = _gamepad_analog_button_white;       // Grenade -> Left Trigger
+		preferences.game_control_to_xbox_buttons[0] = _gamepad_analog_button_a;
+		preferences.game_control_to_xbox_buttons[1] = _gamepad_analog_button_white;
+		preferences.game_control_to_xbox_buttons[2] = _gamepad_analog_button_black;
+		preferences.game_control_to_xbox_buttons[3] = _gamepad_analog_button_y;
+		preferences.game_control_to_xbox_buttons[4] = _gamepad_analog_button_b;
+		preferences.game_control_to_xbox_buttons[5] = _gamepad_analog_button_x;
 		preferences.game_control_to_xbox_buttons[6] = _gamepad_analog_button_left_trigger;
 		preferences.game_control_to_xbox_buttons[7] = _gamepad_analog_button_right_trigger;
 		preferences.game_control_to_xbox_buttons[8] = _gamepad_binary_button_start;
@@ -1375,20 +1377,21 @@ static void set_local_player_controls_from_player_profile(
 		preferences.game_control_to_xbox_buttons[11] = _gamepad_binary_button_right_thumb;
 		break;
 
-	/* port: MCC Fishsticks layout - Melee on Right Stick (right thumb), Crouch on B, Zoom on Left Trigger, Throw Grenade on Right Bumper (black), Switch Grenades on Dpad Left */
+	/* port: Fishsticks. The left stick's click is free. D-pad left switches
+	grenades, and d-pad down is push to talk */
 	case _button_preset_fishsticks:
-		preferences.game_control_to_xbox_buttons[0] = _gamepad_analog_button_a;           // Jump
-		preferences.game_control_to_xbox_buttons[1] = _gamepad_analog_button_black;       // Switch Grenades -> Dpad Left (handled separately)
-		preferences.game_control_to_xbox_buttons[2] = _gamepad_analog_button_b;           // Action/Reload
-		preferences.game_control_to_xbox_buttons[3] = _gamepad_analog_button_y;           // Flashlight
-		preferences.game_control_to_xbox_buttons[4] = _gamepad_binary_button_right_thumb; // Melee -> Right Stick click
-		preferences.game_control_to_xbox_buttons[5] = _gamepad_analog_button_white;       // Grenade -> Left Bumper (white)
-		preferences.game_control_to_xbox_buttons[6] = _gamepad_analog_button_left_trigger; // Zoom -> Left Trigger
-		preferences.game_control_to_xbox_buttons[7] = _gamepad_analog_button_right_trigger; // Throw Grenade -> Right Bumper (black)
+		preferences.game_control_to_xbox_buttons[0] = _gamepad_analog_button_a;
+		preferences.game_control_to_xbox_buttons[1] = _gamepad_binary_button_dpad_left;
+		preferences.game_control_to_xbox_buttons[2] = _gamepad_analog_button_x;
+		preferences.game_control_to_xbox_buttons[3] = _gamepad_analog_button_y;
+		preferences.game_control_to_xbox_buttons[4] = _gamepad_binary_button_right_thumb;
+		preferences.game_control_to_xbox_buttons[5] = _gamepad_analog_button_white;
+		preferences.game_control_to_xbox_buttons[6] = _gamepad_analog_button_black;
+		preferences.game_control_to_xbox_buttons[7] = _gamepad_analog_button_right_trigger;
 		preferences.game_control_to_xbox_buttons[8] = _gamepad_binary_button_start;
 		preferences.game_control_to_xbox_buttons[9] = _gamepad_binary_button_back;
-		preferences.game_control_to_xbox_buttons[10] = _gamepad_binary_button_left_thumb;  // Crouch -> B (left thumb click)
-		preferences.game_control_to_xbox_buttons[11] = _gamepad_binary_button_right_thumb; // Melee already on right thumb
+		preferences.game_control_to_xbox_buttons[10] = _gamepad_analog_button_b;
+		preferences.game_control_to_xbox_buttons[11] = _gamepad_analog_button_left_trigger;
 		break;
 	}
 

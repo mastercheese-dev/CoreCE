@@ -1,7 +1,7 @@
 # CoreCE: Halo: Combat Evolved for Linux, Windows, and macOS
 
 <p align="center">
-  <a href="https://discord.gg/GsJupzvPtp"><img src="https://img.shields.io/badge/Discord-join-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://discord.gg/NRFA2NAqx2"><img src="https://img.shields.io/badge/Discord-join-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
 </p>
 <p align="center">
   <img src="port/assets/icon/corece-icon.png" alt="CoreCE" width="384">
@@ -29,8 +29,6 @@ The Mac button downloads build 44 (`CoreCE-macos-arm64.dmg`). The Windows button
 | Mac | The newest `CoreCE-macos-arm64` disk image | Open it and drag **CoreCE.app** into Applications |
 | Windows | The newest `halo-windows-release.zip` | Unzip it and run `halo.exe` |
 | Linux | The newest `halo-linux-release.zip` | Unzip it and run `halo` |
-
-The release title names the network protocol. Everyone in a game needs the same number. A game on the original rules can include another player whose build speaks that protocol. [PB Options](docs/performance-options.md) and Match Options need a build from these releases.
 
 ### Mac
 
@@ -140,13 +138,6 @@ The game keeps the Xbox look until a setting says otherwise.
 | CAMPAIGN HUD | On a custom map, draw the campaign HUD. The reticle stays the map's. | Off |
 | MATCH TIMER | A clock at the bottom right in multiplayer. On with Voice also plays the countdown | Off |
 
-**Extras**
-
-| Option | What it does | Default |
-| --- | --- | --- |
-| SHIELD GLOW, GLOW INTENSITY | Energy shields light what is around them as they flare | Off |
-| SHIELD COLOR | Your own shield in a multiplayer armor color, as your machine draws it | Default |
-
 ## How to build
 
 You do not need the Xbox SDK. The port supplies the declarations the game uses. See [port/include/xdk](port/include/xdk/README.md).
@@ -174,7 +165,18 @@ The decompilation is of Xbox build 2342. CoreCE starts from [OpenCE](https://git
 
 ## Licence
 
-This fork is released under [CC0 1.0](LICENSE.md). Third-party code, fonts, and art keep the licences next to them.
+CoreCE is free software: you can give it to others and change it under the
+terms of the GNU Affero General Public License as published by the Free
+Software Foundation, version 3 of the License or (at your option) any later
+version (`AGPL-3.0-or-later`). It comes with no warranty. The full text is in
+[LICENSE](LICENSE).
+
+- **From the import.** The AGPL applies from the commit that brought in OpenCE after OpenCE's own switch, and to each release built from that commit or a later one. Earlier commits of this fork were released under [CC0 1.0](LICENSES/CC0-1.0.txt) and stay that way.
+- **What CoreCE builds on.** [OpenCE](https://github.com/OpenCommunityEdition/OpenCE) is under the AGPL 3.0 or later from 19 October 2026, and under CC0 1.0 before that date. The decompilation of [punpckhdq/halo](https://github.com/punpckhdq/halo) is under the AGPL 3.0 from 17 October 2026, and under CC0 1.0 before that date. [bnunu/halo-1](https://github.com/bnunu/halo-1) is under CC0 1.0.
+- **Contributions** are under `AGPL-3.0-or-later`. A change taken from a project under GPL 3.0 keeps that licence and its notices. The GPL 3.0 and the AGPL 3.0 let the two be combined (section 13 of each).
+- **Hosts and servers.** If you change the game and let other persons play with your version over a network (for example, as the host of an internet game, or on a web site), the AGPL asks you to offer them the source of your version (section 13). The game as released has its source here, and each release's source is its tag (`build-<number>`).
+- **Third-party code, fonts and art** keep their own licences, which are next to them (`port/third_party`, `port/assets/fonts`, `port/assets/icons`).
+- **Halo is not covered.** The licence covers the work of this project's authors. It gives no rights in Halo, its maps, or anything else that Microsoft owns.
 
 ## Disclaimer
 

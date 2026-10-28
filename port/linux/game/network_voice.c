@@ -49,6 +49,9 @@ player's voice.
 #include "game/game_engine.h"
 #include "game/players.h"
 #include "main/console.h"
+#include "input/input.h"
+#include "interface/player_ui.h"
+#include "saved games/player_profile.h"
 #include "networking/network_game_globals.h"
 #include "networking/network_game_manager.h"
 #include "networking/network_client_manager.h"
@@ -924,6 +927,32 @@ static void voice_end_session(
 	csmemset(voice_heard, 0, sizeof(voice_heard));
 }
 
+/* recon and fishsticks: d-pad down is push to talk */
+static boolean layout_dpad_talks(
+	void)
+{
+	short player;
+
+	for (player = 0; player < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; player++)
+	{
+		struct player_profile profile;
+		short controller;
+		struct gamepad_state const *pad;
+
+		player_ui_get_active_player_profile(player, &profile);
+		if (profile.controller_settings.button_preset != _button_preset_recon &&
+			profile.controller_settings.button_preset != _button_preset_fishsticks)
+			continue;
+		controller = player_ui_get_single_player_local_player_controller(player);
+		if (controller == NONE)
+			controller = player;
+		pad = input_get_gamepad_state(controller);
+		if (pad && pad->buttons[_gamepad_binary_button_dpad_down])
+			return TRUE;
+	}
+	return FALSE;
+}
+
 void network_voice_update(
 	void)
 {
@@ -975,8 +1004,10 @@ void network_voice_update(
 		voice_send(NULL, 0);
 	}
 	/* the microphone: open mic, open while voice is on; push to talk, from
-	the first press (none asked for until then) */
-	held = push_to_talk && halo_push_to_talk_held() && !console_is_active() && !network_chat_typing();
+	the first press (none asked for until then). Recon and Fishsticks talk
+	on d-pad down as well as the keyboard binding */
+	held = push_to_talk && (halo_push_to_talk_held() || layout_dpad_talks()) &&
+		!console_is_active() && !network_chat_typing();
 	if (!voice_may_talk() || (!open_mic && !push_to_talk))
 		voice_microphone_wanted = FALSE;
 	else if (open_mic || held)

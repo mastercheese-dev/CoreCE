@@ -40,9 +40,14 @@ enum
 	/* port: the Master Chief Collection's Bumper Jumper (jump on the left
 	shoulder, melee on the right), which the Xbox game did not have */
 	_button_preset_bumper_jumper,
-	/* port: Recon layout (MCC): Use/Reload on Right Bumper, Switch Grenades on Left Bumper, Flashlight on X */
+	/* port: Recon. Fire on the right trigger, grenade on the left, action
+	on the right bumper, switch grenades on the left, zoom on the right
+	stick, crouch on the left, melee on B, flashlight on X. D-pad down talks */
 	_button_preset_recon,
-	/* port: Fishsticks layout (MCC): Melee on Right Stick, Crouch on B, Zoom on Left Trigger, Throw Grenade on Right Bumper, Switch Grenades on Dpad Left */
+	/* port: Fishsticks. Fire on the right trigger, zoom on the left, grenade
+	on the right bumper, flashlight on the left, melee on the right stick,
+	crouch on B, action on X. The left stick clicks nothing. D-pad left
+	switches grenades, and d-pad down talks */
 	_button_preset_fishsticks,
 	NUMBER_OF_BUTTON_PRESETS
 };

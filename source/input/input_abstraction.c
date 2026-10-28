@@ -61,6 +61,7 @@ symbols in this file:
 #include "input/input.h"
 #include "input/input_abstraction.h"
 #include "interface/player_ui.h"
+#include "saved games/player_profile.h"
 #include "interface/ui_widget.h"
 #include "interface/virtual_keyboard.h"
 #include "math/real_math.h"
@@ -525,6 +526,49 @@ void input_abstraction_update_device_changes(
 	return;
 }
 
+/* a d-pad direction a layout uses for an action is not also movement.
+recon and fishsticks talk on d-pad down (network_voice.c) */
+static boolean dpad_direction_is_action(
+	short controller_index,
+	short button)
+{
+	short control;
+	byte const *bound =
+		input_abstraction_globals.player_control_preferences[controller_index].game_control_to_xbox_buttons;
+	short player;
+
+	for (control = 0; control < NUMBER_OF_GAME_CONTROLS; control++)
+	{
+		if (bound[control] == button)
+			return TRUE;
+	}
+	if (button != _gamepad_binary_button_dpad_down)
+		return FALSE;
+	for (player = 0; player < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; player++)
+	{
+		struct player_profile profile;
+		short controller = player_ui_get_single_player_local_player_controller((short)player);
+
+		if (controller == NONE)
+			controller = (short)player;
+		if (controller != controller_index)
+			continue;
+		player_ui_get_active_player_profile((short)player, &profile);
+		if (profile.controller_settings.button_preset == _button_preset_recon ||
+			profile.controller_settings.button_preset == _button_preset_fishsticks)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+static boolean dpad_moves(
+	short controller_index,
+	struct gamepad_state const *gamepad,
+	short button)
+{
+	return gamepad->buttons[button] && !dpad_direction_is_action(controller_index, button);
+}
+
 void input_abstraction_update(
 	void)
 {
@@ -662,11 +706,11 @@ void input_abstraction_update(
 			switch (input_abstraction_globals.player_control_preferences[controller_index].joystick_controls)
 			{
 				case _joystick_controls_default:
-					if (gamepad->buttons[_gamepad_binary_button_dpad_left])
+					if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_left))
 					{
 						state->strafe = 1.f;
 					}
-					else if (gamepad->buttons[_gamepad_binary_button_dpad_right])
+					else if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_right))
 					{
 						state->strafe = -1.f;
 					}
@@ -674,11 +718,11 @@ void input_abstraction_update(
 					{
 						state->strafe = -left_stick.x;
 					}
-					if (gamepad->buttons[_gamepad_binary_button_dpad_up])
+					if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_up))
 					{
 						state->forward_movement = 1.f;
 					}
-					else if (gamepad->buttons[_gamepad_binary_button_dpad_down])
+					else if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_down))
 					{
 						state->forward_movement = -1.f;
 					}
@@ -690,11 +734,11 @@ void input_abstraction_update(
 					state->pitch = (invert_look ? -1.f : 1.f) * right_stick.y;
 					break;
 				case _joystick_controls_southpaw:
-					if (gamepad->buttons[_gamepad_binary_button_dpad_left])
+					if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_left))
 					{
 						state->yaw = 1.f;
 					}
-					else if (gamepad->buttons[_gamepad_binary_button_dpad_right])
+					else if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_right))
 					{
 						state->yaw = -1.f;
 					}
@@ -702,11 +746,11 @@ void input_abstraction_update(
 					{
 						state->yaw = -left_stick.x;
 					}
-					if (gamepad->buttons[_gamepad_binary_button_dpad_up])
+					if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_up))
 					{
 						state->pitch = invert_look ? -1.f : 1.f;
 					}
-					else if (gamepad->buttons[_gamepad_binary_button_dpad_down])
+					else if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_down))
 					{
 						state->pitch = invert_look ? 1.f : -1.f;
 					}
@@ -718,11 +762,11 @@ void input_abstraction_update(
 					state->strafe = -right_stick.x;
 					break;
 				case _joystick_controls_legacy:
-					if (gamepad->buttons[_gamepad_binary_button_dpad_left])
+					if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_left))
 					{
 						state->yaw = 1.f;
 					}
-					else if (gamepad->buttons[_gamepad_binary_button_dpad_right])
+					else if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_right))
 					{
 						state->yaw = -1.f;
 					}
@@ -730,11 +774,11 @@ void input_abstraction_update(
 					{
 						state->yaw = -left_stick.x;
 					}
-					if (gamepad->buttons[_gamepad_binary_button_dpad_up])
+					if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_up))
 					{
 						state->forward_movement = 1.f;
 					}
-					else if (gamepad->buttons[_gamepad_binary_button_dpad_down])
+					else if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_down))
 					{
 						state->forward_movement = -1.f;
 					}
@@ -746,11 +790,11 @@ void input_abstraction_update(
 					state->pitch = (invert_look ? -1.f : 1.f) * right_stick.y;
 					break;
 				case _joystick_controls_legacy_southpaw:
-					if (gamepad->buttons[_gamepad_binary_button_dpad_left])
+					if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_left))
 					{
 						state->strafe = 1.f;
 					}
-					else if (gamepad->buttons[_gamepad_binary_button_dpad_right])
+					else if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_right))
 					{
 						state->strafe = -1.f;
 					}
@@ -758,11 +802,11 @@ void input_abstraction_update(
 					{
 						state->strafe = -left_stick.x;
 					}
-					if (gamepad->buttons[_gamepad_binary_button_dpad_up])
+					if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_up))
 					{
 						state->pitch = invert_look ? -1.f : 1.f;
 					}
-					else if (gamepad->buttons[_gamepad_binary_button_dpad_down])
+					else if (dpad_moves((short)controller_index, gamepad, _gamepad_binary_button_dpad_down))
 					{
 						state->pitch = invert_look ? 1.f : -1.f;
 					}

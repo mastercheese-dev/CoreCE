@@ -119,6 +119,8 @@ def main() -> int:
         for pdb in [ROOT / "build/windows/halo.pdb", *sorted((ROOT / "build/windows/third_party").glob("SDL3-*/lib/x86/SDL3.pdb"))]:
             shutil.copy2(pdb, symbols)
             print(f"{pdb.relative_to(ROOT)} -> {symbols.relative_to(ROOT)}", flush=True)
+    # the game is AGPL-3.0-or-later (LICENSE). A build carries that text.
+    shutil.copy2(ROOT / "LICENSE", dist / "LICENSE.txt")
     if args.platform != "web":
         # internet play's DTLS with browsers, and the Linux self-updater's TLS
         # (port/third_party/mbedtls), whose Apache license asks the same

@@ -45,6 +45,38 @@ static void input_abstraction_update_local_player_preferences(
 
 /* the Master Chief Collection's Bumper Jumper for Halo: Combat Evolved; the
 left and right shoulders are the Duke's white and black (xinput_sdl.c) */
+static byte const recon[NUMBER_OF_GAME_CONTROLS] =
+{
+	[_game_control_jump] = _gamepad_analog_button_a,
+	[_game_control_switch_grenades] = _gamepad_analog_button_white,
+	[_game_control_action] = _gamepad_analog_button_black,
+	[_game_control_switch_weapons] = _gamepad_analog_button_y,
+	[_game_control_melee] = _gamepad_analog_button_b,
+	[_game_control_flashlight] = _gamepad_analog_button_x,
+	[_game_control_grenade] = _gamepad_analog_button_left_trigger,
+	[_game_control_primary_trigger] = _gamepad_analog_button_right_trigger,
+	[_game_control_start] = _gamepad_binary_button_start,
+	[_game_control_back] = _gamepad_binary_button_back,
+	[_game_control_crouch] = _gamepad_binary_button_left_thumb,
+	[_game_control_zoom] = _gamepad_binary_button_right_thumb,
+};
+
+static byte const fishsticks[NUMBER_OF_GAME_CONTROLS] =
+{
+	[_game_control_jump] = _gamepad_analog_button_a,
+	[_game_control_switch_grenades] = _gamepad_binary_button_dpad_left,
+	[_game_control_action] = _gamepad_analog_button_x,
+	[_game_control_switch_weapons] = _gamepad_analog_button_y,
+	[_game_control_melee] = _gamepad_binary_button_right_thumb,
+	[_game_control_flashlight] = _gamepad_analog_button_white,
+	[_game_control_grenade] = _gamepad_analog_button_black,
+	[_game_control_primary_trigger] = _gamepad_analog_button_right_trigger,
+	[_game_control_start] = _gamepad_binary_button_start,
+	[_game_control_back] = _gamepad_binary_button_back,
+	[_game_control_crouch] = _gamepad_analog_button_b,
+	[_game_control_zoom] = _gamepad_analog_button_left_trigger,
+};
+
 static byte const bumper_jumper[NUMBER_OF_GAME_CONTROLS] =
 {
 	[_game_control_jump] = _gamepad_analog_button_white,
@@ -124,6 +156,36 @@ int main(
 				"control %d is on button %d, not %d", control,
 				applied.game_control_to_xbox_buttons[control], bumper_jumper[control]);
 		}
+		return 0;
+	}
+	CASE("recon")
+	{
+		short control;
+
+		apply(_button_preset_recon);
+		playable(_button_preset_recon);
+		for (control = 0; control < NUMBER_OF_GAME_CONTROLS; control++)
+		{
+			CHECK(applied.game_control_to_xbox_buttons[control] == recon[control],
+				"control %d is on button %d, not %d", control,
+				applied.game_control_to_xbox_buttons[control], recon[control]);
+		}
+		return 0;
+	}
+	CASE("fishsticks")
+	{
+		short control;
+
+		apply(_button_preset_fishsticks);
+		playable(_button_preset_fishsticks);
+		for (control = 0; control < NUMBER_OF_GAME_CONTROLS; control++)
+		{
+			CHECK(applied.game_control_to_xbox_buttons[control] == fishsticks[control],
+				"control %d is on button %d, not %d", control,
+				applied.game_control_to_xbox_buttons[control], fishsticks[control]);
+		}
+		CHECK(applied.game_control_to_xbox_buttons[_game_control_crouch] != _gamepad_binary_button_left_thumb,
+			"fishsticks still crouches on the left stick");
 		return 0;
 	}
 	CASE("unknown-preset")
