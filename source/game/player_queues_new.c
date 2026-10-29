@@ -1242,13 +1242,6 @@ struct bot_state
 	long route_surface;
 	/* a trip across the map. Follow the path, do not retarget every hall. */
 	boolean route_tour;
-	/* places this tour already walked. The next goal is away from these. */
-	real_point3d tour_been[12];
-	short tour_been_count;
-	short tour_been_next;
-	/* facing the step, but not yet lined up, so the feet stay put.
-	the next tick may step past a point they have already crossed. */
-	boolean move_thwarted;
 	/* still inside this spot. Ten seconds here, and a teammate's fight
 	is a reason to leave it. */
 	real_point3d area_anchor;
@@ -2438,6 +2431,54 @@ static boolean bot_clear_yaw(real_point3d const *feet, real desired, long ignore
 
 static boolean bot_drop_ahead(real_point3d const *feet, real yaw);
 
+/* the way they are moving meets a wall at about an arm's length. A small
+turn toward the side that is open, not a spin and not a stop. */
+static real bot_ease_wall(real_point3d const *feet, real yaw, long unit_index)
+{
+	static real const offsets[] = { 0.30f, -0.30f, 0.55f, -0.55f, 0.80f, -0.80f };
+	real hit;
+	real best;
+	real best_clear;
+	long index;
+	boolean found;
+
+	hit = bot_first_block(feet, yaw, 0.45f, 0.80f, unit_index);
+	if (hit < 0.0f)
+		return yaw;
+	best = yaw;
+	best_clear = hit;
+	found = FALSE;
+	for (index = 0; index < (long)NUMBEROF(offsets); index++)
+	{
+		real try_yaw;
+		real open;
+		real clear;
+
+		try_yaw = yaw + offsets[index];
+		if (try_yaw > _pi)
+			try_yaw -= _pi * 2.0f;
+		else if (try_yaw < -_pi)
+			try_yaw += _pi * 2.0f;
+		if (bot_drop_ahead(feet, try_yaw))
+			continue;
+		open = bot_first_block(feet, try_yaw, 0.45f, 1.40f, unit_index);
+		clear = open < 0.0f ? 1.40f : open;
+		if (clear <= hit + 0.15f)
+			continue;
+		/* the smaller turns are first. The first one that is actually
+		open is the correction. */
+		if (clear >= 1.05f)
+			return try_yaw;
+		if (!found || clear > best_clear)
+		{
+			best = try_yaw;
+			best_clear = clear;
+			found = TRUE;
+		}
+	}
+	return best;
+}
+
 /* an open step that is still on this floor. The first heading out of a
 wall is often the drop beside it, and rejecting that one used to cancel
 the rest, which is the stand. */
@@ -2509,86 +2550,6 @@ static boolean bot_route_install(struct bot_state *state, real_point3d const *go
 static boolean bot_route_jump_yaw(struct bot_state *state, real_point3d const *feet,
 	real_point3d const *goal, real *yaw);
 
-/* the portals between here and the goal, not the straight shortcut.
-a shortcut is what meets the door frame. Each step is the middle of
-the next opening, and the last of the four is where the walk continues. */
-static void bot_route_from_search(struct bot_state *state, real_point3d const *feet)
-{
-	struct path_step window[8];
-	struct path_node *node;
-	struct path_node *child;
-	short node_index;
-	short cursor;
-	short filled;
-	short hops;
-	short kept;
-	short look;
-	boolean overflow;
-
-	state->route.valid = FALSE;
-	state->route.step_count = 0;
-	state->route.step_index = 0;
-	state->route.steps_finish_path = FALSE;
-	node_index = bot_path_memory.closest_node_index;
-	if (node_index == NONE)
-		return;
-	/* the walk starts at the goal and follows parents home. The window
-	keeps the portals next to the bot when the chain is long. */
-	cursor = 0;
-	filled = 0;
-	overflow = FALSE;
-	child = NULL;
-	hops = 0;
-	while (node_index != NONE && hops < 1024)
-	{
-		struct path_step step;
-
-		node = path_get_node(&bot_path_memory, node_index);
-		step.surface_index = node->surface_index;
-		if (child == NULL)
-			step.point = bot_path_memory.destination.point;
-		else
-			step.point = child->entry_point;
-		window[cursor] = step;
-		cursor++;
-		if (cursor >= 8)
-			cursor = 0;
-		if (filled < 8)
-			filled++;
-		else
-			overflow = TRUE;
-		child = node;
-		node_index = node->parent_node_index;
-		hops++;
-	}
-	kept = 0;
-	for (look = 0; look < filled && kept < 4; look++)
-	{
-		short slot;
-		real dx;
-		real dy;
-
-		slot = (short)(cursor - 1 - look);
-		while (slot < 0)
-			slot = (short)(slot + 8);
-		dx = window[slot].point.x - feet->x;
-		dy = window[slot].point.y - feet->y;
-		if (dx * dx + dy * dy < 0.35f * 0.35f)
-			continue;
-		state->route.steps[kept] = window[slot];
-		kept++;
-	}
-	if (kept <= 0)
-		return;
-	state->route.step_count = (char)kept;
-	state->route.step_index = 0;
-	state->route.steps_finish_path = !overflow && look >= filled;
-	state->route.valid = TRUE;
-	state->route.endpoint.point = bot_path_memory.destination.point;
-	state->route.endpoint.surface_index = bot_path_memory.destination.surface_index;
-	state->route.endpoint.target_radius = 0.0f;
-}
-
 static void bot_refresh_route(struct bot_state *state, long unit_index, real_point3d const *feet,
 	real_point3d const *goal)
 {
@@ -2608,9 +2569,9 @@ static void bot_refresh_route(struct bot_state *state, long unit_index, real_poi
 		return;
 	state->route_link = NONE;
 	state->route_ticks++;
-	/* four portals are one piece of a longer walk. The next piece starts
-	when they reach the last one. Rebuilding earlier aims them at a new
-	corner while they are still in the doorway. */
+	/* four steps are the start of a longer walk. Extend them before the
+	last one is the wall at the end of the hall. A path that says it
+	finished while the room is still ahead stopped at that wall. */
 	if (state->route.valid && state->route.step_count > 0 &&
 		state->route.step_index >= state->route.step_count - 1)
 	{
@@ -2625,7 +2586,7 @@ static void bot_refresh_route(struct bot_state *state, long unit_index, real_poi
 		dy = last->y - feet->y;
 		gx = goal->x - last->x;
 		gy = goal->y - last->y;
-		if (dx * dx + dy * dy < 0.9f * 0.9f &&
+		if (dx * dx + dy * dy < 2.4f * 2.4f &&
 			(!state->route.steps_finish_path || gx * gx + gy * gy > 4.0f * 4.0f))
 			state->route.valid = FALSE;
 	}
@@ -2687,10 +2648,8 @@ static void bot_refresh_route(struct bot_state *state, long unit_index, real_poi
 	path_input_set_search_bounds(&input, bound);
 	path_state_new(&input, &bot_path_memory, NULL);
 	path_state_destination(&bot_path_memory, &destination, goal_surface, 0.8f);
-	if (!path_state_find(&bot_path_memory))
+	if (!path_state_find(&bot_path_memory) || !path_state_build_path(&bot_path_memory, &state->route))
 		state->route.valid = FALSE;
-	else
-		bot_route_from_search(state, feet);
 }
 
 /* the floor a step ahead is gone. A platform edge has no wall, so a
@@ -2701,81 +2660,6 @@ static boolean bot_ramp_ahead(real_point3d const *feet, real yaw);
 /* a gap with a platform on the far side, inside a running jump. */
 static boolean bot_jump_across(real_point3d const *feet, real yaw, long unit_index,
 	real *edge, real_point3d *landing);
-
-static real bot_frame_yaw(real_point3d const *feet, real yaw, long unit_index);
-
-/* the step is around a corner that is still ahead. Looking at it from
-here is the glance. Keep the hall until the corner is close. */
-static real bot_wall_yaw(real_point3d const *feet, real_point3d const *step,
-	real facing, long unit_index)
-{
-	real desired;
-	real dx;
-	real dy;
-	real dist;
-	real probe;
-	real hit;
-	real along;
-
-	desired = bot_yaw_between(feet, step);
-	dx = step->x - feet->x;
-	dy = step->y - feet->y;
-	dist = square_root(dx * dx + dy * dy);
-	probe = dist;
-	if (probe > 2.2f)
-		probe = 2.2f;
-	if (probe < 0.4f)
-		probe = 0.4f;
-	hit = bot_first_block(feet, desired, 0.45f, probe, unit_index);
-	if (hit >= 0.0f && hit + 0.45f < dist && dist > 1.8f)
-	{
-		along = bot_angle_delta(facing, desired);
-		if (along < 0.0f)
-			along = -along;
-		if (along < 1.2f &&
-			bot_first_block(feet, facing, 0.45f, 1.1f, unit_index) < 0.0f &&
-			!bot_drop_ahead(feet, facing))
-			return facing;
-	}
-	return bot_frame_yaw(feet, desired, unit_index);
-}
-
-/* one shoulder is in the frame and the other is not. A small aim away
-from that shoulder is the doorway. Both shoulders, or a nudge that
-leaves the floor, stays on the step. */
-static real bot_frame_yaw(real_point3d const *feet, real yaw, long unit_index)
-{
-	real_point3d left_from;
-	real_point3d right_from;
-	real left;
-	real right;
-	real nudge;
-	real aimed;
-
-	left_from = *feet;
-	right_from = *feet;
-	left_from.x += cosine(yaw + _pi * 0.5f) * 0.24f;
-	left_from.y += sine(yaw + _pi * 0.5f) * 0.24f;
-	right_from.x += cosine(yaw - _pi * 0.5f) * 0.24f;
-	right_from.y += sine(yaw - _pi * 0.5f) * 0.24f;
-	left = bot_first_block(&left_from, yaw, 0.45f, 0.80f, unit_index);
-	right = bot_first_block(&right_from, yaw, 0.45f, 0.80f, unit_index);
-	nudge = 0.0f;
-	if (left >= 0.0f && left < 0.75f && (right < 0.0f || left + 0.30f < right))
-		nudge = -0.10f;
-	else if (right >= 0.0f && right < 0.75f && (left < 0.0f || right + 0.30f < left))
-		nudge = 0.10f;
-	if (nudge == 0.0f)
-		return yaw;
-	aimed = yaw + nudge;
-	if (aimed > _pi)
-		aimed -= _pi * 2.0f;
-	else if (aimed < -_pi)
-		aimed += _pi * 2.0f;
-	if (bot_drop_ahead(feet, aimed))
-		return yaw;
-	return aimed;
-}
 
 /* the heading down the hall. A corner starts turning while there is
 still room, instead of at the frame. A slide that leaves the floor is
@@ -2854,47 +2738,36 @@ static boolean bot_step_yaw(struct bot_state *state, long unit_index, real_point
 	step = *goal;
 	if (state->route.valid)
 	{
-		/* the actor's step. On the point, or already past it while
-		turning and still beside the line to the next one. */
+		/* the actor's step. Close, or already past it onto the next
+		one. Skipping ahead is how the heading cuts the corner. */
 		guard = 0;
 		while (state->route.step_index + 1 < state->route.step_count && guard < 4)
 		{
-			real_point3d const *current;
-			real_point3d const *next;
+			real_point3d next;
 			real dx;
 			real dy;
 			real nx;
 			real ny;
-			boolean reached;
+			real along;
+			real cross;
+			real span;
 
-			current = &state->route.steps[state->route.step_index].point;
-			next = &state->route.steps[state->route.step_index + 1].point;
-			dx = current->x - feet->x;
-			dy = current->y - feet->y;
-			nx = next->x - current->x;
-			ny = next->y - current->y;
-			reached = dx * dx + dy * dy < 0.15f * 0.15f;
-			if (!reached && state->move_thwarted)
+			step = state->route.steps[state->route.step_index].point;
+			dx = step.x - feet->x;
+			dy = step.y - feet->y;
+			if (dx * dx + dy * dy > 0.35f * 0.35f)
 			{
-				real along;
-				real span;
-				real face;
-				real cross;
-
+				next = state->route.steps[state->route.step_index + 1].point;
+				nx = next.x - step.x;
+				ny = next.y - step.y;
 				along = dx * nx + dy * ny;
+				if (along >= 0.0f)
+					break;
+				cross = dx * ny - dy * nx;
 				span = nx * nx + ny * ny;
-				face = bot_angle_delta(state->facing_yaw, bot_yaw_between(current, next));
-				if (face < 0.0f)
-					face = -face;
-				if (face < _pi * 0.5f && along < 0.0f && span > 0.0001f)
-				{
-					cross = dx * ny - dy * nx;
-					if ((cross * cross) / span < 0.25f * 0.25f)
-						reached = TRUE;
-				}
+				if (span < 0.0001f || (cross * cross) / span > 0.40f * 0.40f)
+					break;
 			}
-			if (!reached)
-				break;
 			state->route.step_index++;
 			guard++;
 		}
@@ -2908,7 +2781,14 @@ static boolean bot_step_yaw(struct bot_state *state, long unit_index, real_point
 	{
 		if (state->route.valid && state->route_floor)
 		{
-			*yaw = bot_wall_yaw(feet, &step, state->facing_yaw, unit_index);
+			desired = bot_step_heading(state, feet, &step, unit_index);
+			/* the step ends in the wall between them. Take the open way.
+			a wall beside the step is the hall, and looking off it is the scan. */
+			if (!bot_different_floor(feet, goal) &&
+				bot_first_block(feet, desired, 0.45f, 0.40f, unit_index) >= 0.0f &&
+				bot_escape_yaw(feet, desired, unit_index, yaw))
+				return TRUE;
+			*yaw = desired;
 			return TRUE;
 		}
 		if (bot_different_floor(feet, goal) || !state->route_tour)
@@ -2920,7 +2800,12 @@ static boolean bot_step_yaw(struct bot_state *state, long unit_index, real_point
 	{
 		if (state->route.valid)
 		{
-			*yaw = bot_wall_yaw(feet, &step, state->facing_yaw, unit_index);
+			desired = bot_step_heading(state, feet, &step, unit_index);
+			if (!bot_different_floor(feet, goal) &&
+				bot_first_block(feet, desired, 0.45f, 0.40f, unit_index) >= 0.0f &&
+				bot_escape_yaw(feet, desired, unit_index, yaw))
+				return TRUE;
+			*yaw = desired;
 			return TRUE;
 		}
 		if (!bot_different_floor(feet, goal))
@@ -2963,7 +2848,19 @@ static boolean bot_apply_heading(struct bot_state *state, long unit_index, real_
 	real clear;
 	real scale;
 
-	state->move_thwarted = FALSE;
+	if (along_route)
+	{
+		real nudged;
+
+		nudged = bot_door_yaw(feet, walk, unit_index);
+		/* a frame nudge that leaves the floor is the fall off the side. */
+		if (nudged == walk || !bot_drop_ahead(feet, nudged) || bot_drop_ahead(feet, walk))
+			walk = nudged;
+	}
+	/* already within an arm's length of the wall this step points at.
+	the open heading is a small turn, and the walk keeps going. */
+	if (!state->gap_hold && state->gap_ticks <= 0)
+		walk = bot_ease_wall(feet, walk, unit_index);
 	clear = bot_open_distance(feet, walk, unit_index);
 	rel = bot_angle_delta(state->facing_yaw, walk);
 	/* the next step leaves the floor. A platform edge reads as open
@@ -3025,21 +2922,78 @@ static boolean bot_apply_heading(struct bot_state *state, long unit_index, real_
 			return TRUE;
 		}
 	}
-	/* walk the turn. Stop only when the nose is in a wall, or the step
-	is behind them and a forward step would be into that wall. */
+	/* face the step, then run. Stop only when the nose is already in
+	the wall, or the step is behind them. A wall a meter off to the
+	side used to zero the stick for the whole turn. */
 	if (along_route)
 	{
-		real nose;
+		real walk_hit;
+		real side = rel >= 0.0f ? 1.0f : -1.0f;
+		real side_hit = bot_first_block(feet, state->facing_yaw + side * (_pi * 0.5f),
+			0.45f, 0.55f, unit_index);
+		boolean scrape = side_hit >= 0.0f && (rel > 0.70f || rel < -0.70f);
+		real nose = bot_first_block(feet, state->facing_yaw, 0.45f, 0.80f, unit_index);
 
-		nose = bot_first_block(feet, state->facing_yaw, 0.45f, 0.45f, unit_index);
-		action->throttle.j = 0.0f;
-		if (nose >= 0.0f || cosine(rel) <= 0.25f)
+		walk_hit = bot_first_block(feet, walk, 0.45f, 1.50f, unit_index);
+		/* the wall is still in front of the step. An arm's length away,
+		the turn is already chosen and the walk continues. Farther out,
+		creep until the heading clears. */
+		if (walk_hit >= 0.0f && walk_hit < 1.25f)
+		{
+			action->throttle.j = 0.0f;
+			if (rel > 0.20f || rel < -0.20f)
+				action->throttle.j = -sine(rel);
+			if (action->throttle.j > 0.45f)
+				action->throttle.j = 1.0f;
+			else if (action->throttle.j < -0.45f)
+				action->throttle.j = -1.0f;
+			if (walk_hit <= 0.80f && (rel > 0.18f || rel < -0.18f))
+				action->throttle.i = 0.70f;
+			else
+			{
+				action->throttle.i = 0.0f;
+				if (walk_hit > 0.80f && cosine(rel) > 0.5f)
+					action->throttle.i = 0.35f;
+			}
+			return TRUE;
+		}
+		if (nose >= 0.0f && (rel > 0.18f || rel < -0.18f))
+		{
+			/* facing the wall, with an open heading off to the side.
+			slide that way while the turn happens. */
+			action->throttle.i = 0.65f;
+			action->throttle.j = -sine(rel);
+			if (action->throttle.j > 0.70f)
+				action->throttle.j = 0.70f;
+			else if (action->throttle.j < -0.70f)
+				action->throttle.j = -0.70f;
+			return TRUE;
+		}
+		/* the step is behind them. A forward shove here is the
+		turn-around that runs into the wall they are facing. */
+		if (cosine(rel) <= 0.0f)
 		{
 			action->throttle.i = 0.0f;
-			state->move_thwarted = TRUE;
+			action->throttle.j = 0.0f;
+			return TRUE;
+		}
+		/* steep and already against the wall. A short turn, then the walk. */
+		if (scrape)
+		{
+			action->throttle.i = 0.0f;
+			action->throttle.j = 0.0f;
+			return TRUE;
+		}
+		if (rel > 0.35f || rel < -0.35f)
+		{
+			action->throttle.i = cosine(rel);
+			action->throttle.j = -sine(rel);
 		}
 		else
+		{
 			action->throttle.i = 1.0f;
+			action->throttle.j = 0.0f;
+		}
 		return TRUE;
 	}
 	if (clear < 1.1f || bot_heading_is_corner(feet, walk, unit_index))
@@ -3056,8 +3010,11 @@ static boolean bot_apply_heading(struct bot_state *state, long unit_index, real_
 	the facing never catches it, and the throttle stays at zero. */
 	if (!hold_facing && (rel > 0.6f || rel < -0.6f) &&
 		action->throttle.i > 0.0f &&
-		bot_open_distance(feet, state->facing_yaw, unit_index) < 1.0f)
-		action->throttle.i = 0.0f;
+		bot_first_block(feet, state->facing_yaw, 0.45f, 0.80f, unit_index) >= 0.0f)
+	{
+		if (action->throttle.i > 0.55f)
+			action->throttle.i = 0.55f;
+	}
 	if (action->throttle.i == 0.0f && action->throttle.j == 0.0f)
 		return FALSE;
 	return TRUE;
@@ -3075,8 +3032,18 @@ static boolean bot_walk_hall(struct bot_state *state, long unit_index,
 	ahead = bot_open_distance(feet, state->facing_yaw, unit_index);
 	action->throttle.i = cosine(rel);
 	action->throttle.j = -sine(rel);
+	/* the wall is an arm's length ahead and the hall heading is the turn.
+	keep walking it. Stopping is how they meet the wall. */
 	if (action->throttle.i > 0.0f && ahead < 1.0f)
-		action->throttle.i = 0.0f;
+	{
+		if (rel > 0.18f || rel < -0.18f)
+		{
+			if (action->throttle.i > 0.65f)
+				action->throttle.i = 0.65f;
+		}
+		else
+			action->throttle.i = 0.0f;
+	}
 	if (action->throttle.i > 0.45f)
 		action->throttle.i = 1.0f;
 	else if (action->throttle.i < -0.45f)
@@ -5165,75 +5132,8 @@ static boolean bot_hop_owned(struct bot_state const *state)
 	return state->job_hop >= 0 && state->job_hop < bot_route_link_count;
 }
 
-static void bot_tour_remember(struct bot_state *state, real_point3d const *point)
-{
-	if (state->tour_been_next < 0 || state->tour_been_next >= 12)
-		state->tour_been_next = 0;
-	state->tour_been[state->tour_been_next] = *point;
-	state->tour_been_next++;
-	if (state->tour_been_next >= 12)
-		state->tour_been_next = 0;
-	if (state->tour_been_count < 12)
-		state->tour_been_count++;
-}
-
-/* farther from the rooms already walked. Height is a nudge, not the
-whole decision, so one catwalk does not become the only trip. */
-static real bot_tour_score(struct bot_state *state, real_point3d const *feet,
-	real_point3d const *point, real min_dist)
-{
-	real dx;
-	real dy;
-	real dist;
-	real rise;
-	real nearest;
-	real score;
-	long index;
-	long remembered;
-
-	dx = point->x - feet->x;
-	dy = point->y - feet->y;
-	dist = square_root(dx * dx + dy * dy);
-	if (dist < min_dist)
-		return -1.0e9f;
-	rise = point->z - feet->z;
-	if (rise < -1.6f)
-	{
-		real_point3d ground;
-		long surface;
-
-		if (!bot_ground_at(point, &ground, &surface))
-			return -1.0e9f;
-	}
-	if (bot_point_banned(state, point))
-		return -1.0e9f;
-	nearest = dist;
-	remembered = state->tour_been_count;
-	if (remembered > 12)
-		remembered = 12;
-	for (index = 0; index < remembered; index++)
-	{
-		real px = point->x - state->tour_been[index].x;
-		real py = point->y - state->tour_been[index].y;
-		real pd = square_root(px * px + py * py);
-
-		if (pd < nearest)
-			nearest = pd;
-	}
-	if (nearest > 48.0f)
-		nearest = 48.0f;
-	/* length counts, so a short unvisited corner does not win over the
-	rest of the map. */
-	score = nearest + dist * 0.45f;
-	if (rise > 1.2f)
-		score += 8.0f;
-	if (state->floor_trips >= 2 && (rise > 1.6f || rise < -1.6f))
-		score += 12.0f;
-	return score;
-}
-
-/* a spawn, a flag, a ladder, or a room the map walk already found.
-item pads are a fetch, not a place to tour. */
+/* a spawn, a flag, or the base of a ladder. Higher ground is the trip
+they take. Item pads are a fetch, not a place to tour. */
 static boolean bot_choose_tour(struct bot_state *state, real_point3d const *feet, long unit_index)
 {
 	struct scenario *scenario;
@@ -5242,6 +5142,7 @@ static boolean bot_choose_tour(struct bot_state *state, real_point3d const *feet
 	long count;
 	long index;
 	real best_score;
+	real_point3d previous;
 	real_point3d chosen;
 	boolean found;
 
@@ -5266,13 +5167,50 @@ static boolean bot_choose_tour(struct bot_state *state, real_point3d const *feet
 		if (flag)
 			points[count++] = flag->position;
 	}
+	previous = state->roam_valid ? state->roam_goal : *feet;
 	best_score = -1.0e9f;
 	found = FALSE;
 	chosen = *feet;
 	for (index = 0; index < count; index++)
 	{
-		real score = bot_tour_score(state, feet, &points[index], 14.0f);
+		real dx = points[index].x - feet->x;
+		real dy = points[index].y - feet->y;
+		real dist = square_root(dx * dx + dy * dy);
+		real rise = points[index].z - feet->z;
+		real px;
+		real py;
+		real ahead;
+		real score;
 
+		/* a lower floor is a trip when it is actually a floor. The open
+		edge under a platform is not, and that point is skipped. */
+		if (rise < -1.6f)
+		{
+			real_point3d ground;
+			long surface;
+
+			if (!bot_ground_at(&points[index], &ground, &surface))
+				continue;
+		}
+		if (bot_point_banned(state, &points[index]))
+			continue;
+		if (dist < (rise > 1.6f ? 3.5f : 8.0f))
+			continue;
+		px = points[index].x - previous.x;
+		py = points[index].y - previous.y;
+		if (state->roam_valid && rise < 1.6f && px * px + py * py < 8.0f * 8.0f)
+			continue;
+		ahead = cosine(state->facing_yaw) * dx + sine(state->facing_yaw) * dy;
+		/* higher ground still wins. A lower floor is one trip after they
+		have crossed the one they are on, not a step off the edge. */
+		if (rise >= 0.0f)
+			score = dist + rise * 20.0f;
+		else
+			score = dist + 24.0f;
+		if (state->floor_trips >= 2 && (rise > 1.6f || rise < -1.6f))
+			score += 80.0f;
+		if (ahead < 0.0f && rise < 1.6f)
+			score -= 18.0f;
 		if (score > best_score)
 		{
 			best_score = score;
@@ -5288,7 +5226,12 @@ static boolean bot_choose_tour(struct bot_state *state, real_point3d const *feet
 			real_point3d stand;
 			real top;
 			real face;
+			real dx;
+			real dy;
+			real dist;
 			real rise;
+			real px;
+			real py;
 			real score;
 
 			if (!bot_ladder_base(bsp, index, &stand, &top, &face))
@@ -5300,7 +5243,18 @@ static boolean bot_choose_tour(struct bot_state *state, real_point3d const *feet
 			/* the stand is the bottom. From a platform, that goal is the walk down. */
 			if (stand.z < feet->z - 1.6f)
 				continue;
-			score = bot_tour_score(state, feet, &stand, 4.0f);
+			if (bot_point_banned(state, &stand))
+				continue;
+			dx = stand.x - feet->x;
+			dy = stand.y - feet->y;
+			dist = square_root(dx * dx + dy * dy);
+			if (dist < 4.0f)
+				continue;
+			px = stand.x - previous.x;
+			py = stand.y - previous.y;
+			if (state->roam_valid && px * px + py * py < 8.0f * 8.0f)
+				continue;
+			score = dist + rise * 20.0f;
 			if (score > best_score)
 			{
 				best_score = score;
@@ -5309,20 +5263,8 @@ static boolean bot_choose_tour(struct bot_state *state, real_point3d const *feet
 			}
 		}
 	}
-	for (index = 0; index < bot_route_node_count; index++)
-	{
-		real score = bot_tour_score(state, feet, &bot_route_nodes[index].point, 14.0f);
-
-		if (score > best_score)
-		{
-			best_score = score;
-			chosen = bot_route_nodes[index].point;
-			found = TRUE;
-		}
-	}
 	if (!found)
 		return FALSE;
-	bot_tour_remember(state, &chosen);
 	state->roam_goal = chosen;
 	state->roam_valid = TRUE;
 	state->route.valid = FALSE;
@@ -5761,7 +5703,7 @@ static void bot_job_maintain(struct bot_state *state, real_point3d const *feet,
 			state->job_anchor = *feet;
 			state->job_still = 0;
 		}
-		else if (!state->job_climb && state->job_grab <= 0 && !state->move_thwarted)
+		else if (!state->job_climb && state->job_grab <= 0)
 		{
 			state->job_still++;
 			/* a turn finishes well inside this. Longer than that is a stand. */
@@ -8043,7 +7985,27 @@ static void update_server_generate_bot_actions(
 				real magnitude;
 				real side;
 
-				state->step_hold = 0;
+				/* a new step well off the one already being walked waits.
+				taking it immediately is the left-right look down a hall. */
+				if ((engage == NONE || !visible) && state->route.valid &&
+					(state->route_tour || state->route_floor))
+				{
+					real swing = bot_angle_delta(state->step_yaw, step_yaw);
+
+					if (swing < 0.0f)
+						swing = -swing;
+					if (swing > 0.50f && state->step_hold < 5 &&
+						bot_open_distance(&feet, state->step_yaw, player->unit_index) >= 2.5f &&
+						!bot_drop_ahead(&feet, state->step_yaw))
+					{
+						state->step_hold++;
+						step_yaw = state->step_yaw;
+					}
+					else
+						state->step_hold = 0;
+				}
+				else
+					state->step_hold = 0;
 				flip = bot_angle_delta(state->commit_yaw, step_yaw);
 				magnitude = flip < 0.0f ? -flip : flip;
 
@@ -8216,9 +8178,37 @@ static void update_server_generate_bot_actions(
 			if (engage == NONE)
 				goal_pitch = 0.0f;
 			if (engage == NONE && state->gap_ticks > 0 && !state->gap_hold)
-			{
 				goal_yaw = state->gap_yaw;
-				limit *= 3.0f;
+			else if (state->vault == 0 && !state->gap_hold && !holding &&
+				(engage == NONE || !visible))
+			{
+				real before;
+				real eased;
+				real off;
+
+				/* the step, or the way they are already moving, meets a
+				wall at an arm's length. Turn a little toward the open
+				side before the body gets there. */
+				before = goal_yaw;
+				eased = bot_ease_wall(&feet, goal_yaw, player->unit_index);
+				if (eased == goal_yaw &&
+					bot_first_block(&feet, state->facing_yaw, 0.45f, 0.80f,
+						player->unit_index) >= 0.0f)
+				{
+					off = bot_angle_delta(state->facing_yaw, goal_yaw);
+					if (off < 0.30f && off > -0.30f)
+						eased = bot_ease_wall(&feet, state->facing_yaw,
+							player->unit_index);
+				}
+				if (eased != before)
+				{
+					goal_yaw = eased;
+					if (stepped)
+						step_yaw = eased;
+					if (in_hall)
+						hall_yaw = eased;
+					limit *= 2.0f;
+				}
 			}
 			state->facing_yaw = bot_slew(state->facing_yaw, goal_yaw, limit);
 			state->facing_pitch = bot_slew(state->facing_pitch, goal_pitch, pitch_limit);
@@ -8689,7 +8679,7 @@ static void update_server_generate_bot_actions(
 				real lip;
 				real rel = bot_angle_delta(state->facing_yaw, state->gap_yaw);
 
-				if (rel > 0.55f || rel < -0.55f ||
+				if (rel > 0.35f || rel < -0.35f ||
 					!bot_jump_across(&feet, state->gap_yaw, player->unit_index, &lip, NULL))
 				{
 					state->gap_ticks--;
@@ -8700,46 +8690,24 @@ static void update_server_generate_bot_actions(
 				}
 				else
 				{
-					real_point3d landing;
-					real forward;
-					real span;
-					real reach;
-					real ldx;
-					real ldy;
-					real ldist;
-
 					action.throttle.i = 1.0f;
 					action.throttle.j = 0.0f;
-					forward = biped->object.translational_velocity.i *
-							cosine(state->gap_yaw) +
-						biped->object.translational_velocity.j *
-							sine(state->gap_yaw);
-					span = bot_jump_span(player->unit_index);
-					reach = span * (forward / 0.075f);
-					if (reach > span)
-						reach = span;
-					ldist = span;
-					if (bot_jump_across(&feet, state->gap_yaw, player->unit_index, &lip, &landing))
+					/* leave the ground at the edge. Earlier and the jump
+					is spent before the gap. */
+					if (lip < 0.45f)
 					{
-						ldx = landing.x - feet.x;
-						ldy = landing.y - feet.y;
-						ldist = square_root(ldx * ldx + ldy * ldy);
-					}
-					/* full run, at the lip, pointed at the platform.
-					jumping early or slow is the miss onto the camo. */
-					if (rel <= 0.16f && rel >= -0.16f && lip < 0.30f && lip > 0.02f &&
-						forward >= 0.060f && ldist <= reach)
-					{
-						action.control_flags |= FLAG(_unit_control_jump_bit);
-						state->gap_hold = TRUE;
-						state->gap_left = FALSE;
-						state->gap_ticks = 0;
-					}
-					else if (lip < 0.16f && (forward < 0.050f || ldist > reach))
-					{
-						action.throttle.i = 0.0f;
-						action.throttle.j = 0.0f;
-						state->gap_ticks = -20;
+						real forward = biped->object.translational_velocity.i *
+								cosine(state->facing_yaw) +
+							biped->object.translational_velocity.j *
+								sine(state->facing_yaw);
+
+						if (forward > 0.035f || lip < 0.25f)
+						{
+							action.control_flags |= FLAG(_unit_control_jump_bit);
+							state->gap_hold = TRUE;
+							state->gap_left = FALSE;
+							state->gap_ticks = 0;
+						}
 					}
 				}
 			}
@@ -8881,7 +8849,7 @@ static void update_server_generate_bot_actions(
 			action.throttle.j = -sine(rel);
 		}
 		if (state->gap_hold || state->vault != 0 || state->job_climb || planted ||
-			state->gap_ticks > 0 || state->escape_ticks > 0 || state->move_thwarted)
+			state->gap_ticks > 0 || state->escape_ticks > 0)
 			state->stall_ticks = 0;
 		else if (action.throttle.i == 0.0f && action.throttle.j == 0.0f)
 			state->stall_ticks++;

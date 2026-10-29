@@ -371,6 +371,7 @@ static char const *const port_function_names[] =
 	"port lobby open", "port lobby add player", "port lobby join", "port lobby leave",
 	"port lobby download", "port lobby chat", "port profile edit",
 	"port lobby player list initialize", "port lobby player choose",
+	"port lobby player confirm",
 	"port lobby assign begin", "port lobby assign",
 	"port lobby bot begin", "port lobby bot rename", "port lobby bot add",
 	"port lobby preview add", "port lobby preview leave",

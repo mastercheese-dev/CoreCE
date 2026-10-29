@@ -90,6 +90,7 @@ their handlers open opens.
 #include "game/bots.h"
 #include "interface/virtual_keyboard.h"
 #include "saved games/player_profile.h"
+#include "saved games/saved_game_files.h"
 #include "tag_files/tag_groups.h"
 #include "text/text_group.h"
 #include "text/unicode.h"
@@ -2385,6 +2386,9 @@ static struct
 /* the lobby's add player list also offers a bot, between the profiles and
 the row that makes a new one */
 static boolean profile_list_bot_row;
+/* the LAN list's last row is naming a profile on the keyboard */
+static boolean profile_list_making;
+static wchar_t profile_list_new_name[MAX_GAMENAME];
 
 static short profile_list_slots(void)
 {
@@ -2456,8 +2460,8 @@ static void profile_row_text(short row, wchar_t *text)
 	}
 	else if (profile_list_bot_row && item == profile_list.count)
 	{
-		ustrncpy(text, L"BOT", MAXIMUM_PLAYER_PROFILE_NAME_LENGTH);
-		text[MAXIMUM_PLAYER_PROFILE_NAME_LENGTH] = 0;
+		ustrncpy(text, L"BOT (EXPERIMENTAL)", ROW_TEXT_LENGTH - 1);
+		text[ROW_TEXT_LENGTH - 1] = 0;
 	}
 	else
 	{
@@ -2471,6 +2475,92 @@ static void visible_set(struct widget_instance *widget, boolean visible)
 		widget->visible = visible;
 }
 
+/* the row after the profiles, and after BOT on the LAN list */
+static boolean profile_list_is_new(short item)
+{
+	return item == (short)(profile_list.count + (profile_list_bot_row ? 1 : 0));
+}
+
+/* the highlighted row, as soon as the focus moves. The redraw is what usually
+copies it, and a press in that same moment would act on the row before it */
+static void profile_list_take_focus(struct widget_instance *list)
+{
+	short row;
+
+	if (!list || !list->name || strcmp(list->name, "player_profile_list"))
+		return;
+	row = focused_row(list);
+	if (row != NONE)
+		profile_list.chosen = (short)(profile_list.first + row);
+}
+
+/* "A" on the LAN list's last row: the keyboard names the profile. The list
+makes it once the keyboard closes, and leaves that row highlighted */
+static boolean profile_list_begin_new(void)
+{
+	if (virtual_keyboard_active())
+		return TRUE;
+	csmemset(profile_list_new_name, 0, sizeof(profile_list_new_name));
+	saved_game_file_get_useable_untitled_profile_name(profile_list_new_name);
+	if (!virtual_keyboard_launch(profile_list_new_name, sizeof(profile_list_new_name), 8))
+	{
+		display_error_text_deferred(L"The name could not be edited.", NONE);
+		return TRUE;
+	}
+	profile_list_making = TRUE;
+	return TRUE;
+}
+
+/* the keyboard has closed: a name that was kept becomes a profile, on this
+list. Cancelling the keyboard leaves the list as it was */
+static void profile_list_finish_new(struct widget_instance *list)
+{
+	struct widget_instance *screen;
+	long index;
+	short row;
+
+	if (!profile_list_making || virtual_keyboard_active())
+		return;
+	profile_list_making = FALSE;
+	screen = screen_of(list);
+	if (!screen->name || strcmp(screen->name, "lan_add_player_screen") ||
+		!virtual_keyboard_last_exit_saved_text() || !profile_list_new_name[0])
+	{
+		return;
+	}
+	index = player_profile_new(0, profile_list_new_name);
+	if (index == NONE)
+	{
+		display_error_text_deferred(L"That profile could not be made.", NONE);
+		return;
+	}
+	{
+		struct player_profile profile;
+
+		if (player_profile_get(index, &profile) && profile.primary_color_index < 0)
+		{
+			profile.primary_color_index = 0;
+			player_profile_save(index, &profile);
+		}
+	}
+	profile_list_read(TRUE);
+	profile_list.chosen = 0;
+	{
+		wchar_t stored[MAXIMUM_PLAYER_PROFILE_NAME_LENGTH];
+
+		ustrncpy(stored, profile_list_new_name, MAXIMUM_PLAYER_PROFILE_NAME_LENGTH - 1);
+		stored[MAXIMUM_PLAYER_PROFILE_NAME_LENGTH - 1] = 0;
+		for (row = 0; row < profile_list.count; row++)
+		{
+			if (!ustrcmp(profile_list.profiles[row].player_name, stored))
+				profile_list.chosen = row;
+		}
+	}
+	profile_list.first = (short)PIN(profile_list.chosen - PROFILE_ROWS / 2, 0,
+		MAX(0, profile_list_slots() - PROFILE_ROWS));
+	focus_row(list, (short)(profile_list.chosen - profile_list.first));
+}
+
 /* "3wide player profile list update": the rows, and the profile chosen:
 its name, colour, current level, best difficulty and controls */
 static void profile_list_update(struct widget_instance *list)
@@ -2481,6 +2571,7 @@ static void profile_list_update(struct widget_instance *list)
 	boolean profile;
 	boolean bot;
 
+	profile_list_finish_new(list);
 	profile_list_read(FALSE);
 	if (!(list->name && !strcmp(list->name, "player_profile_list")))
 		profile_list_bot_row = FALSE;
@@ -2493,10 +2584,36 @@ static void profile_list_update(struct widget_instance *list)
 	text_set(named(description, "player_profile_right_name", 0),
 		profile ? profile_list.profiles[profile_list.chosen].player_name : (bot ? L"BOT" : L""));
 	visible_set(named(description, "empty_profile_slot_text", 0), !profile && !bot);
-	if (profile_list_bot_row)
 	{
-		text_set(named(screen_of(list), "player_profile_help", 0),
-			bot ? L"An AI player. Set its name and difficulty." : L"The new player's profile.");
+		struct widget_instance *screen = screen_of(list);
+		struct widget_instance *help = named(screen, "player_profile_help", 0);
+
+		/* the LAN add-player screen has no side card, so the line under the
+		list names who A will add, or that BOT opens its own screen */
+		if (screen->name && !strcmp(screen->name, "lan_add_player_screen"))
+		{
+			/* label_set keeps this line. A plain text_set is replaced on the
+			next draw by the caption baked into the widget. */
+			if (bot)
+				label_set(help, L"An AI player. A opens its name and difficulty.");
+			else if (profile)
+			{
+				wchar_t line[ROW_TEXT_LENGTH];
+
+				usnprintf(line, NUMBEROF(line) - 1, L"A adds %s.",
+					profile_list.profiles[profile_list.chosen].player_name);
+				line[NUMBEROF(line) - 1] = 0;
+				label_set(help, line);
+			}
+			else if (profile_list.chosen == (short)(profile_list.count + (profile_list_bot_row ? 1 : 0)))
+				label_set(help, L"A asks for a name and makes that profile.");
+			else
+				label_set(help, L"Choose a profile, or BOT to set one up.");
+		}
+		else if (profile_list_bot_row)
+		{
+			text_set(help, bot ? L"An AI player. Set its name and difficulty." : L"The new player's profile.");
+		}
 	}
 	visible_set(named(description, "qtr_screen_profile_color_pic", 0), profile);
 	visible_set(named(description, "current_level_label", 0), profile);
@@ -5620,15 +5737,66 @@ static boolean lobby_open(struct widget_instance *screen)
 	return TRUE;
 }
 
-/* "port lobby add player" (ADD PLAYER): the profile list, at once. Which
-controller or the keyboard is chosen after a profile */
-static boolean lobby_add_player(void)
+/* the LAN lobby's add-player screen. Internet, a direct game, and the join
+preview keep the list with the side card. */
+static boolean lobby_open_named(struct widget_instance *widget, char const *name, boolean *widget_deleted)
 {
+	struct widget_instance *root = widget ? widget_instance_get_topmost_parent(widget) : NULL;
+	long tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, name);
+	short player;
+
+	if (!root || tag == NONE)
+		return FALSE;
+	player = root->local_player_index;
+	if (player != NONE && (player < 0 || player >= MAXIMUM_GAMEPADS))
+		player = 0;
+	if (!ui_widget_load_by_name_or_tag(NULL, tag, NULL, player, root->definition_tag_index,
+		widget->parent ? widget->parent->definition_tag_index : NONE,
+		(short)(widget->parent ? widget_instance_get_child_index_from_parent(widget) : 0)))
+		return FALSE;
+	if (widget_deleted)
+		*widget_deleted = TRUE;
+	return TRUE;
+}
+
+/* a controller already on this machine, not one the player still has to
+press START on. The press's own controller when it is free, else the next. */
+static short lobby_free_controller(short preferred)
+{
+	short controller;
+	short machine = network_game_client_get_local_machine_index();
+
+	if (preferred >= 0 && preferred < MAXIMUM_LOCAL_PLAYERS &&
+		!bot_controller_is_bot(machine, preferred) && !lobby_controller_playing(preferred))
+		return preferred;
+	for (controller = 0; controller < MAXIMUM_LOCAL_PLAYERS; controller++)
+	{
+		if (!bot_controller_is_bot(machine, controller) && !lobby_controller_playing(controller))
+			return controller;
+	}
+	return NONE;
+}
+
+/* "port lobby add player" (ADD PLAYER): the profile list, at once. A LAN
+lobby skips the controller prompt. Anywhere else, the list that follows
+still asks which controller. */
+static boolean lobby_add_player(struct widget_instance *widget, boolean *widget_deleted)
+{
+	struct widget_instance *root = widget ? widget_instance_get_topmost_parent(widget) : NULL;
+	boolean lan_lobby = root && root->name && !strcmp(root->name, "lobby_screen") &&
+		(multiplayer.mode == _multiplayer_mode_host_lan || multiplayer.mode == _multiplayer_mode_lan);
+
 	if (!lobby_seat_available())
 		return FALSE;
 	lobby_join.adding = TRUE;
 	lobby_join.controller = NONE;
 	lobby_join.profile = NONE;
+	if (lan_lobby && lobby_open_named(widget,
+		"pc\\main_menu\\multiplayer_type_select\\lobby\\lan_add_player_screen", widget_deleted))
+	{
+		ui_play_audio_feedback_sound(SOUND_FORWARD);
+		return TRUE;
+	}
 	return TRUE;
 }
 
@@ -5641,7 +5809,7 @@ static boolean lobby_join_start(struct widget_instance *widget, short controller
 		ui_widget_port_dispatch_event(focused_leaf(widget), BUTTON_START, controller, widget_deleted);
 		return FALSE;
 	}
-	return lobby_add_player();
+	return lobby_add_player(widget, widget_deleted);
 }
 
 /* "port lobby leave" (B): a player leaves the game, the machine's last
@@ -5674,6 +5842,8 @@ static boolean lobby_player_list_initialize(struct widget_instance *list)
 	short index, controller;
 
 	profile_list_bot_row = multiplayer.mode == _multiplayer_mode_host_lan;
+	if (!virtual_keyboard_active())
+		profile_list_making = FALSE;
 	profile_list_read(TRUE);
 	profile_list.chosen = 0;
 	for (index = profile_list.count - 1; index >= 0; index--)
@@ -5760,21 +5930,51 @@ static boolean lobby_bot_begin(void)
 	return TRUE;
 }
 
-/* "port lobby bot update": the name, and the difficulty on its first look */
+/* "port lobby bot update": the name, the line for the row with the focus,
+and the difficulty on its first look */
 static void lobby_bot_update(struct widget_instance *list)
 {
+	struct widget_instance *screen = screen_of(list);
+	struct widget_instance *focus = list->focused_child;
 	struct widget_instance *spinner;
+	wchar_t const *line = L"Set the bot's name and difficulty, then add it.";
 
-	text_set(named(list, "bot_name_value", 0), lobby_bot_edit_name);
+	/* label_set keeps the name. The widget's caption is copied back over a
+	plain text_set on the next draw. */
+	label_set(named(list, "bot_name_value", 0), lobby_bot_edit_name);
+	if (focus && focus->name && !strcmp(focus->name, "bot_name_row"))
+		line = L"The name other players see. A changes it.";
+	else if (focus && focus->name && !strcmp(focus->name, "bot_difficulty_row"))
+		line = L"How well the bot aims, reacts, and throws.";
+	else if (focus && focus->name && !strcmp(focus->name, "bot_button_bar"))
+		line = L"Add Bot puts this bot in the lobby.";
+	label_set(named(screen, "bot_help", 0), line);
 	spinner = named(list, "bot_difficulty_spinner", 0);
-	if (spinner && !lobby_bot_skill_set)
+	if (spinner)
 	{
-		spinner->parameters.list.selected_index = 1;
-		lobby_bot_skill_set = TRUE;
+		short index = spinner->parameters.list.selected_index;
+		short count = spinner->parameters.list.number_of_items;
+
+		/* Normal until the spinner can show it. After that, the spinner is
+		the choice, and an index it cannot show is put back. */
+		if (!lobby_bot_skill_set)
+		{
+			if (count >= 2)
+			{
+				spinner->parameters.list.selected_index = 1;
+				lobby_bot_skill = 1;
+				lobby_bot_skill_set = TRUE;
+			}
+		}
+		else if (index >= 0 && index <= BOT_SKILL_IMPOSSIBLE && (count <= 0 || index < count))
+		{
+			lobby_bot_skill = index;
+		}
+		else
+		{
+			spinner->parameters.list.selected_index = (short)lobby_bot_skill;
+		}
 	}
-	if (spinner && spinner->parameters.list.selected_index >= 0 &&
-		spinner->parameters.list.selected_index <= BOT_SKILL_IMPOSSIBLE)
-		lobby_bot_skill = spinner->parameters.list.selected_index;
 }
 
 /* "port lobby bot rename": the on screen keyboard writes the name */
@@ -5813,14 +6013,27 @@ static short lobby_bot_seat(void)
 	return NONE;
 }
 
+/* the difficulty on the spinner at the moment Add Bot is pressed */
+static void lobby_bot_take_skill(struct widget_instance *widget)
+{
+	struct widget_instance *screen = widget ? screen_of(widget) : NULL;
+	struct widget_instance *spinner = named(screen, "bot_difficulty_spinner", 0);
+
+	if (spinner && spinner->parameters.list.selected_index >= 0 &&
+		spinner->parameters.list.selected_index <= BOT_SKILL_IMPOSSIBLE)
+		lobby_bot_skill = spinner->parameters.list.selected_index;
+}
+
 /* "port lobby bot add": the bot joins on a free seat. This pad stays the
 player who added it, and the screen goes back so another bot can be added */
-static boolean lobby_bot_add(void)
+static boolean lobby_bot_add(struct widget_instance *widget)
 {
 	void *client = global_network_game_client_get();
 	struct player_profile bot;
 	long skill;
 	short seat;
+
+	lobby_bot_take_skill(widget);
 
 	if (multiplayer.mode != _multiplayer_mode_host_lan)
 	{
@@ -5894,6 +6107,51 @@ static boolean lobby_player_choose(void)
 	if (profile_list.chosen >= profile_list.count)
 		return campaign_fail();
 	lobby_join.profile = profile_list.indices[profile_list.chosen];
+	return TRUE;
+}
+
+/* "port lobby player confirm" (the LAN add-player screen's OK): the profile
+joins on a controller this machine already has, and the lobby comes back.
+BOT still opens the bot screen. A failure stays here, so it does not open
+that screen by mistake. */
+static boolean lobby_player_confirm(struct widget_instance *widget, short controller, boolean *widget_deleted)
+{
+	short seat;
+
+	profile_list_take_focus(widget);
+	if (profile_list_bot_row && profile_list.chosen == profile_list.count)
+	{
+		lobby_join_reset();
+		return FALSE;
+	}
+	if (profile_list_is_new(profile_list.chosen))
+		return profile_list_begin_new();
+	if (profile_list.chosen < 0 || profile_list.chosen >= profile_list.count)
+	{
+		display_error_text_deferred(L"Choose a profile.", NONE);
+		return TRUE;
+	}
+	/* a full lobby already explains itself. Returning true keeps the bot
+	screen from opening on that failure. */
+	if (!lobby_seat_available())
+		return TRUE;
+	seat = lobby_free_controller(controller);
+	if (seat == NONE)
+	{
+		display_error_text_deferred(L"This machine has no free controller.", NONE);
+		return TRUE;
+	}
+	if (!ui_widget_port_multiplayer_player(seat, profile_list.indices[profile_list.chosen]))
+	{
+		display_error_text_deferred(L"That profile could not be added.", NONE);
+		return TRUE;
+	}
+	lobby_join.profile = profile_list.indices[profile_list.chosen];
+	lobby_join.controller = seat;
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+	ui_widget_port_go_back(widget);
+	if (widget_deleted)
+		*widget_deleted = TRUE;
 	return TRUE;
 }
 
@@ -8422,7 +8680,7 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port lobby add player"))
 		{
-			return lobby_add_player();
+			return lobby_add_player(widget, widget_deleted);
 		}
 		else if (!strcmp(name, "port lobby join"))
 		{
@@ -8439,6 +8697,10 @@ boolean pc_menu_event_function_invoke(
 		else if (!strcmp(name, "port lobby player choose"))
 		{
 			return lobby_player_choose();
+		}
+		else if (!strcmp(name, "port lobby player confirm"))
+		{
+			return lobby_player_confirm(widget, controller, widget_deleted);
 		}
 		else if (!strcmp(name, "port lobby assign begin"))
 		{
@@ -8458,7 +8720,7 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port lobby bot add"))
 		{
-			return lobby_bot_add();
+			return lobby_bot_add(widget);
 		}
 		else if (!strcmp(name, "port lobby preview add"))
 		{
