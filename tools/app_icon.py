@@ -8,13 +8,13 @@
   icon (corece-icon-256.png, which tools/embed_assets.py embeds and
   sdl_platform.c gives the window), and the Mac app icon
   (tools/macos_build.py);
-- corece-icon-render.png, the helmet alone on transparency (1024x1024, the same
-  framing): the Android app's launcher icon.
+- corece-icon-render.png, the CoreCE wordmark (1024x1024, the same picture
+  as corece-icon.png): the Android app's launcher icon.
 
-The launcher icon is an adaptive one (Android 8 and later): the render as its
-foreground layer, the background's gradient as its background layer, and the
-render's light parts (the armour, not the visor) as its monochrome (themed
-icon) layer. Launchers mask adaptive icons to their own shapes and show only
+The launcher icon is an adaptive one (Android 8 and later): the wordmark as its
+foreground layer, a black field as its background layer, and the wordmark's
+light parts as its monochrome (themed icon) layer. Launchers mask adaptive
+icons to their own shapes and show only
 the middle 72 dp of the 108 dp layers, so the render fills those 72 dp, as
 the picture fills the other icons, and its edges are carried out to the
 layers' edges for the launchers that move the layers. Writes the layers for
@@ -76,8 +76,7 @@ def carried_out(image: Image.Image, size: int) -> Image.Image:
 
 
 def monochrome(render: Image.Image) -> Image.Image:
-    """the render's light parts, white with their lightness as opacity: the
-    armour without the darker visor"""
+    """the picture's light parts, white with their lightness as opacity"""
     data = np.asarray(render, dtype=np.float64)
     lightness = (0.2126 * data[..., 0] + 0.7152 * data[..., 1] + 0.0722 * data[..., 2]) / 255.0
     alpha = np.clip(data[..., 3] / 255.0 * np.clip((lightness - 0.25) / 0.5, 0.0, 1.0), 0.0, 1.0)
@@ -109,8 +108,8 @@ def main() -> None:
                 directory / f"{name}.png", optimize=True)
         print(f"{directory.relative_to(ROOT)}: {size}x{size}")
 
-    # Android keeps its own launcher art. Do not sample the desktop icon.
-    top, bottom = (0x0A, 0x2B, 0x54), (0x03, 0x06, 0x10)
+    # The wordmark fills the layer. The background matches its black field.
+    top, bottom = (0x00, 0x00, 0x00), (0x00, 0x00, 0x00)
     drawable = RESOURCES / "drawable"
     drawable.mkdir(parents=True, exist_ok=True)
     (drawable / "ic_launcher_background.xml").write_text(

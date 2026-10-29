@@ -116,9 +116,9 @@ static const struct config_setting config_settings[] =
 		"Draw a frame for every display refresh, blending between the game's 30\n"
 		"ticks a second; false keeps the original 30 frames a second." },
 	{ "display.timer_position", _config_integer, "0", NULL, _environment_value, _platform_all,
-		"PB timer position: 0 is top center, 1 bottom center, 2 bottom right." },
+		"CoreCE timer position: 0 is top center, 1 bottom center, 2 bottom right." },
 	{ "display.timer_scale", _config_real, "1.0", NULL, _environment_value, _platform_all,
-		"PB timer size, 0.5 to 1.0. These preferences do not enable the timer." },
+		"CoreCE timer size, 0.5 to 1.0. These preferences do not enable the timer." },
 	{ "display.direct_camera", _config_boolean, "false", "HALO_DIRECT_CAMERA", _environment_value, _platform_desktop,
 		"In first person, point the view where the player aims now instead of\n"
 		"where the last tick left it: the view turns the frame the mouse moves,\n"
@@ -240,16 +240,16 @@ static const struct config_setting config_settings[] =
 	{ "audio.dialogue_volume", _config_real, "1.0", NULL, _environment_value, _platform_all,
 		"Unit and scripted dialogue volume, 0.0 to 1.0." },
 	{ "audio.timer_volume", _config_real, "1.0", NULL, _environment_value, _platform_all,
-		"Optional Performance Build timer recordings volume, 0.0 to 1.0." },
+		"Optional CoreCE timer recordings volume, 0.0 to 1.0." },
 	{ "audio.timer_countdown", _config_boolean, "true", NULL, _environment_value, _platform_all,
-		"Play countdown announcements when the host enables PB Timer Sounds." },
+		"Play countdown announcements when the host enables CoreCE timer sounds." },
 	{ "audio.timer_beeps", _config_boolean, "true", NULL, _environment_value, _platform_all,
-		"Play countdown beeps when the host enables PB Timer Sounds." },
+		"Play countdown beeps when the host enables CoreCE timer sounds." },
 	{ "audio.timer_minutes", _config_boolean, "true", NULL, _environment_value, _platform_all,
-		"Announce elapsed minutes when the host enables PB Timer Sounds." },
+		"Announce elapsed minutes when the host enables CoreCE timer sounds." },
 	{ "audio.timer_items", _config_boolean, "false", NULL, _environment_value, _platform_all,
 		"Announce scheduled rockets and powerups on supported maps when the\n"
-		"host enables PB Timer Sounds. Off preserves the existing timer audio." },
+		"host enables CoreCE timer sounds. Off preserves the existing timer audio." },
 	{ "audio.hardcore_timer_voice", _config_boolean, "true", NULL, _environment_value, _platform_all,
 		"Kept so an old file can move onto display.match_timer. The match clock's\n"
 		"Voice choice plays this machine's countdown." },

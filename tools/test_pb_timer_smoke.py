@@ -12,17 +12,17 @@ class TimerSmokeEvidenceTests(unittest.TestCase):
     def snapshot(self, role, tick=3750, flags=5):
         common = role == 'client'
         return parse_status(
-            f'performance options: flags={flags} ticks={tick} markers=0/5\r\n'
-            f'PB timer: prefs={7 if common else 8} countdown={12 if common else 0} '
+            f'CoreCE options: flags={flags} ticks={tick} markers=0/5\r\n'
+            f'CoreCE timer: prefs={7 if common else 8} countdown={12 if common else 0} '
             f'beeps={4 if common else 0} minutes={1 if common else 0} items={0 if common else 5} last=2_minutes\r\n'
-            f'PB timer items: rocket={0 if common else 1} camo={0 if common else 2} overshield={0 if common else 2}\r\n')
+            f'CoreCE timer items: rocket={0 if common else 1} camo={0 if common else 2} overshield={0 if common else 2}\r\n')
 
     def test_complete_status_required(self):
         self.assertEqual(self.snapshot('host')['items'], dict(rocket=1, camo=2, overshield=2))
         with self.assertRaises(ValueError):
-            parse_status('performance options: flags=5 ticks=3750 markers=0/5\n')
+            parse_status('CoreCE options: flags=5 ticks=3750 markers=0/5\n')
         with self.assertRaises(ValueError):
-            parse_status('PB timer: prefs=8 countdown=0 beeps=0 minutes=0 items=5 last=rocket\n')
+            parse_status('CoreCE timer: prefs=8 countdown=0 beeps=0 minutes=0 items=5 last=rocket\n')
 
     def test_actual_late_join_log_uses_past_tense(self):
         self.assertEqual(int(JOINED.search('10.02.26 20:07:56  joined the game in progress at game tick #2045')[1]), 2045)

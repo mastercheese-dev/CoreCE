@@ -1,4 +1,4 @@
-"""Exercise actual PB mouse targeting and dispatch with native widget fixtures."""
+"""Exercise CoreCE mouse targeting and dispatch with native widget fixtures."""
 from pathlib import Path
 import subprocess
 import sys
@@ -177,7 +177,7 @@ static void stock_fallback_and_disabled(void) {
 }
 int main(void) {
     all_arrow_rows_and_staging(); stock_fallback_and_disabled();
-    puts("All PB arrow targets, mouse buttons, list adjustments and staging passed");
+    puts("All CoreCE arrow targets, mouse buttons, list adjustments and staging passed");
 }
 '''
 

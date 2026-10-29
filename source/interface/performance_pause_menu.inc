@@ -45,13 +45,13 @@ static char const *const performance_pause_names[_pp_widget_count] =
  * writable, including on ports that place wide string literals in rodata. */
 static wchar_t performance_pause_text[][64] =
 {
-	L"PB OPTIONS", L"APPLY", L"RETURN",
+	L"CORECE OPTIONS", L"APPLY", L"RETURN",
 	L"Apply to change host settings.",
 	L"Host settings (view only).",
 	L"Preset: < Stock >", L"Preset: < Practice >", L"Preset: < Custom >",
 	L"Match timer: < Off >", L"Match timer: < On >",
 	L"Markers: < Off >", L"Markers: < On >",
-	L"PB OPTIONS",
+	L"CORECE OPTIONS",
 	L"Timer sounds: <Off>", L"Timer sounds: <On>", L"GAME SETTINGS",
 	L"Movement: <Normal>", L"Movement: <Silent>",
 	L"Weapon: < Normal >", L"Weapon: < Silent >",
@@ -208,7 +208,7 @@ static boolean performance_pause_build(void)
 	}
 
 	/* Native pause entries retain Resume, Quit, their actions and all three
-	 * original viewport placements. The list gains PB and local settings. */
+	 * original viewport placements. The list gains CoreCE and local settings. */
 	for (layout = 0; layout < 3; layout++)
 	{
 		struct ui_widget_definition *pause = &performance_pause_definitions[_pp_pause_1p + layout];

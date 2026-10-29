@@ -287,7 +287,7 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
         "CFBundlePackageType": "APPL", "CFBundleShortVersionString": version,
         "CFBundleVersion": build, "LSMinimumSystemVersion": minimum_macos_version([
             executable, sdl, *angle_libraries, sparkle / "Sparkle", *content_binaries]),
-        "CFBundleURLTypes": [{"CFBundleURLName": "Halo multiplayer invite",
+        "CFBundleURLTypes": [{"CFBundleURLName": "CoreCE",
                               # Match the shared discord.application_id default.
                               "CFBundleURLSchemes": ["halo", "discord-1553978809840050229"],
                               "CFBundleTypeRole": "Viewer"}],

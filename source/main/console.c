@@ -141,7 +141,7 @@ void console_open(
 #endif
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		if (console_globals.active)
-			console_printf(FALSE, "PB Options: type pb for controls (timer, markers, audio).");
+			console_printf(FALSE, "CoreCE options: type corece for controls (timer, markers, audio).");
 #endif
 	}
 

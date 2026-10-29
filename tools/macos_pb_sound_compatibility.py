@@ -52,7 +52,7 @@ def run_case(name, args, output):
             if name == 'live_gate':
                 for flags in (8, 16, 31):
                     refusal = pair.native_command('host', flags)
-                    checks[f'flags_{flags}_refused'] = 'performance options change refused:' in refusal
+                    checks[f'flags_{flags}_refused'] = 'CoreCE options change refused:' in refusal
                     checks[f'flags_{flags}_unchanged'] = (
                         pair.status('host')['flags'] == 7 and pair.status('client')['flags'] == 7)
                 pair.native_command('host', 0)
@@ -119,7 +119,7 @@ def main():
         raise
     finally:
         (output / 'validation.json').write_text(json.dumps(result, indent=2) + '\n')
-    print('Sound rule compatibility with earlier PB guest: PASS', flush=True)
+    print('Sound rule compatibility with an earlier guest: PASS', flush=True)
 
 
 if __name__ == '__main__':

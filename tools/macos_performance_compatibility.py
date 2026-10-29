@@ -119,7 +119,7 @@ class PeerPair:
             console.transcript.flush()
             text += chunk
             complete = '\n'.join(text.replace('\r', '').split('\n')[:-1])
-            if STATUS.search(complete) or 'performance options change refused:' in complete:
+            if STATUS.search(complete) or 'CoreCE options change refused:' in complete:
                 return complete
         raise TimeoutError(role + ' did not acknowledge native options command')
 
@@ -196,7 +196,7 @@ def run_case(name, args, output):
             if name == 'stock_session':
                 checks['host_defaults_off'] = pair.status('host')['flags'] == 0
                 refusal = pair.native_command('host', 3)
-                checks['host_enable_refused_with_legacy_peer'] = 'performance options change refused:' in refusal
+                checks['host_enable_refused_with_legacy_peer'] = 'CoreCE options change refused:' in refusal
                 checks['host_stays_off_after_refusal'] = pair.status('host')['flags'] == 0
                 checks['host_explained_unsupported_peer'] = 'A connected player does not support these practice options.' in pair.log('host')
                 pair.both_playing(after=initial)
@@ -255,7 +255,7 @@ def main():
         raise
     finally:
         (output / 'validation.json').write_text(json.dumps(result, indent=2) + '\n')
-    print('Performance options stock-v10 compatibility: PASS', flush=True)
+    print('CoreCE options stock-v10 compatibility: PASS', flush=True)
 
 
 if __name__ == '__main__':

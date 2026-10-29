@@ -81,9 +81,9 @@ class SoundInputWorkloadTests(unittest.TestCase):
 
 class SoundSmokeEvidenceTests(unittest.TestCase):
     def test_complete_response_and_counter_checks(self):
-        text = ("performance options: flags=8 ticks=100 markers=0/24\n"
-                "PB sound voices: normal=100 movement=50 ready=4 | muted: movement=90 ready=0\n"
-                "PB sound effects=2 particles=5 last_voice=12340001 last_tag=45670001 last_role=1\n")
+        text = ("CoreCE options: flags=8 ticks=100 markers=0/24\n"
+                "CoreCE sound voices: normal=100 movement=50 ready=4 | muted: movement=90 ready=0\n"
+                "CoreCE sound effects=2 particles=5 last_voice=12340001 last_tag=45670001 last_role=1\n")
         before = parse_status(text)
         after = parse_status(text.replace("ticks=100", "ticks=550").replace("normal=100", "normal=110")
                              .replace("movement=50", "movement=75").replace("ready=4", "ready=7")
@@ -98,7 +98,7 @@ class SoundSmokeEvidenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             counter_delta(before, after)
         with self.assertRaises(ValueError):
-            parse_status(text.split("PB sound effects=")[0])
+            parse_status(text.split("CoreCE sound effects=")[0])
 
     def test_tick_ammo_and_death_evidence(self):
         text = ("network test: tick 30 player 0: (1.000 2.000 3.000) h1.00/1.00 g2/2 w a0/0 f0 l0/0 as1/1 st0 thr0.90 2af:120 32b:72 s0 k0 d0 f0 t0 m0"

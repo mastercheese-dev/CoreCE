@@ -1,4 +1,4 @@
-"""Compile the production PB console parser and completion with authority stubs."""
+"""Compile the production CoreCE console parser and completion with authority stubs."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -69,7 +69,7 @@ static void change(const char *command,unsigned long expected) {
     unsigned before=mutation_calls;
     run(command);
     assert(mutation_calls==before+1 && flags==expected);
-    assert(strstr(output,"performance options: flags="));
+    assert(strstr(output,"CoreCE options: flags="));
 }
 static short complete(const char *command,char **matches,boolean *native_only,char *token_text) {
     char input[128],*token=NULL;
@@ -84,9 +84,9 @@ int main(void) {
     inspect("pb"); assert(strstr(output,"pb timer|markers|audio on|off|toggle"));
     inspect("pb status"); inspect("pb help"); inspect("pb timer");
     inspect("performance_options");
-    assert(strstr(output,"performance options: flags=0 ticks=1800 markers=0/24"));
+    assert(strstr(output,"CoreCE options: flags=0 ticks=1800 markers=0/24"));
     assert(strstr(output,"timer recordings: installed"));
-    assert(strstr(output,"PB sound voices: normal=0 movement=12 ready=3"));
+    assert(strstr(output,"CoreCE sound voices: normal=0 movement=12 ready=3"));
     const char *invalid[]={"pb bad","pb timer maybe","pb timer on extra","pb status extra",
         "pb practice extra","pb audio onxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","performance_options -1",
         "performance_options 32","performance_options 99","performance_options 3x",

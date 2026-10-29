@@ -241,8 +241,8 @@ ignore.
 
 This Mac build plays that options record (time limit, loadout, friendly fire,
 vehicle respawn, team balance, radar, vehicle sets, and no-map-weapons) and
-keeps PB capability on advertisement flag `0x04`, distinct from the in-progress
-flag `0x02`. An enabled PB session advertises version `0x800B`.
+keeps CoreCE capability on advertisement flag `0x04`, distinct from the in-progress
+flag `0x02`. An enabled CoreCE session advertises version `0x800B`.
 
 A client plays by its host's rules: in another's game (searching for it,
 in its lobby, or playing it) the developer console, the telnet console

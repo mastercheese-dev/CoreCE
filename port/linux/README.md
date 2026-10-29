@@ -1140,11 +1140,12 @@ In the game, each machine has an address in 100.64.0.0/10:
 ### Discord
 
 If the Discord desktop client operates, the game of the host shows in
-Discord (through the application of `discord.application_id`). The activity
-has a private party with the invite as its join secret. The host can send
-the invite with the invite button of Discord. When a person accepts it, that
-person joins the game. If the game does not operate, Discord starts it.
-The game sends the activity only to a Discord client of the same user.
+Discord as CoreCE, with the CoreCE icon, through the application of
+`discord.application_id`. The activity has a private party with the invite
+as its join secret. The host can send the invite, and a person who asks to
+join is let in. When that person accepts, they join the game. If the game
+does not operate, Discord starts it. The game sends the activity only to a
+Discord client of the same user.
 
 ## Streamer mode
 

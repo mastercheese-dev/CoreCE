@@ -17,7 +17,7 @@ from pathlib import Path
 from macos_benchmark import Console, FAULT
 from macos_multiplayer_smoke import ROOT, BUILD, prepare, read_log
 
-STATUS = re.compile(r'^performance options: flags=(\d+) ticks=(-?\d+) markers=(\d+)/(\d+)\s*$', re.M)
+STATUS = re.compile(r'^CoreCE options: flags=(\d+) ticks=(-?\d+) markers=(\d+)/(\d+)\s*$', re.M)
 
 
 def free_port():
@@ -179,7 +179,7 @@ def main():
             console.transcript.flush()
             text += chunk
             complete = '\n'.join(text.replace('\r', '').split('\n')[:-1])
-            if STATUS.search(complete) or 'performance options change refused:' in complete:
+            if STATUS.search(complete) or 'CoreCE options change refused:' in complete:
                 return complete
         raise TimeoutError(role + ' did not acknowledge native command')
 
@@ -307,7 +307,7 @@ def main():
         (out / 'validation.json').write_text(json.dumps(result, indent=2) + '\n')
     if not result['passed']:
         raise RuntimeError('Runtime fault: inspect validation.json')
-    print('Performance options multiplayer smoke: PASS', flush=True)
+    print('CoreCE options multiplayer smoke: PASS', flush=True)
 
 
 if __name__ == '__main__':

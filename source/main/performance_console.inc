@@ -1,4 +1,4 @@
-/* Native PB controls run before HaloScript, so joining clients can inspect
+/* Native CoreCE controls run before HaloScript, so joining clients can inspect
  * their host's settings without gaining script or mutation authority. */
 static boolean performance_console_word(char const **text, char *word, unsigned capacity)
 {
@@ -19,37 +19,37 @@ static void performance_console_status(void)
 	struct performance_sound_statistics sound_statistics;
 	struct performance_timer_statistics timer_statistics;
 	/* Preserve this diagnostic line for smoke-test clients. */
-	console_printf(FALSE, "performance options: flags=%lu ticks=%ld markers=%d/%d",
+	console_printf(FALSE, "CoreCE options: flags=%lu ticks=%ld markers=%d/%d",
 		flags, performance_options_timer_ticks(),
 		performance_options_markers_visible_count(), performance_options_markers_supported_count());
-	console_printf(FALSE, "PB: timer %s | spawn markers %s | timer audio %s",
+	console_printf(FALSE, "CoreCE: timer %s | spawn markers %s | timer audio %s",
 		(flags & _performance_option_match_timer) ? "ON" : "OFF",
 		(flags & _performance_option_spawn_markers) ? "ON" : "OFF",
 		(flags & _performance_option_timer_audio) ? "ON" : "OFF");
-	console_printf(FALSE, "PB: movement sounds %s | weapon sounds %s",
+	console_printf(FALSE, "CoreCE: movement sounds %s | weapon sounds %s",
 		(flags & _performance_option_silent_movement) ? "SILENT" : "NORMAL",
 		(flags & _performance_option_silent_weapon_ready) ? "SILENT" : "NORMAL");
 	console_printf(FALSE, "timer recordings: %s", halo_performance_audio_available() ? "installed" : "missing");
 	performance_options_timer_statistics(&timer_statistics);
-	console_printf(FALSE, "PB timer: prefs=%u countdown=%lu beeps=%lu minutes=%lu items=%lu last=%s",
+	console_printf(FALSE, "CoreCE timer: prefs=%u countdown=%lu beeps=%lu minutes=%lu items=%lu last=%s",
 		timer_statistics.preferences, timer_statistics.countdown, timer_statistics.beeps,
 		timer_statistics.minutes, timer_statistics.items, timer_statistics.last_cue);
-	console_printf(FALSE, "PB timer items: rocket=%lu camo=%lu overshield=%lu",
+	console_printf(FALSE, "CoreCE timer items: rocket=%lu camo=%lu overshield=%lu",
 		timer_statistics.items_by_category[0], timer_statistics.items_by_category[1], timer_statistics.items_by_category[2]);
 	performance_sound_get_statistics(&sound_statistics);
-	console_printf(FALSE, "PB sound voices: normal=%lu movement=%lu ready=%lu | muted: movement=%lu ready=%lu",
+	console_printf(FALSE, "CoreCE sound voices: normal=%lu movement=%lu ready=%lu | muted: movement=%lu ready=%lu",
 		sound_statistics.voices_by_role[0], sound_statistics.voices_by_role[1], sound_statistics.voices_by_role[2],
 		sound_statistics.muted_dispatches_by_role[1], sound_statistics.muted_dispatches_by_role[2]);
-	console_printf(FALSE, "PB sound effects=%lu particles=%lu last_voice=%lx last_tag=%lx last_role=%u",
+	console_printf(FALSE, "CoreCE sound effects=%lu particles=%lu last_voice=%lx last_tag=%lx last_role=%u",
 		sound_statistics.tagged_effects, sound_statistics.tagged_particles,
 		sound_statistics.last_voice_index, sound_statistics.last_definition_index, sound_statistics.last_voice_role);
 }
 
 static void performance_console_help(void)
 {
-	console_printf(FALSE, "PB controls: pb stock | pb practice | pb status");
-	console_printf(FALSE, "pb timer|markers|audio on|off|toggle");
-	console_printf(FALSE, "pb movement|weapons normal|silent|toggle");
+	console_printf(FALSE, "CoreCE controls: corece stock | corece practice | corece status");
+	console_printf(FALSE, "corece timer|markers|audio on|off|toggle");
+	console_printf(FALSE, "corece movement|weapons normal|silent|toggle");
 	console_printf(FALSE, "Host changes apply to this session; guests can view settings.");
 }
 
@@ -61,7 +61,7 @@ boolean console_process_native_command(char const *command)
 	char const *text = command;
 	if (!performance_console_word(&text, name, sizeof(name))) return FALSE;
 	numeric = !strcmp(name, "performance_options");
-	if (!numeric && strcmp(name, "pb")) return FALSE;
+	if (!numeric && strcmp(name, "pb") && strcmp(name, "corece")) return FALSE;
 	if (!performance_console_word(&text, option, sizeof(option)) ||
 		!performance_console_word(&text, value, sizeof(value)) ||
 		!performance_console_word(&text, extra, sizeof(extra)) || *extra)
@@ -111,9 +111,9 @@ boolean console_process_native_command(char const *command)
 	}
 	if (!performance_options_set_host_flags(flags))
 	{
-		console_printf(FALSE, "performance options change refused: host and compatible peers required");
+		console_printf(FALSE, "CoreCE options change refused: host and compatible peers required");
 		if ((flags & _performance_option_timer_audio) && !halo_performance_audio_available())
-			console_printf(FALSE, "Timer recordings are missing. Install the complete timer pack and restart Halo, or use pb audio off.");
+			console_printf(FALSE, "Timer recordings are missing. Install the complete timer pack and restart Halo, or use corece audio off.");
 		return TRUE;
 	}
 	performance_console_status();
@@ -126,11 +126,11 @@ usage:
 }
 
 /* Complete the existing F2 console controls, including option values. Return
- * NONE outside a PB command so normal HaloScript completion is preserved. */
+ * NONE outside a CoreCE command so normal HaloScript completion is preserved. */
 static short performance_console_complete(char *input, char **token, char **matches, short capacity,
 	boolean *native_only)
 {
-	static char *commands[] = {"pb", "performance_options"};
+	static char *commands[] = {"corece", "pb", "performance_options"};
 	static char *options[] = {"stock", "practice", "status", "help", "timer", "markers", "audio", "movement", "weapons"};
 	static char *values[] = {"on", "off", "toggle"};
 	static char *sound_values[] = {"normal", "silent", "toggle"};
@@ -148,7 +148,8 @@ static short performance_console_complete(char *input, char **token, char **matc
 	if (*end)
 	{
 		boolean numeric = end - start == 19 && !strncmp(start, "performance_options", 19);
-		if (!numeric && !(end - start == 2 && !strncmp(start, "pb", 2))) return NONE;
+		if (!numeric && !(end - start == 2 && !strncmp(start, "pb", 2)) &&
+			!(end - start == 6 && !strncmp(start, "corece", 6))) return NONE;
 		*native_only = TRUE;
 		start = end;
 		while (*start == ' ' || *start == '\t') start++;

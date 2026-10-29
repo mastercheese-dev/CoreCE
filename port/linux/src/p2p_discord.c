@@ -4,14 +4,14 @@ P2P_DISCORD.C
 Discord invites for internet play (p2p.c), through the Discord desktop
 client's local RPC socket (a Unix socket, or a named pipe on Windows):
 while hosting, the game's activity carries a private party whose join
-secret is the invite, so the host can send it with Discord's "Invite to
-Join" and whoever accepts it joins. Discord only hands the secret to people
-the host invited (asking to join goes unanswered).
+secret is the invite. Discord shows the game as CoreCE, with the CoreCE
+icon on the presence and on the invite. The host can send the invite, and
+an ask to join is accepted, so either way the other person joins.
 
 It goes through the Discord application in discord.application_id
-(config.toml; the project's by default), whose name is what Discord shows
-as being played. Without one, or without Discord running, invites are still
-links (p2p.c).
+(config.toml; the project's by default). The activity names the game CoreCE
+and uses the CoreCE wordmark. Without an application id, or without Discord
+running, invites are still links (p2p.c).
 
 The protocol: frames of a little-endian opcode and length, then JSON. The
 handshake (opcode 0) names the application; commands and events are opcode
@@ -150,6 +150,10 @@ static void discord_send(int opcode, const char *json, int size)
 	discord_flush();
 }
 
+/* the CoreCE wordmark. Discord fetches it for the presence and the invite. */
+static const char discord_icon[] =
+	"https://raw.githubusercontent.com/mastercheese-dev/CoreCE/main/port/assets/icon/corece-icon.png";
+
 static void send_activity(void)
 {
 	char json[1024];
@@ -161,14 +165,14 @@ static void send_activity(void)
 	{
 		size = snprintf(json, sizeof(json),
 			"{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%lu\",\"args\":{\"pid\":%lu,\"activity\":{"
+			"\"name\":\"CoreCE\",\"type\":0,"
 			"\"details\":\"Hosting a game\",\"state\":\"Invite only\","
-			/* the image uploaded as "logo" under the application's Rich
-			Presence art assets */
-			"\"assets\":{\"large_image\":\"logo\",\"large_text\":\"Halo: Combat Evolved\"},"
+			"\"assets\":{\"large_image\":\"%s\",\"large_text\":\"CoreCE\","
+			"\"invite_cover_image\":\"%s\"},"
 			"\"party\":{\"id\":\"%s\",\"size\":[%d,%d]},"
 			"\"secrets\":{\"join\":\"%s\"},\"instance\":false}}}",
-			++discord.nonce, (unsigned long)posix_process_id(), party, discord.player_count,
-			discord.maximum_player_count, discord.secret);
+			++discord.nonce, (unsigned long)posix_process_id(), discord_icon, discord_icon, party,
+			discord.player_count, discord.maximum_player_count, discord.secret);
 	}
 	else
 	{
@@ -176,7 +180,18 @@ static void send_activity(void)
 			"{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%lu\",\"args\":{\"pid\":%lu}}",
 			++discord.nonce, (unsigned long)posix_process_id());
 	}
-	discord_send(_opcode_frame, json, size);
+	if (size > 0 && size < (int)sizeof(json))
+		discord_send(_opcode_frame, json, size);
+}
+
+static void discord_subscribe(const char *event)
+{
+	char command[160];
+	int size = snprintf(command, sizeof(command),
+		"{\"cmd\":\"SUBSCRIBE\",\"evt\":\"%s\",\"nonce\":\"%lu\"}", event, ++discord.nonce);
+
+	if (size > 0 && size < (int)sizeof(command))
+		discord_send(_opcode_frame, command, size);
 }
 
 /* a string field's value in json, without its escapes' backslashes */
@@ -205,6 +220,44 @@ static int json_string(const char *json, const char *name, char *value, int size
 	return 1;
 }
 
+static int digits_only(const char *text)
+{
+	if (!text || !*text)
+		return 0;
+	for (; *text; text++)
+		if (*text < '0' || *text > '9')
+			return 0;
+	return 1;
+}
+
+/* the host's Discord asked whether this person may join. Accepting hands
+them the invite secret. */
+static void answer_join_request(const char *json)
+{
+	const char *user = strstr(json, "\"user\"");
+	char user_id[32];
+	char command[192];
+	int size;
+
+	if (!user || !json_string(user, "id", user_id, sizeof(user_id)) || !digits_only(user_id))
+		return;
+	if (discord.hosting && discord.secret[0])
+	{
+		platform_log("Internet play: accepted a Discord ask to join");
+		size = snprintf(command, sizeof(command),
+			"{\"cmd\":\"SEND_ACTIVITY_JOIN_INVITE\",\"args\":{\"user_id\":\"%s\"},\"nonce\":\"%lu\"}",
+			user_id, ++discord.nonce);
+	}
+	else
+	{
+		size = snprintf(command, sizeof(command),
+			"{\"cmd\":\"CLOSE_ACTIVITY_JOIN_REQUEST\",\"args\":{\"user_id\":\"%s\"},\"nonce\":\"%lu\"}",
+			user_id, ++discord.nonce);
+	}
+	if (size > 0 && size < (int)sizeof(command))
+		discord_send(_opcode_frame, command, size);
+}
+
 static void frame_received(int opcode, char *json)
 {
 	char event[64];
@@ -216,9 +269,6 @@ static void frame_received(int opcode, char *json)
 			break;
 		if (!strcmp(event, "READY"))
 		{
-			char command[256];
-			int size;
-
 			discord.ready = 1;
 			platform_log("Internet play: connected to Discord");
 			/* (who is signed in: its user, after the configuration) */
@@ -233,11 +283,12 @@ static void frame_received(int opcode, char *json)
 				if (user && json_string(user, "username", value, sizeof(value)))
 					p2p_discord_sanitize(discord.user_name, sizeof(discord.user_name), value, 1);
 			}
-			size = snprintf(command, sizeof(command),
-				"{\"cmd\":\"SUBSCRIBE\",\"evt\":\"ACTIVITY_JOIN\",\"nonce\":\"%lu\"}", ++discord.nonce);
-			discord_send(_opcode_frame, command, size);
+			discord_subscribe("ACTIVITY_JOIN");
+			discord_subscribe("ACTIVITY_JOIN_REQUEST");
 			discord.changed = 1;
 		}
+		else if (!strcmp(event, "ACTIVITY_JOIN_REQUEST"))
+			answer_join_request(json);
 		else if (!strcmp(event, "ACTIVITY_JOIN"))
 		{
 			char secret[MAXIMUM_SECRET_SIZE];

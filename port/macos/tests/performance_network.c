@@ -36,7 +36,7 @@ int main(void)
     assert(!network_performance_version_compatible(9, 3, 10));
     assert(!network_performance_version_compatible(11, 3, 10));
 
-    /* The reliable pre-join sequence gives a prior PB host the supported
+    /* The reliable pre-join sequence gives a prior CoreCE host the supported
      * subset before current capabilities. The earlier v1 decoder has the
      * same packet format but rejects any payload flag outside mask 3. */
     {

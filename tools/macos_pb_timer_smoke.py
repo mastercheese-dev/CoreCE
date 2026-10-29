@@ -27,8 +27,8 @@ from macos_pb_sound_smoke import SoundPeerPair
 from macos_performance_compatibility import redact
 from macos_performance_smoke import STATUS, free_port, wait_for
 
-TIMER = re.compile(r'^PB timer: prefs=(\d+) countdown=(\d+) beeps=(\d+) minutes=(\d+) items=(\d+) last=([^\s]+)\s*$', re.M)
-ITEMS = re.compile(r'^PB timer items: rocket=(\d+) camo=(\d+) overshield=(\d+)\s*$', re.M)
+TIMER = re.compile(r'^CoreCE timer: prefs=(\d+) countdown=(\d+) beeps=(\d+) minutes=(\d+) items=(\d+) last=([^\s]+)\s*$', re.M)
+ITEMS = re.compile(r'^CoreCE timer items: rocket=(\d+) camo=(\d+) overshield=(\d+)\s*$', re.M)
 JOINED = re.compile(r'(?:joined|joins) the game in progress at game tick #(\d+)')
 LATE_JOIN_SECONDS, ACTIVE_SECONDS, GATED_SECONDS = 65, 125, 185
 
@@ -192,7 +192,7 @@ def run(args, output):
         checks['late_join_observed_before_next_minute'] = joined['client']['ticks'] < 115 * 30
         checks['late_join_did_not_replay_previous_minute'] = joined['client']['cues']['minutes'] == 0
         checks['client_reads_common_only_preferences'] = joined['client']['prefs'] == 7
-        checks['client_cannot_change_shared_gate'] = 'performance options change refused:' in pair.native_command('client', 1)
+        checks['client_cannot_change_shared_gate'] = 'CoreCE options change refused:' in pair.native_command('client', 1)
         require(checks, 'Initial and late-join checks failed')
         pair.until(ACTIVE_SECONDS)
         active = pair.synchronized(5)

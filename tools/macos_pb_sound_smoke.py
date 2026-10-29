@@ -22,9 +22,9 @@ from macos_performance_compatibility import PeerPair, redact
 from macos_performance_smoke import STATUS, free_port, wait_for
 
 VOICES = re.compile(
-    r'^PB sound voices: normal=(\d+) movement=(\d+) ready=(\d+) \| muted: movement=(\d+) ready=(\d+)\s*$', re.M)
+    r'^CoreCE sound voices: normal=(\d+) movement=(\d+) ready=(\d+) \| muted: movement=(\d+) ready=(\d+)\s*$', re.M)
 DETAIL = re.compile(
-    r'^PB sound effects=(\d+) particles=(\d+) last_voice=([0-9a-f]+) last_tag=([0-9a-f]+) last_role=(\d+)\s*$', re.M)
+    r'^CoreCE sound effects=(\d+) particles=(\d+) last_voice=([0-9a-f]+) last_tag=([0-9a-f]+) last_role=(\d+)\s*$', re.M)
 TICK_LINE = re.compile(r'network test: tick (\d+)[^\n]*')
 PLAYER = re.compile(r'player (\d+): (.*?)(?= player \d+:| \||$)')
 AMMO = re.compile(r'(?:^| )([0-9a-f]+):(\d+)(?= |$)')
@@ -144,7 +144,7 @@ class SoundPeerPair(PeerPair):
             complete = '\n'.join(text.replace('\r', '').split('\n')[:-1])
             # Wait through the final sound line, rather than leaving a partial
             # previous status in the socket for the next phase's baseline.
-            if DETAIL.search(complete) or 'performance options change refused:' in complete:
+            if DETAIL.search(complete) or 'CoreCE options change refused:' in complete:
                 return complete
         raise TimeoutError(role + ' did not return complete native sound statistics')
 
@@ -183,7 +183,7 @@ def run(args, output):
         initial = pair.synchronized(0)
         result['checks']['both_default_normal'] = all(value['flags'] == 0 for value in initial.values())
         response = pair.native_command('client', 24)
-        result['checks']['client_cannot_change_host_rules'] = 'performance options change refused:' in response
+        result['checks']['client_cannot_change_host_rules'] = 'CoreCE options change refused:' in response
         pair.synchronized(0)
         for name, flags in PHASES:
             response = pair.native_command('host', flags)

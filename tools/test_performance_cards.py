@@ -93,7 +93,7 @@ static void check_cards(void) {
         assert(equal(labels[0].parameters.text_box.text,descriptions[index]));
         assert(equal(labels[2].parameters.text_box.text,descriptions[index]));
         ustrncpy(expected,descriptions[index],256);
-        if(flags) ustrncpy(expected+ustrlen(expected),L"\r\nPB options active",20);
+        if(flags) ustrncpy(expected+ustrlen(expected),L"\r\nCoreCE options active",32);
         assert(equal(labels[1].parameters.text_box.text,expected));
         /* Repeated per-frame callbacks replace the base description: no duplicate status. */
         mutliplayer_settings_select_list_update_displayed_items(&list);
@@ -102,7 +102,7 @@ static void check_cards(void) {
     struct playlist_profile *p=&cached_variant_profile[1].profile;
     p->flags=1; performance_variant_set_flags((struct game_variant *)p,PERFORMANCE_OPTIONS_MASK);
     mutliplayer_settings_select_list_update_displayed_items(&list);
-    ustrncpy(expected,descriptions[10],256); ustrncpy(expected+ustrlen(expected),L"\r\nPB options active",20);
+    ustrncpy(expected,descriptions[10],256); ustrncpy(expected+ustrlen(expected),L"\r\nCoreCE options active",32);
     assert(equal(labels[1].parameters.text_box.text,expected) && locks[1].visible);
     ((struct game_variant *)p)->universal_variant.pad6^=1;
     mutliplayer_settings_select_list_update_displayed_items(&list);
@@ -114,7 +114,7 @@ static void bounds(void) {
     performance_variant_set_flags((struct game_variant *)p,PERFORMANCE_OPTIONS_MASK);
     memset(&buffer,0,sizeof(buffer)); buffer.sentinel=0x12345678;
     playlist_profile_append_performance_status(buffer.text,p);
-    assert(equal(buffer.text,L"PB options active"));
+    assert(equal(buffer.text,L"CoreCE options active"));
     for(int i=0;i<255;i++) buffer.text[i]='x'; buffer.text[255]=0;
     playlist_profile_append_performance_status(buffer.text,p);
     assert(ustrlen(buffer.text)==255 && buffer.sentinel==0x12345678);

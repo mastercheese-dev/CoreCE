@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds CoreCE (Open Community Edition), the typeface of the menus' titles
+"""Builds CoreCE, the typeface of the menus' titles
 (port/assets/fonts):
 
     python tools/title_font.py             # port/assets/fonts/CoreCE-Regular.ttf

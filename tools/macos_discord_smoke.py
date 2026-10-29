@@ -81,14 +81,15 @@ exit_after = 10.0
                         opcode, handshake = receive()
                         assert opcode == 0 and handshake == {"v": 1, "client_id": APPLICATION}
                         send({"cmd": "DISPATCH", "evt": "READY", "data": {}})
-                        opcode, subscription = receive()
-                        assert opcode == 1 and subscription.get("cmd") == "SUBSCRIBE"
-                        assert subscription.get("evt") == "ACTIVITY_JOIN"
-                        send({"cmd": "SUBSCRIBE", "evt": None, "nonce": subscription["nonce"],
-                              "data": {"evt": "ACTIVITY_JOIN"}})
-                        send({"cmd": "DISPATCH", "evt": "ACTIVITY_JOIN", "data": {"secret": SECRET}})
+                        opcode, joined = receive()
+                        assert opcode == 1 and joined.get("cmd") == "SUBSCRIBE"
+                        assert joined.get("evt") == "ACTIVITY_JOIN"
+                        opcode, asked = receive()
+                        assert opcode == 1 and asked.get("cmd") == "SUBSCRIBE"
+                        assert asked.get("evt") == "ACTIVITY_JOIN_REQUEST"
                         opcode, activity = receive()
                         assert opcode == 1 and activity.get("cmd") == "SET_ACTIVITY"
+                        send({"cmd": "DISPATCH", "evt": "ACTIVITY_JOIN", "data": {"secret": SECRET}})
                         assert activity["args"]["pid"] == process.pid
                         assert process.wait(timeout=20) == 0
                 finally:

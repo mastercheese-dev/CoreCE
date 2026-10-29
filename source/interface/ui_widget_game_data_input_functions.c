@@ -3296,12 +3296,12 @@ static void variant_profile_update_cache_for_nwide_list(
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 /* The card has 256 UTF-16 characters and room for one more small-ui line.
-Keep the indication generic as additional performance options are introduced. */
+Keep the indication generic as additional CoreCE options are introduced. */
 static void playlist_profile_append_performance_status(
 	wchar_t *description,
 	struct playlist_profile const *profile)
 {
-	static wchar_t const status[] = L"\r\nPB options active";
+	static wchar_t const status[] = L"\r\nCoreCE options active";
 	unsigned long length;
 	wchar_t const *suffix;
 	unsigned long suffix_length;

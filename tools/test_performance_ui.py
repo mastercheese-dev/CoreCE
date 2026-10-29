@@ -1,4 +1,4 @@
-"""Compile native PB editor code with stock-shaped widget fixtures.
+"""Compile the native CoreCE editor code with stock-shaped widget fixtures.
 
 Uses production UI declarations, cache registry, tree lookup and help callback.
 Checks cloning, profile staging, selectors, registration failure and map lifetime.
@@ -188,10 +188,10 @@ static void shapes_and_preservation(void) {
     assert(pb_editor.root_children[1].widget_tag.index==pb_editor.list_tag && pb_editor.root_children[7].vertical_offset==285);
     for(unsigned i=0;i<5;i++) assert(!memcmp(&pb_editor.list_children[i],&stock.list[i],sizeof(stock.list[0])));
     assert(ui_widget_definition_get(pb_editor.list_children[5].widget_tag.index)==&pb_editor.entry);
-    assert(!wcscmp(string_at(&pb_editor.entry,0),L"PB OPTIONS"));
+    assert(!wcscmp(string_at(&pb_editor.entry,0),L"CORECE OPTIONS"));
     assert(unicode_string_list_definition_get(pb_editor.heading.text_label_string_list.index)->strings.count==8);
     assert(pb_editor.heading.string_list_index==7);
-    assert(!wcscmp(string_at(&pb_editor.heading,pb_editor.heading.string_list_index),L"PERFORMANCE OPTIONS"));
+    assert(!wcscmp(string_at(&pb_editor.heading,pb_editor.heading.string_list_index),L"CORECE OPTIONS"));
     assert(pb_editor.entry.bounds.y0==243 && pb_editor.entry.bounds.y1==275);
     assert(pb_editor.list_children[6].widget_tag.index==stock_id(SAVE_TAG) && pb_editor.list_children[6].vertical_offset==53);
     assert(pb_editor.entry.bounds.y1<stock.defs[SAVE_TAG].bounds.y0+pb_editor.list_children[6].vertical_offset);
@@ -222,7 +222,7 @@ static void shapes_and_preservation(void) {
     assert(pb_editor.menu_children[5].vertical_offset+28<321); /* Clear of stock help. */
     for(unsigned i=0;i<7;i++) {
         if(i==5) assert(!wcscmp(string_at(&pb_editor.preview_text,i),
-            L"Performance options like\r\ntimers, spawn markers,\r\nand more.\r\n\r\nThis gametype:"));
+            L"CoreCE options like\r\ntimers, spawn markers,\r\nand more.\r\n\r\nThis gametype:"));
         else assert(!wcscmp(string_at(&pb_editor.preview_text,i),stock.captions[i==6 ? 5:i]));
     }
 }
@@ -339,7 +339,7 @@ static void registration_and_reload(void) {
 }
 int main(void) {
     shapes_and_preservation(); selection_and_staging(); sound_rules_and_presets(); preview_and_help(); registration_and_reload();
-    puts("native PB editor tests passed"); return 0;
+    puts("native CoreCE editor tests passed"); return 0;
 }
 '''
 
@@ -374,7 +374,7 @@ def fixture_source():
     tree += "\n" + c_block(ui, "int widget_instance_get_child_index_from_parent(\n")
     generic_help = c_block(data, "static void game_options_menu_update_text_desc(\n\tstruct widget_instance *widget)\n{")
     # These translation units name the same ABI fields differently.
-    # The retail callback has a preserved no-focus bug; PB must guard that call.
+    # The retail callback has a preserved no-focus bug; CoreCE must guard that call.
     tree += '\n#pragma clang diagnostic push\n#pragma clang diagnostic ignored "-Wsometimes-uninitialized"\n'
     tree += generic_help.replace("definition->child_count", "definition->child_widgets.count").replace("selected_list_item_index", "selected_index")
     tree += "\n#pragma clang diagnostic pop\n"
@@ -391,7 +391,7 @@ class NativePerformanceEditorTests(unittest.TestCase):
             result = subprocess.run([str(folder / "fixture")], text=True, capture_output=True)
             self.assertEqual(result.returncode, 0,
                              f"Native editor fixture exited {result.returncode}.\n{result.stdout}{result.stderr}")
-            self.assertEqual(result.stdout.strip(), "native PB editor tests passed")
+            self.assertEqual(result.stdout.strip(), "native CoreCE editor tests passed")
 
 
 if __name__ == "__main__":

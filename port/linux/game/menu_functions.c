@@ -6110,10 +6110,10 @@ static boolean lobby_player_choose(void)
 	return TRUE;
 }
 
-/* "port lobby player confirm" (the LAN add-player screen's OK): the profile
-joins on a controller this machine already has, and the lobby comes back.
-BOT still opens the bot screen. A failure stays here, so it does not open
-that screen by mistake. */
+/* "port lobby player confirm" (A or a click on a LAN add-player row): the
+profile joins on a controller this machine already has, and the lobby comes
+back. BOT still opens the bot screen. A failure stays here, so it does not
+open that screen by mistake. OK on this screen only goes back. */
 static boolean lobby_player_confirm(struct widget_instance *widget, short controller, boolean *widget_deleted)
 {
 	short seat;

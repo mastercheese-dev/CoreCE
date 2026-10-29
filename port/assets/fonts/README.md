@@ -19,7 +19,7 @@ Reserved Font Name. Matched against the maps' glyphs, its weights 900 and 750 ov
 them as much as Interstate Bold does, at the same letter widths.
 
 The menus' titles are pictures of text in the maps, set in another
-commercial typeface. CoreCE (Open Community Edition) stands in for it:
+commercial typeface. CoreCE stands in for it:
 Newtown, a typeface in the same style by Roger White (1994), which its author
 released into the public domain (`Newtown-LICENSE.txt` quotes his statement
 and where it is archived), respaced for this project. Only its spacing is

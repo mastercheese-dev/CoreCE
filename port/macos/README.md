@@ -173,12 +173,12 @@ same networking revision and map set. Hosting copies an invite to the clipboard;
 opening it, or copying it and switching to Halo, connects the peers so the host
 appears in the System Link browser.
 
-With the Discord desktop client running, Halo connects to its local RPC socket
-and accepts Discord game invitations. Hosting a System Link game publishes
-"Hosting a game" with an invite in Discord. Enable activity sharing in Discord
-to make it visible. The installed app handles both `halo://` links and the
-upstream Discord application's launch scheme, so an invite can start Halo
-when it is closed. Ordinary campaign/client gameplay does not publish activity.
+With the Discord desktop client running, CoreCE connects to its local RPC socket
+and accepts Discord game invitations. Hosting a game publishes CoreCE, with the
+CoreCE icon, and an invite in Discord. A person who asks to join is let in.
+Enable activity sharing in Discord to make it visible. The installed app handles
+both `halo://` links and the Discord application's launch scheme, so an invite
+can start CoreCE when it is closed. Ordinary campaign/client gameplay does not publish activity.
 This branch uses multiplayer protocol 11 and 64-digit invite codes; all players
 need matching builds. Command-W is ignored while playing, and Command-Q or
 the window's close button quits.

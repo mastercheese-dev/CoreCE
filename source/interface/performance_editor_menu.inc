@@ -69,15 +69,15 @@ static long pb_editor_register(char const *name, struct ui_widget_definition *de
 
 static boolean pb_editor_build(void)
 {
-    static char const *const labels[] = {"PB OPTIONS", "PRESET:", "MATCH TIMER:", "SPAWN MARKERS:", "TIMER SOUNDS:",
-        "MOVEMENT SOUNDS:", "WEAPON SOUNDS:", "PERFORMANCE OPTIONS"};
+    static char const *const labels[] = {"CORECE OPTIONS", "PRESET:", "MATCH TIMER:", "SPAWN MARKERS:", "TIMER SOUNDS:",
+        "MOVEMENT SOUNDS:", "WEAPON SOUNDS:", "CORECE OPTIONS"};
     static char const *const presets[] = {"STOCK", "PRACTICE", "CUSTOM"};
     static char const *const toggles[] = {"OFF", "ON"};
     static char const *const sounds[] = {"NORMAL", "SILENT"};
     static char const *const help[] = {
-        "Original game settings.\r\nAll performance options are off.",
+        "Original game settings.\r\nAll CoreCE options are off.",
         "Practice with a timer, sounds and spawn markers.\r\nThe host controls these options for all players.",
-        "Choose each performance option individually.",
+        "Choose each CoreCE option individually.",
         "The match timer is hidden.",
         "Show elapsed match time using\r\nthe host's game clock.",
         "Spawn markers are hidden.",
@@ -124,9 +124,9 @@ static boolean pb_editor_build(void)
     help_tag = pb_editor_strings(3, "ui\\native_pb\\help_strings", help, NUMBEROF(help));
     sounds_tag = pb_editor_strings(6, "ui\\native_pb\\sound_values", sounds, NUMBEROF(sounds));
     if (labels_tag == NONE || presets_tag == NONE || toggles_tag == NONE || sounds_tag == NONE || help_tag == NONE) return FALSE;
-    /* PB has a new caption, but reuses the Indicators preview image. */
+    /* CoreCE has a new caption, but reuses the Indicators preview image. */
     {
-        static char const *const caption[] = {"Performance options like\r\ntimers, spawn markers,\r\nand more.\r\n\r\nThis gametype:"};
+        static char const *const caption[] = {"CoreCE options like\r\ntimers, spawn markers,\r\nand more.\r\n\r\nThis gametype:"};
         if (pb_editor_strings(4, "ui\\native_pb\\preview_caption", caption, 1) == NONE) return FALSE;
         for (i = 0; i < 7; i++)
             pb_editor.string_entries[5][i] = i == 5 ? pb_editor.string_entries[4][0] :

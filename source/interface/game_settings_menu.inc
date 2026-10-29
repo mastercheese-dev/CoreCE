@@ -415,7 +415,7 @@ static boolean device_settings_build(void)
         "Adjust the volume of music.",
         "Adjust sound effects, ambience and\r\nmultiplayer announcer volume.",
         "Adjust spoken dialogue volume.",
-        "Adjust PB timer announcements volume.\r\nHost Timer Sounds must be on.\r\nAudio Accept saves all changes.",
+        "Adjust CoreCE timer announcements volume.\r\nHost Timer Sounds must be on.\r\nAudio Accept saves all changes.",
         "Turn main-menu music on or off.",
         "Switch between fullscreen and\r\nwindowed play.",
         "Sync presentation with the display\r\nto reduce screen tearing.",
@@ -424,8 +424,8 @@ static boolean device_settings_build(void)
         "Play timer countdown beeps.\r\nHost Timer Sounds must be on.",
         "Announce elapsed minutes.\r\nHost Timer Sounds must be on.",
         "Play scheduled rocket and powerup cues\r\nwhen supported by this map.\r\nHost Timer Sounds must be on.",
-        "Choose where the PB timer appears.\r\nThe host must enable the timer.",
-        "Adjust PB timer size from 50% to 100%.\r\nThe host must enable the timer."};
+        "Choose where the CoreCE timer appears.\r\nThe host must enable the timer.",
+        "Adjust CoreCE timer size from 50% to 100%.\r\nThe host must enable the timer."};
     static char const *const heading_names[] = {"ui\\native_settings\\game_title", "ui\\native_settings\\audio_title", "ui\\native_settings\\video_title", "ui\\native_settings\\timer_title"};
     static char const *const footer_names[] = {"ui\\native_settings\\game_help", "ui\\native_settings\\audio_help", "ui\\native_settings\\video_help", "ui\\native_settings\\timer_help"};
     struct ui_widget_definition *bases[_ds_layout_count] = {0};
