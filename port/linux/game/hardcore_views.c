@@ -758,7 +758,8 @@ boolean hardcore_views_local_pose(
 	short window_index,
 	short local_player_index,
 	struct observer_result const *observer,
-	struct observer_result *result)
+	struct observer_result *result,
+	boolean split)
 {
 	long player_index;
 	struct player_datum *player;
@@ -780,10 +781,20 @@ boolean hardcore_views_local_pose(
 	unit_index = player->unit_index;
 	object = object_try_and_get(unit_index);
 	alive = object && !TEST_FLAG(object->object.damage_flags, _object_dead_bit);
-	/* no control unit, or a camera that never found a cluster: the pane
-	is the clear color. a death keeps the observer unless that is unplaced */
-	unplaced = !observer || observer->location.cluster_index == NONE;
-	if (!unplaced &&
+	/* the last cluster is kept after the camera leaves the world, and a
+	blended frame can sit outside it. the pane is then the clear color
+	while the stored cluster still looks valid. a split does not use that
+	camera for a living player: the other panes are already on the unit */
+	unplaced = !observer;
+	if (observer)
+	{
+		struct location fresh;
+
+		scenario_location_from_point(&fresh, &observer->position);
+		if (fresh.cluster_index == NONE)
+			unplaced = TRUE;
+	}
+	if (!split && !unplaced &&
 		(player_control_get_unit_index(local_player_index) != NONE || !alive))
 		return FALSE;
 	if (alive)
@@ -794,7 +805,7 @@ boolean hardcore_views_local_pose(
 		pose_hide_unit[window_index] = unit_index;
 		return TRUE;
 	}
-	if (!unplaced)
+	if (!unplaced && !split)
 		return FALSE;
 	if (player->statistics.deaths <= 0 &&
 		!(object && TEST_FLAG(object->object.damage_flags, _object_dead_bit)))

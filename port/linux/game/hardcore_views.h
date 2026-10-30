@@ -23,14 +23,17 @@ boolean hardcore_views_camera(short window_index, struct observer_result *result
 does not keep that body hidden. */
 void hardcore_views_local_pose_reset(void);
 
-/* The local player's pane when its observer is not in the world, or the
-slot does not yet control the unit. Fills result and returns FALSE when
-the observer should be kept. A living unit is hidden in that pane only. */
+/* The local player's pane. A split poses a living player from the unit,
+the same as a teammate pane, so this pane is not left the clear color.
+One pane keeps the observer when that camera is in the world. Fills
+result and returns FALSE when the observer should be kept. A living
+unit is hidden in that pane only. */
 boolean hardcore_views_local_pose(
 	short window_index,
 	short local_player_index,
 	struct observer_result const *observer,
-	struct observer_result *result);
+	struct observer_result *result,
+	boolean split);
 
 /* The living unit a spare HUD slot is showing, or NONE. The field of
 view uses it, because that slot has no director of its own. */

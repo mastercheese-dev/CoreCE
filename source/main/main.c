@@ -3417,14 +3417,16 @@ static void main_game_render(
 			window->local_player_index = last_local_player_index;
 			observer = observer_get_camera(window->local_player_index);
 			observer = render_interpolation_camera(window->local_player_index, observer);
-			/* a slot with no control unit, or a camera outside the world,
-			leaves this pane the clear color. bots seated as local players
-			already split the screen, so display.force_split does not */
+			/* bots seated as local players already split the screen, so
+			display.force_split has no pane to add. that player's observer
+			can still leave their pane the clear color, so a split uses
+			the unit, the same pose the other panes use */
 			if (hardcore_views_local_pose(
 				(short)window_index,
 				window->local_player_index,
 				observer,
-				&teammate_view))
+				&teammate_view,
+				player_window_count > 1))
 				observer = &teammate_view;
 		}
 		else
