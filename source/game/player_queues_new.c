@@ -3859,6 +3859,24 @@ static boolean bot_probe_floor(real x, real y, real feet_z, real limit, real *gr
 	return TRUE;
 }
 
+/* the side they would step off on. A wall within the step is closed.
+The floor has to be this deck, not the drop beside the shaft. */
+static boolean bot_ladder_side_open(real_point3d const *feet, real yaw, long unit_index)
+{
+	real floor_z;
+
+	if (!bot_ray_clear_z(feet, yaw, 0.70f, 0.55f, unit_index))
+		return FALSE;
+	if (!bot_probe_floor(
+			feet->x + cosine(yaw) * 0.75f,
+			feet->y + sine(yaw) * 0.75f,
+			feet->z, 0.55f, &floor_z))
+		return FALSE;
+	if (floor_z < feet->z - 0.40f || floor_z > feet->z + 0.40f)
+		return FALSE;
+	return TRUE;
+}
+
 static boolean bot_drop_ahead(real_point3d const *feet, real yaw)
 {
 	static real const reach[3] = { 0.45f, 0.95f, 1.40f };
@@ -7134,6 +7152,114 @@ static boolean bot_close_powerup(struct bot_state *state, struct player_datum *p
 	return found;
 }
 
+/* the prompt from last tick is a powerup or a power gun. The action
+button takes a powerup they are already holding one of. The weapon
+button swaps a full inventory. Either one is a rising edge, so it is
+set for this tick only. */
+static void bot_take_power_prompt(struct player_datum *player, long unit_index,
+	struct player_action *action)
+{
+	struct object_datum *object;
+	short kind;
+	short gun;
+	boolean power;
+
+	if (!player || player->action_object_index == NONE)
+		return;
+	if (player->action_result != _player_action_result_swap_for_weapon &&
+		player->action_result != _player_action_result_add_weapon_to_inventory &&
+		player->action_result != _player_action_result_swap_for_powerup &&
+		player->action_result != _player_action_result_pickup_powerup)
+		return;
+	object = object_try_and_get(player->action_object_index);
+	if (!object || object->object.parent_object_index != NONE)
+		return;
+	power = FALSE;
+	kind = 0;
+	if (object->object.type == _object_type_equipment)
+	{
+		bot_equipment_score(object->definition_index, &kind);
+		power = kind != 0;
+	}
+	else if (object->object.type == _object_type_weapon)
+	{
+		gun = (short)bot_power_gun(tag_get_name(object->definition_index));
+		power = gun != 0 && !bot_has_power_gun(unit_index, gun);
+	}
+	if (!power)
+		return;
+	if (player->action_result == _player_action_result_swap_for_powerup ||
+		player->action_result == _player_action_result_pickup_powerup)
+		action->control_flags |= FLAG(_unit_control_action_bit) |
+			FLAG(UNIT_CONTROL_PORT_ACTION_ONLY_BIT);
+	else
+		action->control_flags |= FLAG(_unit_control_swap_weapons_bit);
+}
+
+/* a powerup or a power gun already in the room. The current trip stays.
+This is only the step onto it, and a body in arm's reach of an enemy
+keeps the fight. */
+static boolean bot_grab_nearby_power(struct bot_state *state, struct player_datum *player,
+	long unit_index, real_point3d const *feet, boolean enemy_close, real enemy_dist,
+	real_point3d *walk)
+{
+	real_point3d item;
+	real_point3d approach;
+	real dx;
+	real dy;
+	real dist;
+
+	if (state->climb || state->job_climb || state->gap_hold)
+	{
+		state->job_grab = 0;
+		return FALSE;
+	}
+	if (!bot_close_powerup(state, player, unit_index, feet, &approach, &item))
+	{
+		if (state->job_grab > 0)
+		{
+			state->job_grab = 0;
+			state->route.valid = FALSE;
+		}
+		return FALSE;
+	}
+	dx = item.x - feet->x;
+	dy = item.y - feet->y;
+	dist = square_root(dx * dx + dy * dy);
+	/* the fight is the closer body. The step onto the pickup waits. */
+	if (enemy_close && enemy_dist + 0.5f < dist)
+	{
+		state->job_grab = 0;
+		return FALSE;
+	}
+	if (state->job_grab <= 0)
+	{
+		long ticks = (long)(dist / 2.25f * (real)TICKS_PER_SECOND) +
+			TICKS_PER_SECOND + TICKS_PER_SECOND / 2;
+
+		if (ticks < 2 * TICKS_PER_SECOND)
+			ticks = 2 * TICKS_PER_SECOND;
+		if (ticks > 6 * TICKS_PER_SECOND)
+			ticks = 6 * TICKS_PER_SECOND;
+		state->job_grab = (short)ticks;
+		state->job_grab_point = item;
+		state->job_still = 0;
+		state->job_anchor = *feet;
+		state->route.valid = FALSE;
+	}
+	if (state->job_grab <= 0)
+		return FALSE;
+	state->job_grab--;
+	if (state->job_grab == 0)
+	{
+		bot_ban_point(state, &state->job_grab_point, 8 * TICKS_PER_SECOND);
+		state->route.valid = FALSE;
+		return FALSE;
+	}
+	*walk = approach;
+	return TRUE;
+}
+
 /* the closest free bot takes each weapon or powerup that is on the ground
 or about to come back. A live overshield, camouflage, or health pack is
 worth leaving a long fight. A sniper or a rocket is too, until they are holding one. */
@@ -8250,56 +8376,6 @@ static void update_server_generate_bot_actions(
 						state->route_surface = state->job_surface;
 					}
 					state->route_tour = TRUE;
-					/* already beside a powerup. Step onto it, then the same trip. */
-					if (state->job != _bot_job_ladder && !state->job_climb)
-					{
-						real_point3d walk;
-						real_point3d item;
-
-						if (bot_close_powerup(state, player, player->unit_index, &feet,
-								&walk, &item))
-						{
-							if (state->job_grab <= 0)
-							{
-								real dx = item.x - feet.x;
-								real dy = item.y - feet.y;
-								real dist = square_root(dx * dx + dy * dy);
-								long ticks = (long)(dist / 2.25f * (real)TICKS_PER_SECOND) +
-									TICKS_PER_SECOND + TICKS_PER_SECOND / 2;
-
-								if (ticks < 2 * TICKS_PER_SECOND)
-									ticks = 2 * TICKS_PER_SECOND;
-								if (ticks > 6 * TICKS_PER_SECOND)
-									ticks = 6 * TICKS_PER_SECOND;
-								state->job_grab = (short)ticks;
-								state->job_grab_point = item;
-								state->job_still = 0;
-								state->job_anchor = feet;
-								state->route.valid = FALSE;
-							}
-							if (state->job_grab > 0)
-							{
-								state->job_grab--;
-								if (state->job_grab == 0)
-								{
-									bot_ban_point(state, &state->job_grab_point,
-										8 * TICKS_PER_SECOND);
-									state->route.valid = FALSE;
-								}
-								else
-								{
-									move_goal = walk;
-									state->route_floor = FALSE;
-									goal_yaw = bot_yaw_between(&feet, &move_goal);
-								}
-							}
-						}
-						else if (state->job_grab > 0)
-						{
-							state->job_grab = 0;
-							state->route.valid = FALSE;
-						}
-					}
 				}
 				else if (fetching)
 				{
@@ -8526,6 +8602,22 @@ static void update_server_generate_bot_actions(
 			else
 				state->pad_valid = FALSE;
 
+			/* a powerup or a power gun in this room. The trip they were on
+			waits while they step onto it. A fight in arm's reach does not. */
+			if (!waiting && unit->object.parent_object_index == NONE && !state->climb)
+			{
+				real_point3d walk;
+
+				if (bot_grab_nearby_power(state, player, player->unit_index, &feet,
+						visible && distance < 4.0f, distance, &walk))
+				{
+					move_goal = walk;
+					state->route_floor = FALSE;
+					goal_yaw = bot_yaw_between(&feet, &move_goal);
+					combat_look = FALSE;
+				}
+			}
+
 			limit = bot_look_step(skill, FALSE);
 			pitch_limit = bot_look_step(skill, TRUE);
 			if (combat_look && visible && !fetching)
@@ -8750,6 +8842,39 @@ static void update_server_generate_bot_actions(
 								slide = (-sine(state->climb_yaw) * edx +
 									cosine(state->climb_yaw) * edy) > 0.0f ?
 									0.85f : -0.85f;
+								{
+									real slide_yaw;
+									real other_yaw;
+
+									slide_yaw = state->climb_yaw +
+										(slide > 0.0f ? _pi * 0.5f : -(_pi * 0.5f));
+									other_yaw = state->climb_yaw +
+										(slide > 0.0f ? -(_pi * 0.5f) : _pi * 0.5f);
+									/* the sniper shaft has no opening on the
+									side this exit was given. The other side
+									is the step off, and a lip in front is the
+									step when that side is closed too. An open
+									slide is unchanged. */
+									if (!bot_ray_clear_z(&feet, slide_yaw, 0.42f, 0.55f,
+											player->unit_index))
+									{
+										real front_z;
+
+										if (bot_ladder_side_open(&feet, other_yaw,
+												player->unit_index))
+											slide = -slide;
+										else if (bot_probe_floor(
+												feet.x + cosine(state->climb_yaw) * 0.65f,
+												feet.y + sine(state->climb_yaw) * 0.65f,
+												feet.z, 0.60f, &front_z) &&
+											front_z >= feet.z - 0.40f &&
+											front_z <= feet.z + 0.35f)
+										{
+											slide = 0.0f;
+											push = 1.0f;
+										}
+									}
+								}
 							}
 							else
 							{
@@ -9124,6 +9249,10 @@ static void update_server_generate_bot_actions(
 		}
 		else
 			state->trigger_down = FALSE;
+
+		/* already touching a powerup or a power gun. Take it. */
+		if (unit->object.parent_object_index == NONE && !state->climb)
+			bot_take_power_prompt(player, player->unit_index, &action);
 
 		/* standing with the throttle up, or standing with it at rest.
 		either one for two seconds is a body that has stopped. */

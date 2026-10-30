@@ -268,9 +268,69 @@ static int bot_nav_floor_open(float x, float y, float z)
 	return open;
 }
 
+/* the floor to one side of the shaft can sit past a wall. A ray that
+starts off the rungs and still hits is that wall. The frame on the
+face is only the nearer ray, and an opening hits neither. */
+static int bot_nav_land_walled(float face_x, float face_y, float yaw,
+	float gx, float gy, float gz)
+{
+	struct collision_bsp *bsp;
+	float dx;
+	float dy;
+	float span;
+	int ray;
+	int hits;
+
+	bsp = global_collision_bsp_get();
+	if (!bsp)
+		return 0;
+	dx = gx - face_x;
+	dy = gy - face_y;
+	span = dx * dx + dy * dy;
+	if (span < 0.55f * 0.55f)
+		return 0;
+	span = square_root(span);
+	dx /= span;
+	dy /= span;
+	hits = 0;
+	for (ray = 0; ray < 2; ray++)
+	{
+		float back;
+		float begin;
+		real_point3d origin;
+		real_vector3d into;
+		struct collision_bsp_test_vector_result hit;
+		float travel;
+
+		/* the second ray stands off the face, so a rung post is not a wall */
+		back = ray == 0 ? 0.20f : 0.50f;
+		begin = 0.28f;
+		travel = 0.48f;
+		if (begin + travel > span - 0.20f)
+			travel = span - 0.20f - begin;
+		if (travel < 0.20f)
+			return 0;
+		origin.x = face_x - cosine(yaw) * back + dx * begin;
+		origin.y = face_y - sine(yaw) * back + dy * begin;
+		origin.z = gz + 0.62f;
+		into.i = dx * travel;
+		into.j = dy * travel;
+		into.k = 0.0f;
+		if (!collision_bsp_test_vector(
+				FLAG(_collision_test_front_facing_surfaces_bit) |
+					FLAG(_collision_test_back_facing_surfaces_bit),
+				bsp, 0, NULL, &origin, &into, 1.0f, &hit) ||
+			hit.t > 0.95f || TEST_FLAG(hit.flags, BOT_NAV_CLIMBABLE))
+			continue;
+		hits++;
+	}
+	return hits == 2;
+}
+
 /* a floor the climb comes out on. The exit is often beside the face or
 past it, and sometimes well below the highest vertex when one tall face
-runs past the deck. Keep a point on open floor, off the eroded lip. */
+runs past the deck. Keep a point on open floor, off the eroded lip.
+A closed side of the shaft loses to a floor the body can step onto. */
 static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowest, float highest,
 	float *lx, float *ly, float *lz)
 {
@@ -285,6 +345,7 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 	int best_tier;
 	int best_open;
 	int best_away;
+	int best_walled;
 	float best_z;
 	float best_reach;
 
@@ -292,6 +353,7 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 	best_tier = -1;
 	best_open = -1;
 	best_away = 1;
+	best_walled = 1;
 	best_z = -1.0e9f;
 	best_reach = 0.0f;
 	sample_index = 0;
@@ -317,6 +379,7 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 				int tier;
 				int better;
 				int away;
+				int walled;
 				float forward;
 
 				heading = yaw + turn[turn_index];
@@ -332,15 +395,20 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 				/* yaw looks into the face. Past that plane is the back. */
 				forward = cosine(yaw) * (gx - face_x) + sine(yaw) * (gy - face_y);
 				away = forward > 0.35f;
+				walled = bot_nav_land_walled(face_x, face_y, yaw, gx, gy, gz);
 				open = bot_nav_floor_open(gx, gy, gz);
 				tier = open >= 3 ? 1 : 0;
 				prefer = reach[reach_index] - 1.70f;
 				if (prefer < 0.0f)
 					prefer = -prefer;
 				better = 0;
+				/* the sniper shaft is closed on one side. That floor is
+				not a step off while another side of the face is open. */
+				if (found && walled != best_walled)
+					better = best_walled && !walled;
 				/* a floor through the face is the wrong side. Keep it
 				only when the climb side has no floor up there. */
-				if (away && found && best_away == 0)
+				else if (away && found && best_away == 0)
 					better = 0;
 				else if (!away && best_away == 1)
 					better = 1;
@@ -367,6 +435,7 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 				if (!better)
 					continue;
 				best_away = away;
+				best_walled = walled;
 				best_tier = tier;
 				best_open = open;
 				best_z = gz;
