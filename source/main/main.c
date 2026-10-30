@@ -3363,6 +3363,7 @@ static void main_game_render(
 			player_window_count = 2;
 	}
 
+	hardcore_views_local_pose_reset();
 	for (window_index = 0; window_index < player_window_count; window_index++)
 	{
 		struct observer_result teammate_view;
@@ -3416,6 +3417,15 @@ static void main_game_render(
 			window->local_player_index = last_local_player_index;
 			observer = observer_get_camera(window->local_player_index);
 			observer = render_interpolation_camera(window->local_player_index, observer);
+			/* a slot with no control unit, or a camera outside the world,
+			leaves this pane the clear color. bots seated as local players
+			already split the screen, so display.force_split does not */
+			if (hardcore_views_local_pose(
+				(short)window_index,
+				window->local_player_index,
+				observer,
+				&teammate_view))
+				observer = &teammate_view;
 		}
 		else
 		{

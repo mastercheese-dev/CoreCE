@@ -744,8 +744,21 @@ void local_player_set_player_index(
 
 	if (player_index != NONE)
 	{
-		player_get(players_globals->local_players[local_player_index])->local_player_index =
-			local_player_index;
+		struct player_datum *seated =
+			player_get(players_globals->local_players[local_player_index]);
+
+		seated->local_player_index = local_player_index;
+		/* the unit can already exist (a bot given a spare view after it
+		spawned, or this slot seated again). the first person command is
+		not valid until the slot knows the unit, and that pane stays the
+		clear color */
+		if (seated->unit_index != NONE &&
+			player_control_get_unit_index(local_player_index) != seated->unit_index &&
+			unit_try_and_get(seated->unit_index))
+		{
+			player_control_new_unit(local_player_index, seated->unit_index);
+			observer_obsolete_position(local_player_index);
+		}
 	}
 
 	return;

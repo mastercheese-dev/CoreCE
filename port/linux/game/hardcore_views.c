@@ -27,6 +27,7 @@ between frames. The slot is a local player only while that pane is drawn. */
 #include "units/units.h"
 #include "hardcore_views.h"
 #include "port_config.h"
+#include "render/render.h"
 #include <string.h>
 
 boolean main_menu_is_active(void);
@@ -67,6 +68,9 @@ static long roster_player[HARDCORE_VIEW_MAXIMUM - 1];
 static short roster_count = 0;
 static long roster_team = NONE;
 static boolean roster_locked = FALSE;
+/* the local pane posed from the unit, hidden in that pane only */
+static long pose_hide_unit[HARDCORE_VIEW_MAXIMUM];
+static boolean pose_hide_ready = FALSE;
 
 /* A pane's HUD needs a local player slot. Slot 1 is the second person
 when two play on this machine, and clearing it drops their listener.
@@ -701,6 +705,106 @@ long hardcore_views_fov_unit(
 	return NONE;
 }
 
+static void pose_hide_init(void)
+{
+	short index;
+
+	if (pose_hide_ready)
+		return;
+	for (index = 0; index < HARDCORE_VIEW_MAXIMUM; index++)
+		pose_hide_unit[index] = NONE;
+	pose_hide_ready = TRUE;
+}
+
+/* a living unit, the same pose a teammate pane uses */
+static boolean hardcore_views_living_pose(
+	short window_index,
+	long unit_index,
+	struct object_datum *object,
+	struct observer_result *result)
+{
+	real_vector3d forward;
+	real length;
+
+	view_unit[window_index] = unit_index;
+	/* the shot travels along the aiming vector. the head's looking
+	vector is a different line, so a camera on it leaves the reticle
+	off the aim. this is the pose a first person camera uses for a unit. */
+	csmemset(result, 0, sizeof(*result));
+	first_person_camera_deterministic(unit_index, &result->position, &forward);
+	length = forward.i * forward.i + forward.j * forward.j + forward.k * forward.k;
+	if (!(length > 0.0001f))
+		forward = object->object.forward;
+	result->forward = forward;
+	observer_up_from_forward(&result->forward, &result->up);
+	result->field_of_view = hardcore_views_field_of_view(unit_index);
+	hardcore_views_smooth(window_index, result);
+	/* the listener and the wall test need the cluster this view is in.
+	the pose above leaves that at the zero cluster */
+	scenario_location_from_point(&result->location, &result->position);
+	return TRUE;
+}
+
+void hardcore_views_local_pose_reset(void)
+{
+	short index;
+
+	pose_hide_init();
+	for (index = 0; index < HARDCORE_VIEW_MAXIMUM; index++)
+		pose_hide_unit[index] = NONE;
+}
+
+boolean hardcore_views_local_pose(
+	short window_index,
+	short local_player_index,
+	struct observer_result const *observer,
+	struct observer_result *result)
+{
+	long player_index;
+	struct player_datum *player;
+	long unit_index;
+	struct object_datum *object;
+	boolean alive;
+	boolean unplaced;
+
+	pose_hide_init();
+	if (window_index < 0 || window_index >= HARDCORE_VIEW_MAXIMUM || !result)
+		return FALSE;
+	pose_hide_unit[window_index] = NONE;
+	if (local_player_index == NONE)
+		return FALSE;
+	player_index = local_player_get_player_index(local_player_index);
+	player = player_try_and_get(player_index);
+	if (!player || player->quit_out_of_game)
+		return FALSE;
+	unit_index = player->unit_index;
+	object = object_try_and_get(unit_index);
+	alive = object && !TEST_FLAG(object->object.damage_flags, _object_dead_bit);
+	/* no control unit, or a camera that never found a cluster: the pane
+	is the clear color. a death keeps the observer unless that is unplaced */
+	unplaced = !observer || observer->location.cluster_index == NONE;
+	if (!unplaced &&
+		(player_control_get_unit_index(local_player_index) != NONE || !alive))
+		return FALSE;
+	if (alive)
+	{
+		death_on[window_index] = FALSE;
+		if (!hardcore_views_living_pose(window_index, unit_index, object, result))
+			return FALSE;
+		pose_hide_unit[window_index] = unit_index;
+		return TRUE;
+	}
+	if (!unplaced)
+		return FALSE;
+	if (player->statistics.deaths <= 0 &&
+		!(object && TEST_FLAG(object->object.damage_flags, _object_dead_bit)))
+		return FALSE;
+	if (!hardcore_views_death_camera(window_index, player_index, player, result))
+		return FALSE;
+	scenario_location_from_point(&result->location, &result->position);
+	return TRUE;
+}
+
 boolean hardcore_views_camera(short window_index, struct observer_result *result)
 {
 	long player_index;
@@ -708,8 +812,6 @@ boolean hardcore_views_camera(short window_index, struct observer_result *result
 	long team;
 	long unit_index;
 	struct object_datum *object;
-	real_vector3d forward;
-	real length;
 
 	if (!result || !hardcore_views_is_teammate_window(window_index))
 		return FALSE;
@@ -730,23 +832,7 @@ boolean hardcore_views_camera(short window_index, struct observer_result *result
 	if (object && !TEST_FLAG(object->object.damage_flags, _object_dead_bit))
 	{
 		death_on[window_index] = FALSE;
-		view_unit[window_index] = unit_index;
-		csmemset(result, 0, sizeof(*result));
-		/* the shot travels along the aiming vector. the head's looking
-		vector is a different line, so a camera on it leaves the reticle
-		off the aim. this is the pose a first person camera uses for a unit. */
-		first_person_camera_deterministic(unit_index, &result->position, &forward);
-		length = forward.i * forward.i + forward.j * forward.j + forward.k * forward.k;
-		if (!(length > 0.0001f))
-			forward = object->object.forward;
-		result->forward = forward;
-		observer_up_from_forward(&result->forward, &result->up);
-		result->field_of_view = hardcore_views_field_of_view(unit_index);
-		hardcore_views_smooth(window_index, result);
-		/* the listener and the wall test need the cluster this view is in.
-		the pose above leaves that at the zero cluster */
-		scenario_location_from_point(&result->location, &result->position);
-		return TRUE;
+		return hardcore_views_living_pose(window_index, unit_index, object, result);
 	}
 	/* not spawned yet: the pane stays empty until they are alive.
 	a death, the body or none after it, uses the death camera */
@@ -843,6 +929,10 @@ void hardcore_views_weapons_tick(void)
 
 boolean hardcore_views_hides_unit(long object_index)
 {
+	pose_hide_init();
+	if (render.window_index >= 0 && render.window_index < HARDCORE_VIEW_MAXIMUM &&
+		pose_hide_unit[render.window_index] == object_index)
+		return TRUE;
 	return view_hiding && view_rendering >= 0 && view_rendering < view_count &&
 		view_unit[view_rendering] == object_index;
 }

@@ -989,6 +989,18 @@ void director_update(
 			struct camera_control controls;
 			struct observer_command command;
 			struct director *director = director_get(local_player_index);
+			struct player_datum *seated;
+
+			/* seated with a unit this slot does not control yet: the
+			command stays invalid and the pane is the clear color */
+			seated = player_try_and_get(local_player_get_player_index(local_player_index));
+			if (seated && seated->unit_index != NONE &&
+				player_control_get_unit_index(local_player_index) == NONE &&
+				unit_try_and_get(seated->unit_index))
+			{
+				player_control_new_unit(local_player_index, seated->unit_index);
+				observer_obsolete_position(local_player_index);
+			}
 
 			director->inhibited_facing = FALSE;
 			director->inhibited_input = FALSE;
