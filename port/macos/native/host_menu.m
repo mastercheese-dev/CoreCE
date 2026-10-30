@@ -299,9 +299,17 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
 }
 - (void)showGame:(id)sender { (void)sender; host_sdl_show_game(); }
 - (void)about:(id)sender {
+    NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+    NSString *version = info[@"CFBundleShortVersionString"] ?: @"";
     (void)sender;
     host_sdl_release_mouse();
-    [NSApp orderFrontStandardAboutPanelWithOptions:@{NSAboutPanelOptionApplicationName:@"CoreCE"}];
+    /* A testing install names itself here, so it can be told from a main build. */
+    if ([info[@"CoreCEMacUpdateChannel"] isEqual:@"testing"] && version.length)
+        version = [version stringByAppendingString:@" testing"];
+    [NSApp orderFrontStandardAboutPanelWithOptions:@{
+        NSAboutPanelOptionApplicationName: @"CoreCE",
+        NSAboutPanelOptionApplicationVersion: version
+    }];
 }
 - (void)quit:(id)sender {
     (void)sender;
