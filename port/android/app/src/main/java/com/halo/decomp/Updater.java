@@ -9,6 +9,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -47,7 +48,7 @@ import java.util.zip.ZipInputStream;
  * app must keep for Android to install a new version over it.
  */
 final class Updater {
-    private static final String REPOSITORY = "OpenCommunityEdition/CoreCE";
+    private static final String REPOSITORY = BuildConfig.HALO_UPDATE_REPOSITORY;
     private static final String USER_AGENT = "halo-ce-universal-updater";
     private static final int TIMEOUT_MILLISECONDS = 20000;
     /** the most a download (a release's zip, about 35 MB) or the app in it may be */
@@ -60,13 +61,18 @@ final class Updater {
     static void start(Activity activity) {
         File config = configFile(activity);
 
-        if (BuildConfig.HALO_BUILD_NUMBER <= 0 || config == null || !autoUpdate(config))
+        /* A testing build with the setting off still looks, so it can offer
+           the main release after ordinary checks were turned off. */
+        if (BuildConfig.HALO_BUILD_NUMBER <= 0 || config == null)
+            return;
+        if (!autoUpdate(config) && !(onTesting() && !testingReleases(config)))
             return;
         new Thread(() -> {
-            int latest = latestRelease();
+            boolean wantTesting = testingReleases(config);
+            Choice choice = chooseRelease(assetName(), wantTesting);
 
-            if (latest > BuildConfig.HALO_BUILD_NUMBER)
-                activity.runOnUiThread(() -> ask(activity, latest));
+            if (choice != null)
+                activity.runOnUiThread(() -> ask(activity, choice));
         }, "update check").start();
     }
 
@@ -79,6 +85,15 @@ final class Updater {
     /* ---------- config.toml's update.auto */
 
     private static boolean autoUpdate(File config) {
+        return updateFlag(config, "auto", true);
+    }
+
+    /* Missing means off, so a config from before this setting stays on main. */
+    private static boolean testingReleases(File config) {
+        return updateFlag(config, "testing", false);
+    }
+
+    private static boolean updateFlag(File config, String key, boolean missing) {
         String section = "";
 
         for (String line : readLines(config)) {
@@ -86,11 +101,19 @@ final class Updater {
 
             if (trimmed.startsWith("[") && trimmed.contains("]")) {
                 section = trimmed.substring(1, trimmed.indexOf(']')).trim();
-            } else if (section.equals("update") && isKey(trimmed, "auto")) {
+            } else if (section.equals("update") && isKey(trimmed, key)) {
                 return !trimmed.substring(trimmed.indexOf('=') + 1).trim().startsWith("false");
             }
         }
-        return true;
+        return missing;
+    }
+
+    private static boolean onTesting() {
+        return "testing".equals(BuildConfig.HALO_BUILD_CHANNEL);
+    }
+
+    private static String assetName() {
+        return "halo-android-" + (BuildConfig.DEBUG ? "debug" : "release") + ".zip";
     }
 
     /** update.auto = false written into config.toml (only its line changed) */
@@ -177,40 +200,150 @@ final class Updater {
         return connection;
     }
 
-    /** the build number of GitHub's latest release, 0 if there is none */
-    private static int latestRelease() {
+    private static final class Choice {
+        final int number;
+        final String tag;
+        final boolean testing;
+
+        Choice(int number, String tag, boolean testing) {
+            this.number = number;
+            this.tag = tag;
+            this.testing = testing;
+        }
+    }
+
+    private static int channelNumber(String tag, String prefix) {
+        if (tag == null || !tag.startsWith(prefix))
+            return 0;
+        String rest = tag.substring(prefix.length());
+
+        if (rest.isEmpty())
+            return 0;
+        for (int index = 0; index < rest.length(); index++) {
+            if (!Character.isDigit(rest.charAt(index)))
+                return 0;
+        }
         try {
-            HttpURLConnection connection = open("https://api.github.com/repos/" + REPOSITORY + "/releases/latest");
+            int number = Integer.parseInt(rest);
+
+            return number > 0 ? number : 0;
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private static boolean hasAsset(JSONObject release, String asset) {
+        JSONArray assets = release.optJSONArray("assets");
+
+        if (assets == null)
+            return false;
+        for (int index = 0; index < assets.length(); index++) {
+            JSONObject item = assets.optJSONObject(index);
+
+            if (item != null && asset.equals(item.optString("name")))
+                return true;
+        }
+        return false;
+    }
+
+    private static Choice consider(JSONObject release, boolean wantTesting, String asset, Choice best) {
+        String prefix;
+        int number;
+
+        if (release == null || release.optBoolean("draft"))
+            return best;
+        prefix = wantTesting ? "testing-" : "build-";
+        number = channelNumber(release.optString("tag_name"), prefix);
+        if (number == 0 || (wantTesting && !release.optBoolean("prerelease")) ||
+            (!wantTesting && release.optBoolean("prerelease")) || !hasAsset(release, asset))
+            return best;
+        if (best != null && number <= best.number)
+            return best;
+        return new Choice(number, release.optString("tag_name"), wantTesting);
+    }
+
+    private static JSONObject fetchObject(String address) {
+        try {
+            HttpURLConnection connection = open(address);
 
             connection.setRequestProperty("Accept", "application/vnd.github+json");
             try (InputStream stream = connection.getInputStream()) {
-                String tag = new JSONObject(new String(readAll(stream), StandardCharsets.UTF_8)).optString("tag_name");
+                return new JSONObject(new String(readAll(stream), StandardCharsets.UTF_8));
+            } finally {
+                connection.disconnect();
+            }
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
-                return tag.startsWith("build-") ? Integer.parseInt(tag.substring(6)) : 0;
+    /** The release to install, or null when this build should stay. */
+    private static Choice chooseRelease(String asset, boolean wantTesting) {
+        Choice best = null;
+
+        try {
+            HttpURLConnection connection = open("https://api.github.com/repos/" + REPOSITORY + "/releases?per_page=100");
+
+            connection.setRequestProperty("Accept", "application/vnd.github+json");
+            try (InputStream stream = connection.getInputStream()) {
+                JSONArray list = new JSONArray(new String(readAll(stream), StandardCharsets.UTF_8));
+
+                for (int index = 0; index < list.length(); index++)
+                    best = consider(list.optJSONObject(index), wantTesting, asset, best);
             } finally {
                 connection.disconnect();
             }
         } catch (Exception e) {
             android.util.Log.i("halo", "update: could not check for a new version: " + e);
-            return 0;
         }
+        /* The list is the newest hundred tags. The release GitHub calls latest
+           is never a prerelease, so a run of testing tags cannot hide main. */
+        best = consider(fetchObject("https://api.github.com/repos/" + REPOSITORY + "/releases/latest"),
+            wantTesting, asset, best);
+        if (best == null)
+            return null;
+        if (wantTesting && onTesting() && best.number <= BuildConfig.HALO_BUILD_NUMBER)
+            return null;
+        if (!wantTesting && !onTesting() && best.number <= BuildConfig.HALO_BUILD_NUMBER)
+            return null;
+        return best;
     }
 
     /* ---------- the player's answer */
 
-    private static void ask(Activity activity, int latest) {
+    private static void ask(Activity activity, Choice choice) {
+        boolean switching = choice.testing != onTesting();
+        String message;
+        AlertDialog.Builder dialog;
+
         if (activity.isFinishing())
             return;
-        new AlertDialog.Builder(activity)
-            .setTitle("Halo: new version")
-            .setMessage("A new version of Halo was detected (build " + latest + "; this is build "
+        if (switching && choice.testing)
+            message = "A testing version is available (testing build " + choice.number + "; this is build "
                 + BuildConfig.HALO_BUILD_NUMBER + ").\n\nDo you want to update? The game will close and start "
-                + "the new version.")
+                + "the testing version.";
+        else if (switching)
+            message = "Build " + choice.number + " is the latest main release. This is testing build "
+                + BuildConfig.HALO_BUILD_NUMBER + ".\n\nThe game will close and start that version.";
+        else if (choice.testing)
+            message = "A new testing version is available (testing build " + choice.number
+                + "; this is testing build " + BuildConfig.HALO_BUILD_NUMBER
+                + ").\n\nDo you want to update? The game will close and start the new version.";
+        else
+            message = "A new version of Halo was detected (build " + choice.number + "; this is build "
+                + BuildConfig.HALO_BUILD_NUMBER + ").\n\nDo you want to update? The game will close and start "
+                + "the new version.";
+        dialog = new AlertDialog.Builder(activity)
+            .setTitle("Halo: new version")
+            .setMessage(message)
             .setCancelable(false)
-            .setPositiveButton("Yes", (dialog, which) -> update(activity, latest))
-            .setNegativeButton("No", null)
-            .setNeutralButton("Do not ask again", (dialog, which) -> confirmNever(activity))
-            .show();
+            .setPositiveButton("Yes", (unused, which) -> update(activity, choice))
+            .setNegativeButton("No", null);
+        /* A channel change is the setting already chosen. "Do not ask again"
+           would leave a testing build in place after that setting was turned off. */
+        if (!switching)
+            dialog.setNeutralButton("Do not ask again", (unused, which) -> confirmNever(activity));
+        dialog.show();
     }
 
     private static void confirmNever(Activity activity) {
@@ -231,8 +364,9 @@ final class Updater {
 
     /* ---------- updating */
 
-    private static void update(Activity activity, int latest) {
-        String asset = "halo-android-" + (BuildConfig.DEBUG ? "debug" : "release") + ".zip";
+    private static void update(Activity activity, Choice choice) {
+        String asset = assetName();
+        int latest = choice.number;
         File directory = new File(activity.getCacheDir(), UpdateProvider.DIRECTORY);
         LinearLayout layout = new LinearLayout(activity);
         TextView status = new TextView(activity);
@@ -258,7 +392,7 @@ final class Updater {
                 File zip = new File(directory, "update.zip");
                 File apk = new File(directory, UpdateProvider.APK);
 
-                download("https://github.com/" + REPOSITORY + "/releases/download/build-" + latest + "/" + asset, zip,
+                download("https://github.com/" + REPOSITORY + "/releases/download/" + choice.tag + "/" + asset, zip,
                     (received, total) -> activity.runOnUiThread(() -> {
                         bar.setProgress(total > 0 ? (int) (received * 1000 / total) : 0);
                         status.setText("Downloading build " + latest + "... (" + (received >> 20) + " of "

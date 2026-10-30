@@ -162,6 +162,20 @@ unsigned long opening_film_duration_ms(void)
 	return film_duration_ms;
 }
 
+unsigned long opening_film_step_ms(void)
+{
+	unsigned long duration = opening_film_duration_ms();
+	unsigned long count = film_count > 0 ? (unsigned long)film_count : 0;
+	unsigned long step;
+
+	if (duration == 0 || count == 0)
+		return 42UL;
+	step = duration / count;
+	if (step == 0)
+		return 1UL;
+	return step;
+}
+
 boolean opening_film_show(unsigned long shown_ms, real opacity)
 {
 	unsigned long t;

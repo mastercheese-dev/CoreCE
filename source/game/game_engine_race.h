@@ -18,6 +18,9 @@ struct race_globals;
 
 void race_flags_make_unique(
 	void);
+/* The host's race vehicles exist. Other modes, and a client, are ready. */
+boolean race_opening_vehicles_ready(
+	void);
 
 /* ---------- globals */
 

@@ -14,9 +14,13 @@ with ideas from VALORANT's netcode articles, keeping the 30 Hz tick:
 
 - **Every machine ticks on its own clock.** Nobody waits for anybody: a
   client no longer runs only the ticks the host has sent. A client's clock
-  starts with the host's first game update and takes the host's time from
-  it (at a game's start as at a late join), so every machine reads the
-  game's timers alike.
+  starts with the host's first game update. The match clock stays at 0
+  while the opening film is up. The host starts that clock, and every
+  machine's fade off the film, with one message once every machine still
+  in the game has its world ready. A machine that never reports is dropped
+  after the map-load wait, and the rest start together. A game joined in
+  progress still takes the host's time from the first update, so every
+  machine reads the game's timers alike.
 - **Own player predicted.** A client drives its own player (and the
   vehicle it drives) from its local input at once. Remote players are
   driven by the inputs the host relays every tick, the latest one held

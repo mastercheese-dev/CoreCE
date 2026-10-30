@@ -173,6 +173,8 @@ SCREENS = {
              "Join the game of an invite link copied before\nswitching to the game.", None),
             ("CHECK FOR UPDATES:", "update.auto", ON_OFF,
              "Look for a new version when the game starts.", None),
+            ("TESTING RELEASES:", "update.testing", ON_OFF,
+             "Use testing releases. Off goes back to the\nlatest main release the next time the game starts.", None),
             ("SCOREBOARD LAYOUT:", "display.scoreboard_team_layout", [("TEAMS", "teams"), ("BY SCORE", "score")],
              "A team game's scoreboard: a column for each team,\nor every player in order of score.", None),
             ("SCOREBOARD PANEL:", "display.scoreboard_background", ON_OFF,

@@ -115,6 +115,7 @@ symbols in this file:
 #include "text/text_group.h"
 #include "text/unicode.h"
 #include "units/units.h"
+#include "hardcore_rules.h"
 
 /* ---------- constants */
 
@@ -1415,9 +1416,37 @@ static void race_engine_player_update(
 	return;
 }
 
+/* The opening holds the clock at 0, and the old spawn waited for tick 2.
+The host places them on the second opening tick so they are in the world
+before the match starts. The announcement still waits for the clock. */
+static int race_opening_ticks;
+
+boolean race_opening_vehicles_ready(
+	void)
+{
+	struct game_variant *variant = game_engine_get_variant();
+
+	if (!variant || variant->game_engine_index != game_engine_race)
+		return TRUE;
+	if (network_game_distributed_client())
+		return TRUE;
+	return race_globals.vehicles_have_been_added;
+}
+
 static void race_engine_update(
 	void)
 {
+	if (hardcore_rules_opening_hold() && !network_game_distributed_client())
+	{
+		if (race_opening_ticks < 2)
+			race_opening_ticks++;
+		if (race_opening_ticks >= 2 && !race_globals.vehicles_have_been_added)
+		{
+			delete_race_vehicles();
+			spawn_race_vehicles();
+		}
+	}
+
 	if (game_time_get() == 2)
 	{
 		boolean vehicles_added;
@@ -1426,8 +1455,11 @@ static void race_engine_update(
 		announces those the host spawns) */
 		if (!network_game_distributed_client())
 		{
-			delete_race_vehicles();
-			spawn_race_vehicles();
+			if (!race_globals.vehicles_have_been_added)
+			{
+				delete_race_vehicles();
+				spawn_race_vehicles();
+			}
 			vehicles_added = race_globals.vehicles_have_been_added;
 		}
 		else
@@ -1487,6 +1519,7 @@ static boolean race_engine_initialize_for_new_map(
 
 	race_globals.vehicles_have_been_added = FALSE;
 	csmemset(&race_globals, 0, sizeof(race_globals));
+	race_opening_ticks = 0;
 	csmemset(&race_events, 0, sizeof(race_events));
 	timeout_for_endgame_sound = 30;
 

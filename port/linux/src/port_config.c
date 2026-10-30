@@ -620,6 +620,11 @@ static const struct config_setting config_settings[] =
 	{ "update.auto", _config_boolean, "true", "HALO_UPDATE_AUTO", _environment_value, _platform_all,
 		"Look for a new version when the game starts, and offer to update to it;\n"
 		"false never looks (the game's \"Do not ask again\" writes false here)." },
+	{ "update.testing", _config_boolean, "false", "HALO_UPDATE_TESTING", _environment_value, _platform_all,
+		"Updates follow testing releases while this is true. False follows the\n"
+		"latest main release, and offers it again after a testing release was\n"
+		"installed. Testing releases are published apart from main, so a build\n"
+		"that leaves this false never installs one." },
 	{ "streamer.enabled", _config_boolean, "false", "HALO_STREAMER_MODE", _environment_value, _platform_all,
 		"Hide offensive words in names and text from other players, maps and mods\n"
 		"as stars, at the levels below (Settings > Network Setup > Streamer Mode)." },

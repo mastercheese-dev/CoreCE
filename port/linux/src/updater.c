@@ -28,6 +28,7 @@ update.h's: posix_update.c on Linux, win32_update.c on Windows.
 #include "platform.h"
 #include "port_config.h"
 #include "update.h"
+#include "update_choice.h"
 
 #ifndef HALO_ANDROID
 
@@ -45,8 +46,14 @@ update.h's: posix_update.c on Linux, win32_update.c on Windows.
 #ifndef HALO_BUILD_FLAVOR
 #define HALO_BUILD_FLAVOR "release"
 #endif
+#ifndef HALO_BUILD_CHANNEL
+#define HALO_BUILD_CHANNEL "main"
+#endif
+#ifndef HALO_UPDATE_REPOSITORY
+#define HALO_UPDATE_REPOSITORY "OpenCommunityEdition/CoreCE"
+#endif
 
-#define UPDATE_REPOSITORY "OpenCommunityEdition/CoreCE"
+#define UPDATE_REPOSITORY HALO_UPDATE_REPOSITORY
 #ifdef _WIN32
 #define UPDATE_PLATFORM "windows"
 #define PATH_SEPARATOR "\\"
@@ -68,6 +75,8 @@ enum
 
 static SDL_AtomicInt updater_state;
 static long updater_latest_build;
+static char updater_latest_tag[64];
+static int updater_switching;
 static char updater_directory[1024];
 static char updater_executable[1024];
 
@@ -306,54 +315,76 @@ done:
 
 /* ---------- checking */
 
-/* the build number of GitHub's latest release, 0 if there is none */
-static long updater_latest_release(void)
+static int updater_on_testing(void)
+{
+	return strcmp(HALO_BUILD_CHANNEL, "testing") == 0;
+}
+
+/* the file at url, or null. A missing latest release is not an error. */
+static char *updater_fetch(const char *url, const char *file_name, int required)
 {
 	char path[1200];
 	char error[512] = "";
 	size_t size = 0;
 	char *text;
-	const char *tag;
-	long build = 0;
 
-	updater_path(path, sizeof(path), "update-check.json");
-	if (!update_download("https://api.github.com/repos/" UPDATE_REPOSITORY "/releases/latest", path, NULL, NULL,
-		error, sizeof(error)))
+	updater_path(path, sizeof(path), file_name);
+	if (!update_download(url, path, NULL, NULL, error, sizeof(error)))
 	{
-		platform_log("update: could not check for a new version: %s", error);
-		return 0;
+		if (required)
+			platform_log("update: could not check for a new version: %s", error);
+		update_delete_file(path);
+		return NULL;
 	}
 	text = SDL_LoadFile(path, &size);
 	update_delete_file(path);
-	if (!text)
+	return text;
+}
+
+static int updater_find_release(struct update_choice *choice)
+{
+	char list_url[256];
+	char latest_url[256];
+	char *list_json;
+	char *latest_json;
+	int want_testing = config_boolean("update.testing");
+	int found;
+
+	snprintf(list_url, sizeof(list_url), "https://api.github.com/repos/" UPDATE_REPOSITORY "/releases?per_page=100");
+	snprintf(latest_url, sizeof(latest_url), "https://api.github.com/repos/" UPDATE_REPOSITORY "/releases/latest");
+	list_json = updater_fetch(list_url, "update-check.json", 1);
+	latest_json = updater_fetch(latest_url, "update-latest.json", 0);
+	if (!list_json && !latest_json)
 		return 0;
-	/* "tag_name": "build-<number>" */
-	tag = strstr(text, "\"tag_name\"");
-	if (tag)
-	{
-		tag = strchr(tag + 10, '"');
-		if (tag && !strncmp(tag, "\"build-", 7))
-			build = strtol(tag + 7, NULL, 10);
-	}
-	SDL_free(text);
-	return build;
+	found = update_choice_select(list_json, latest_json, UPDATE_ASSET, want_testing, updater_on_testing(),
+		HALO_BUILD_NUMBER, choice);
+	SDL_free(list_json);
+	SDL_free(latest_json);
+	return found;
 }
 
 static int SDLCALL updater_check_thread(void *context)
 {
-	long latest = updater_latest_release();
+	struct update_choice choice;
 
 	(void)context;
-	if (latest > HALO_BUILD_NUMBER)
+	memset(&choice, 0, sizeof(choice));
+	if (updater_find_release(&choice))
 	{
-		platform_log("update: build %ld is available (this is build %d)", latest, HALO_BUILD_NUMBER);
-		updater_latest_build = latest;
+		int on_testing = updater_on_testing();
+		int to_testing = strncmp(choice.tag, "testing-", 8) == 0;
+
+		platform_log("update: %s build %ld is available (this is %s build %d)",
+			to_testing ? "testing" : "main", choice.number, on_testing ? "testing" : "main", HALO_BUILD_NUMBER);
+		updater_latest_build = choice.number;
+		snprintf(updater_latest_tag, sizeof(updater_latest_tag), "%s", choice.tag);
+		updater_switching = to_testing != on_testing;
 		SDL_SetAtomicInt(&updater_state, _updater_available);
 	}
 	else
 	{
-		if (latest)
-			platform_log("update: this is the latest build (%d)", HALO_BUILD_NUMBER);
+		platform_log("update: no newer release for this %s build (%d)",
+			updater_on_testing() ? "testing" : "main", HALO_BUILD_NUMBER);
 		SDL_SetAtomicInt(&updater_state, _updater_handled);
 	}
 	return 0;
@@ -409,7 +440,7 @@ static int updater_download_zip(const char *zip_path, char *error, size_t error_
 	memset(&download, 0, sizeof(download));
 	download.lock = SDL_CreateMutex();
 	snprintf(download.url, sizeof(download.url),
-		"https://github.com/" UPDATE_REPOSITORY "/releases/download/build-%ld/" UPDATE_ASSET, updater_latest_build);
+		"https://github.com/" UPDATE_REPOSITORY "/releases/download/%s/" UPDATE_ASSET, updater_latest_tag);
 	snprintf(download.zip_path, sizeof(download.zip_path), "%s", zip_path);
 	thread = SDL_CreateThread(updater_download_thread, "update download", &download);
 	if (!thread)
@@ -560,13 +591,20 @@ void updater_start(void)
 		return;
 	*slash = 0;
 	updater_clean_up();
-	/* (not for builds without a number, the player's no, or runs nobody is
-	watching, but for a test with its answer) */
-	if (HALO_BUILD_NUMBER <= 0 || !config_boolean("update.auto") ||
-		(!config_string("debug.update_answer")[0] && (config_boolean("debug.hidden_window") ||
-			config_real("debug.exit_after") > 0.0 || config_string("debug.network_test")[0])))
+	/* A testing build with the setting off still looks, so it can offer the
+	main release after ordinary checks were turned off. Builds without a
+	number never look. A hidden or scripted run is not asked. */
 	{
-		return;
+		int leaving_testing = updater_on_testing() && !config_boolean("update.testing");
+		int watched = config_string("debug.update_answer")[0] ||
+			(!config_boolean("debug.hidden_window") && config_real("debug.exit_after") <= 0.0 &&
+				!config_string("debug.network_test")[0]);
+
+		if (HALO_BUILD_NUMBER <= 0 || !watched ||
+			(!leaving_testing && !config_boolean("update.auto")))
+		{
+			return;
+		}
 	}
 	SDL_SetAtomicInt(&updater_state, _updater_checking);
 	{
@@ -616,18 +654,44 @@ void updater_poll(SDL_Window *window)
 	fullscreen = window && (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN);
 	if (fullscreen)
 		SDL_SetWindowFullscreen(window, false);
-	snprintf(message, sizeof(message),
-		"A new version of Halo was detected (build %ld; this is build %d).\n\n"
-		"Do you want to update? The game will close and start the new version.",
-		updater_latest_build, HALO_BUILD_NUMBER);
+	if (updater_switching && strncmp(updater_latest_tag, "testing-", 8) == 0)
 	{
+		snprintf(message, sizeof(message),
+			"A testing version is available (testing build %ld; this is build %d).\n\n"
+			"Do you want to update? The game will close and start the testing version.",
+			updater_latest_build, HALO_BUILD_NUMBER);
+	}
+	else if (updater_switching)
+	{
+		snprintf(message, sizeof(message),
+			"Build %ld is the latest main release. This is testing build %d.\n\n"
+			"The game will close and start that version.",
+			updater_latest_build, HALO_BUILD_NUMBER);
+	}
+	else if (strncmp(updater_latest_tag, "testing-", 8) == 0)
+	{
+		snprintf(message, sizeof(message),
+			"A new testing version is available (testing build %ld; this is testing build %d).\n\n"
+			"Do you want to update? The game will close and start the new version.",
+			updater_latest_build, HALO_BUILD_NUMBER);
+	}
+	else
+	{
+		snprintf(message, sizeof(message),
+			"A new version of Halo was detected (build %ld; this is build %d).\n\n"
+			"Do you want to update? The game will close and start the new version.",
+			updater_latest_build, HALO_BUILD_NUMBER);
+	}
+	{
+		/* A channel change is the setting already chosen. "Do not ask again"
+		would leave a testing build in place after that setting was turned off. */
 		SDL_MessageBoxData question = { SDL_MESSAGEBOX_INFORMATION, window, "Halo: new version", message,
-			3, question_buttons, NULL };
+			updater_switching ? 2 : 3, question_buttons, NULL };
 
 		if (!SDL_ShowMessageBox(&question, &answer))
 			answer = 0;
 	}
-	if (answer == 2)
+	if (!updater_switching && answer == 2)
 	{
 		SDL_MessageBoxData confirm = { SDL_MESSAGEBOX_WARNING, window, "Halo: new version",
 			"Stop asking about new versions?\n\n"

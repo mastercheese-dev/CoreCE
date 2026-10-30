@@ -76,6 +76,8 @@ machine (their datum identifiers need not be).
 #include "units/bipeds.h"
 #include "network_coop.h"
 #include "network_distributed.h"
+#include "hardcore_rules.h"
+#include "networking/network_server_manager.h"
 #include "network_voice.h"
 #include "map_share.h"
 #include "network_aim_assist.h"
@@ -479,6 +481,13 @@ struct distributed_packer
 /* ---------- globals */
 
 static long distributed_last_sent_time = NONE;
+/* The opening holds the clock at 0. These count that wait's ticks, so a
+second tick at time 0 is still sent. */
+static long distributed_hold_ticks;
+static int distributed_was_holding;
+static boolean distributed_match_ready[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+static int distributed_match_gate;
+static unsigned long distributed_match_ready_ms;
 
 /* the tick's steps, timed in the profiling build */
 PROFILE_SECTION(distributed_tick_apply_predictions_section, "network_distributed_tick.apply_predictions")
@@ -636,6 +645,10 @@ leading postgame state), and when */
 static unsigned long distributed_game_state_checksum;
 static long distributed_game_state_postgame;
 static long distributed_game_state_time;
+/* A client has applied the host's game type state. The host's own
+distributed_game_state_time is when it last sent that state, which a
+client does not have. */
+static boolean distributed_client_state_seen;
 
 /* the latest tick of each kind of unreliable message had from each sender
 (a machine, or the host), NONE for none */
@@ -1338,8 +1351,9 @@ long distributed_player_ping(
 		return NONE;
 	/* (the host: its own players' none, a client's its machine's) */
 	machine_index = distributed_player_machines[player_index];
+	/* No machine yet is not a measured 0. The scoreboard prints that as a dash. */
 	if (machine_index == NONE)
-		return 0;
+		return NONE;
 	if (machine_index < 0 || machine_index >= HALO_PORT_MAXIMUM_NETWORK_MACHINES ||
 		!distributed_round_trips[machine_index].valid)
 	{
@@ -2500,7 +2514,10 @@ static void distributed_handle_inputs(
 		if (input->host_time != NONE && (host_time == NONE || input->host_time > host_time))
 			host_time = input->host_time;
 	}
-	if (host_time != NONE && machine_index >= 0 && machine_index < HALO_PORT_MAXIMUM_NETWORK_MACHINES)
+	/* A stamp of 0 is the opening, while the match clock is held. It is
+	not a trip: recording it marked every player as 0ms before a real
+	sample, and the scoreboard showed that 0. */
+	if (host_time > 0 && machine_index >= 0 && machine_index < HALO_PORT_MAXIMUM_NETWORK_MACHINES)
 	{
 		long sample = game_time_get() - host_time;
 
@@ -3299,6 +3316,12 @@ static void distributed_send_all_statistics(
 
 /* ---------- the game type's state */
 
+boolean distributed_opening_state_seen(
+	void)
+{
+	return distributed_client_state_seen;
+}
+
 /* the game type's state (larger than a datagram: reliably) to a machine
 that has loaded, or (NONE) to every client when it changed (at most every
 other look, unless the game ended) */
@@ -3350,6 +3373,11 @@ void network_distributed_new_game(
 	short player_index;
 
 	distributed_last_sent_time = NONE;
+	distributed_hold_ticks = 0;
+	distributed_was_holding = 0;
+	csmemset(distributed_match_ready, 0, sizeof(distributed_match_ready));
+	distributed_match_gate = 0;
+	distributed_match_ready_ms = 0;
 	csmemset(distributed_deaths, 0, sizeof(distributed_deaths));
 	csmemset(distributed_seat_disagreements, 0, sizeof(distributed_seat_disagreements));
 	csmemset(distributed_predictions, 0, sizeof(distributed_predictions));
@@ -3375,6 +3403,7 @@ void network_distributed_new_game(
 	distributed_game_state_checksum = 0;
 	distributed_game_state_postgame = 0;
 	distributed_game_state_time = NONE;
+	distributed_client_state_seen = FALSE;
 	distributed_host_update_number = NONE;
 	for (player_index = 0; player_index < MAXIMUM_TRACKED_PLAYERS; player_index++)
 	{
@@ -3423,15 +3452,112 @@ void network_distributed_new_game(
 	network_votekick_new_game();
 }
 
+/* The film stays up until every machine still in the game has its world,
+then one message starts every fade. A machine that never reports is
+dropped after the same wait as a map that never loads, and the rest start. */
+static void distributed_match_start(
+	void)
+{
+	short connection = game_connection();
+	unsigned long now;
+
+	if (!hardcore_rules_opening_waiting())
+	{
+		distributed_match_gate = 0;
+		distributed_match_ready_ms = 0;
+		return;
+	}
+	if (!distributed_match_gate)
+	{
+		/* A ready that arrived with the objects is already for this
+		match. new_game cleared the previous one. */
+		distributed_match_gate = 1;
+		distributed_match_ready_ms = 0;
+	}
+	now = system_milliseconds();
+	if (connection == _game_connection_network_client)
+	{
+		struct distributed_message_header message;
+
+		if (!hardcore_rules_opening_world_ready())
+			return;
+		if (distributed_match_ready_ms != 0 && now - distributed_match_ready_ms < 1000UL)
+			return;
+		distributed_send(&message, _distributed_message_match_ready, 0,
+			(word)sizeof(message), _distributed_to_host_reliably);
+		distributed_match_ready_ms = now;
+		return;
+	}
+	if (connection != _game_connection_network_server)
+		return;
+	{
+		long machine_indices[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+		short machine_count = distributed_client_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
+		short index;
+		int waiting = 0;
+		int expired = hardcore_rules_opening_expired();
+		struct
+		{
+			struct distributed_message_header header;
+			long update_number;
+		} message;
+
+		for (index = 0; index < machine_count; index++)
+		{
+			long machine_index = machine_indices[index];
+
+			if (machine_index < 0 || machine_index >= HALO_PORT_MAXIMUM_NETWORK_MACHINES)
+				continue;
+			if (distributed_match_ready[machine_index])
+				continue;
+			if (expired)
+			{
+				error(_error_silent, "a machine did not finish loading the match; dropped");
+				distributed_match_ready[machine_index] = FALSE;
+				network_game_server_kick_machine(machine_index, FALSE);
+			}
+			else
+				waiting = 1;
+		}
+		if (waiting)
+			return;
+		if (!expired && !hardcore_rules_opening_world_ready())
+			return;
+		/* A fast world still plays the film out. The start waits for the
+		moment the film fades, unless the ready wait has run out. */
+		if (!expired && !hardcore_rules_opening_film_at_fade())
+			return;
+		message.update_number = network_game_server_get_next_update_number();
+		distributed_send(&message, _distributed_message_match_go, 1,
+			(word)sizeof(message), _distributed_to_clients_reliably);
+		hardcore_rules_opening_go(message.update_number, TRUE);
+	}
+}
+
 /* after each tick (game_time.c) */
 void network_distributed_tick(
 	void)
 {
 	short connection = game_connection();
+	long tick_stamp;
 
-	if (game_time_get() == distributed_last_sent_time)
+	/* The opening holds the clock at 0. The same-time guard would send
+	one tick of that wait and then nothing, so the hold counts its own. */
+	if (hardcore_rules_opening_hold())
+	{
+		distributed_hold_ticks++;
+		distributed_was_holding = 1;
+	}
+	else if (distributed_was_holding)
+	{
+		distributed_was_holding = 0;
+		distributed_hold_ticks = 0;
+		distributed_last_sent_time = NONE;
+	}
+	tick_stamp = hardcore_rules_opening_hold() ? distributed_hold_ticks : game_time_get();
+	if (tick_stamp == distributed_last_sent_time)
 		return;
-	distributed_last_sent_time = game_time_get();
+	distributed_last_sent_time = tick_stamp;
 	distributed_machines.in_tick = TRUE;
 	if (connection == _game_connection_network_server)
 	{
@@ -3458,16 +3584,19 @@ void network_distributed_tick(
 		profile_scope(distributed_tick_objects_host_tick_section, network_objects_host_tick();)
 		profile_scope(distributed_tick_plan_players_section, distributed_host_plan_players();)
 		profile_scope(distributed_tick_damage_host_tick_section, network_damage_host_tick();)
-		if (distributed_statistics_due || game_time_get() % STATISTICS_INTERVAL_TICKS == 0)
+		if (distributed_statistics_due || tick_stamp % STATISTICS_INTERVAL_TICKS == 0)
 			profile_scope(distributed_tick_send_statistics_section,
-				distributed_send_statistics(game_time_get() % STATISTICS_REFRESH_TICKS == 0);)
+				distributed_send_statistics(tick_stamp % STATISTICS_REFRESH_TICKS == 0);)
 		distributed_statistics_due = FALSE;
-		if (game_time_get() % PING_INTERVAL_TICKS == 0)
+		/* The first opening tick reports the sample so far. There is none
+		while the clock is held, so the column stays a dash. */
+		if (tick_stamp % PING_INTERVAL_TICKS == 0 ||
+			(hardcore_rules_opening_hold() && tick_stamp == 1))
 			profile_scope(distributed_tick_send_pings_section, distributed_send_pings();)
 		/* (before the players, so clients load a new BSP before they hear
 		where the host moved everyone into it) */
 		if (network_coop_active() && (global_structure_bsp_index_get() != distributed_sent_structure_bsp_index ||
-			game_time_get() % STRUCTURE_BSP_INTERVAL_TICKS == 0))
+			tick_stamp % STRUCTURE_BSP_INTERVAL_TICKS == 0))
 		{
 			profile_scope(distributed_tick_send_structure_bsp_section, distributed_send_structure_bsp();)
 		}
@@ -3475,7 +3604,7 @@ void network_distributed_tick(
 		profile_scope(distributed_tick_actors_host_tick_section, network_actors_host_tick();)
 		profile_scope(distributed_tick_coop_host_tick_section, network_coop_host_tick();)
 		profile_scope(distributed_tick_send_pickups_section, distributed_send_pickups();)
-		if (game_time_get() % GAME_STATE_INTERVAL_TICKS == 0)
+		if (tick_stamp % GAME_STATE_INTERVAL_TICKS == 0)
 			profile_scope(distributed_tick_send_game_state_section, distributed_send_game_state(NONE);)
 		network_votekick_host_tick();
 	}
@@ -3489,6 +3618,7 @@ void network_distributed_tick(
 		profile_scope(distributed_tick_coop_client_tick_section, network_coop_client_tick();)
 	}
 	profile_scope(distributed_tick_batches_flush_section, distributed_batches_flush();)
+	distributed_match_start();
 	distributed_machines.in_tick = FALSE;
 	distributed_machines.valid = FALSE;
 	/* the pose the picture blends, after this tick's moves */
@@ -4168,7 +4298,9 @@ void network_distributed_handle_message(
 	case _distributed_message_game_state:
 	case _distributed_message_objects_synchronized:
 	case _distributed_message_notice:
-	case _distributed_message_client_ready: entry_size = 0; break;
+	case _distributed_message_client_ready:
+	case _distributed_message_match_ready: entry_size = 0; break;
+	case _distributed_message_match_go: entry_size = sizeof(long); break;
 	case _distributed_message_client_identity: entry_size = sizeof(struct distributed_client_identity); break;
 	case _distributed_message_damage_events:
 	case _distributed_message_hit_reports: entry_size = network_damage_entry_size(header.type); break;
@@ -4191,6 +4323,7 @@ void network_distributed_handle_message(
 	case _distributed_message_chat_up:
 	case _distributed_message_chat_down:
 	case _distributed_message_chat_config:
+	case _distributed_message_match_go:
 		if (header.count < 1)
 			return;
 		break;
@@ -4203,7 +4336,8 @@ void network_distributed_handle_message(
 	anyone can send as from it, they are not its) */
 	if ((header.type == _distributed_message_client_ready ||
 			header.type == _distributed_message_client_identity ||
-			header.type == _distributed_message_hit_reports) &&
+			header.type == _distributed_message_hit_reports ||
+			header.type == _distributed_message_match_ready) &&
 		!distributed_handling_stream_message)
 	{
 		return;
@@ -4213,6 +4347,7 @@ void network_distributed_handle_message(
 	{
 	case _distributed_message_player_prediction:
 	case _distributed_message_client_ready:
+	case _distributed_message_match_ready:
 	case _distributed_message_client_identity:
 	case _distributed_message_hit_reports:
 	case _distributed_message_vehicle_prediction:
@@ -4361,6 +4496,7 @@ void network_distributed_handle_message(
 		break;
 	case _distributed_message_game_state:
 		game_engine_read_network_state((byte const *)entries, size - sizeof(header));
+		distributed_client_state_seen = TRUE;
 		break;
 	case _distributed_message_objects_synchronized:
 		network_objects_handle_synchronized();
@@ -4399,6 +4535,19 @@ void network_distributed_handle_message(
 		}
 		console_warning("%s", text);
 		error(_error_log, "the host: %s", text);
+		break;
+	}
+	case _distributed_message_match_ready:
+		if (machine_index >= 0 && machine_index < HALO_PORT_MAXIMUM_NETWORK_MACHINES)
+			distributed_match_ready[machine_index] = TRUE;
+		break;
+	case _distributed_message_match_go:
+	{
+		long update_number = 0;
+
+		if (header.count >= 1)
+			csmemcpy(&update_number, entries, sizeof(update_number));
+		hardcore_rules_opening_go(update_number, FALSE);
 		break;
 	}
 	case _distributed_message_client_ready:

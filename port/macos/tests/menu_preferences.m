@@ -274,6 +274,39 @@ int main(int argc, const char **argv) {
         assert([chosenTag isEqual:@"build-70"]);
         assert([chosenURL isEqual:build70]);
         assert(HaloForkNewestMacRelease(@[@{@"tag_name": @"test-v0.3.0-net28-ios9"}], nil, nil) == 0);
+        NSString *testing4 = @"https://github.com/mastercheese-dev/CoreCE/releases/download/testing-4/CoreCE-macos-arm64.dmg";
+        NSString *testing2 = @"https://github.com/mastercheese-dev/CoreCE/releases/download/testing-2/CoreCE-macos-arm64.dmg";
+        assert(HaloForkUpdateBuildFromTag(@"testing-4") == 4);
+        assert([HaloForkUpdateChannelFromTag(@"testing-4") isEqual:@"testing"]);
+        assert([HaloForkUpdateChannelFromTag(@"build-70") isEqual:@"main"]);
+        assert(HaloForkUpdateChannelFromTag(@"testing-4-extra") == nil);
+        assert([HaloForkUpdateAssetName(@"testing-4") isEqual:@"CoreCE-macos-arm64.dmg"]);
+        assert(HaloForkUpdateDownloadIsTrusted(@"testing-4", testing4));
+        assert(!HaloForkUpdateDownloadIsTrusted(@"testing-4", build70));
+        NSArray *mixed = [releases arrayByAddingObjectsFromArray:@[
+            @{@"tag_name": @"testing-4", @"draft": @NO, @"prerelease": @YES,
+              @"assets": @[@{@"name": @"CoreCE-macos-arm64.dmg", @"browser_download_url": testing4}]},
+            @{@"tag_name": @"testing-2", @"draft": @NO, @"prerelease": @YES,
+              @"assets": @[@{@"name": @"CoreCE-macos-arm64.dmg", @"browser_download_url": testing2}]},
+            @{@"tag_name": @"testing-9", @"draft": @NO, @"prerelease": @NO,
+              @"assets": @[@{@"name": @"CoreCE-macos-arm64.dmg", @"browser_download_url":
+                  @"https://github.com/mastercheese-dev/CoreCE/releases/download/testing-9/CoreCE-macos-arm64.dmg"}]},
+        ]];
+        assert(HaloForkNewestMacRelease(mixed, &chosenTag, &chosenURL) == 70);
+        assert(HaloForkUpdateChoice(mixed, NO, @"main", 50, &chosenTag, &chosenURL) == 70);
+        assert(HaloForkUpdateChoice(mixed, NO, @"main", 70, &chosenTag, &chosenURL) == 0);
+        assert(HaloForkUpdateChoice(mixed, NO, @"testing", 80, &chosenTag, &chosenURL) == 70);
+        assert([chosenTag isEqual:@"build-70"]);
+        assert(HaloForkUpdateChoice(mixed, YES, @"main", 70, &chosenTag, &chosenURL) == 4);
+        assert([chosenTag isEqual:@"testing-4"]);
+        assert([chosenURL isEqual:testing4]);
+        assert(HaloForkUpdateChoice(mixed, YES, @"testing", 4, &chosenTag, &chosenURL) == 0);
+        assert(HaloForkUpdateChoice(mixed, YES, @"testing", 2, &chosenTag, &chosenURL) == 4);
+        assert(HaloForkNewestMacRelease(@[
+            @{@"tag_name": @"testing-9", @"draft": @NO, @"prerelease": @NO,
+              @"assets": @[@{@"name": @"CoreCE-macos-arm64.dmg", @"browser_download_url":
+                  @"https://github.com/mastercheese-dev/CoreCE/releases/download/testing-9/CoreCE-macos-arm64.dmg"}]}],
+            nil, nil) == 0);
         NSURL *dataRoot = [test URLByAppendingPathComponent:@"game-data" isDirectory:YES];
         NSURL *history = HaloForkUpdateHistoryURL(dataRoot);
         assert([history.lastPathComponent isEqual:@"update.txt"]);

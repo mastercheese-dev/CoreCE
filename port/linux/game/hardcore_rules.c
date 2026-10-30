@@ -32,6 +32,12 @@ a data message an older build ignores. */
 #include "opening_film.h"
 #include "networking/network_game_globals.h"
 #include "networking/network_game_manager.h"
+#include "networking/network_client_manager.h"
+#include "network_distributed.h"
+#include "cache/cache_files.h"
+#include "game/bots.h"
+#include "game/bot_nav.h"
+#include "game/game_engine_race.h"
 #include "hardcore_timer.h"
 #include "tag_files/files.h"
 #include "saved games/saved_game_files.h"
@@ -80,22 +86,25 @@ static boolean hardcore_remote_client(void);
 static int opening_hold;
 static int opening_release;
 static int opening_fading;
-static int opening_fade_done;
+static int opening_go;
+static int opening_fade_ticks;
 static unsigned long opening_started_ms;
-static unsigned long opening_shown_ms;
-static unsigned long opening_fade_ms;
-static unsigned long opening_fade_shown;
+static unsigned long opening_played_ms;
+static unsigned long opening_last_present_ms;
+static unsigned long opening_fade_from_ms;
+static long opening_deferred_sound = NONE;
 
-/* The film plays out, and its last moment fades off the match. A spawn
-   that is still arming holds the picture until that player is ready. A
-   stuck spawn does not. Without the film, the ring stays up for 3
-   seconds. Once it is done, the picture fades off the match instead of
-   cutting. A slow frame only moves that fade a short step, so it cannot
-   skip it. */
+/* The film plays on presented frames, one frame at a time, so a hitch
+holds the picture instead of skipping it. A local game fades once the
+world is ready and the film has reached its last moment. A network game
+fades when the host says the worlds match, and the film's tail plays
+across that fade. The fade is 12 ticks, the old 400ms, so every machine
+that shares the host's update finishes together. A stuck local spawn
+still ends. A network game does not start on that timer. */
 #define OPENING_RING_MS 3000UL
 #define OPENING_FADE_MS 400UL
-#define OPENING_FADE_STEP_MS 48UL
-#define OPENING_WAIT_MS 12000UL
+#define OPENING_FADE_TICKS 12
+#define OPENING_READY_WAIT_MS 60000UL
 
 static int hardcore_anniversary(void)
 {
@@ -486,11 +495,13 @@ void hardcore_rules_begin_map(void)
 	opening_hold = FALSE;
 	opening_release = FALSE;
 	opening_fading = FALSE;
-	opening_fade_done = FALSE;
+	opening_go = FALSE;
+	opening_fade_ticks = 0;
 	opening_started_ms = 0;
-	opening_shown_ms = 0;
-	opening_fade_ms = 0;
-	opening_fade_shown = 0;
+	opening_played_ms = 0;
+	opening_last_present_ms = 0;
+	opening_fade_from_ms = 0;
+	opening_deferred_sound = NONE;
 	hardcore_list_match_started();
 	csmemset(hardcore_skip_armed, 0, sizeof(hardcore_skip_armed));
 	csmemset(hardcore_shot_press, 0, sizeof(hardcore_shot_press));
@@ -543,15 +554,22 @@ void hardcore_rules_begin_map(void)
 
 static void opening_finish(void)
 {
+	long sound = opening_deferred_sound;
+
+	opening_deferred_sound = NONE;
 	opening_hold = FALSE;
 	opening_release = FALSE;
 	opening_fading = FALSE;
-	opening_fade_done = FALSE;
+	opening_go = FALSE;
+	opening_fade_ticks = 0;
 	opening_started_ms = 0;
-	opening_shown_ms = 0;
-	opening_fade_ms = 0;
-	opening_fade_shown = 0;
+	opening_played_ms = 0;
+	opening_last_present_ms = 0;
+	opening_fade_from_ms = 0;
 	progress_bar_end();
+	/* The stinger was stored while the film was up. It plays as control returns. */
+	if (sound != NONE && game_in_progress())
+		game_engine_play_multiplayer_sound(sound);
 }
 
 /* A player counts once they are in the world and the weapon in their
@@ -617,10 +635,12 @@ void hardcore_rules_hold_pregame(void)
 	opening_hold = TRUE;
 	opening_release = FALSE;
 	opening_fading = FALSE;
-	opening_fade_done = FALSE;
-	opening_shown_ms = 0;
-	opening_fade_ms = 0;
-	opening_fade_shown = 0;
+	opening_go = FALSE;
+	opening_fade_ticks = 0;
+	opening_played_ms = 0;
+	opening_last_present_ms = 0;
+	opening_fade_from_ms = 0;
+	opening_deferred_sound = NONE;
 	opening_started_ms = system_milliseconds();
 	progress_bar_begin(TRUE);
 }
@@ -635,6 +655,163 @@ boolean hardcore_rules_opening_fading(void)
 	return opening_fading ? TRUE : FALSE;
 }
 
+static boolean opening_network(void)
+{
+	short connection = game_connection();
+
+	return connection == _game_connection_network_client ||
+		connection == _game_connection_network_server;
+}
+
+static boolean opening_has_bots(void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	if (!player_data)
+		return FALSE;
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		if (player->quit_out_of_game)
+			continue;
+		if (bot_controller_is_bot(player->network_player_data.machine_index,
+			player->network_player_data.controller_index))
+			return TRUE;
+	}
+	return FALSE;
+}
+
+boolean hardcore_rules_opening_world_ready(void)
+{
+	short connection;
+
+	if (cache_files_precache_in_progress())
+		return FALSE;
+	if (!opening_players_ready())
+		return FALSE;
+	connection = game_connection();
+	if (connection == _game_connection_network_client)
+	{
+		/* The host places the items. This machine is ready once that
+		world, and the game type's state, have arrived. */
+		if (!network_objects_client_synchronized())
+			return FALSE;
+		if (!distributed_opening_state_seen())
+			return FALSE;
+		return TRUE;
+	}
+	if (!game_engine_opening_items_placed())
+		return FALSE;
+	if (!race_opening_vehicles_ready())
+		return FALSE;
+	/* Clients do not path the bots. The host does, and a mesh that is
+	still building would start them with nowhere to step. */
+	if (opening_has_bots() && !bot_nav_settled())
+		return FALSE;
+	return TRUE;
+}
+
+boolean hardcore_rules_opening_waiting(void)
+{
+	return opening_hold && !opening_go;
+}
+
+boolean hardcore_rules_opening_film_at_fade(void)
+{
+	unsigned long duration = opening_film_duration_ms();
+	unsigned long hold_ms;
+	unsigned long elapsed;
+
+	/* No frame has been shown yet. That is the start of the film, not
+	its end: the ticks before the first picture must not start the match.
+	A host that never draws one waits out the film, then starts. */
+	if (opening_last_present_ms == 0)
+	{
+		elapsed = opening_started_ms != 0 ? system_milliseconds() - opening_started_ms : 0;
+		return elapsed >= (duration > 0 ? duration : OPENING_RING_MS);
+	}
+	if (duration > OPENING_FADE_MS)
+		hold_ms = duration - OPENING_FADE_MS;
+	else if (duration > 0)
+		hold_ms = 0;
+	else
+		hold_ms = OPENING_RING_MS;
+	if (duration > 0)
+		return opening_played_ms >= hold_ms;
+	return opening_started_ms != 0 &&
+		system_milliseconds() - opening_started_ms >= hold_ms;
+}
+
+boolean hardcore_rules_opening_expired(void)
+{
+	return opening_hold && opening_started_ms != 0 &&
+		system_milliseconds() - opening_started_ms > OPENING_READY_WAIT_MS;
+}
+
+static void opening_begin_fade(int ticks)
+{
+	if (ticks <= 0)
+	{
+		opening_finish();
+		return;
+	}
+	opening_go = TRUE;
+	opening_fading = TRUE;
+	opening_fade_ticks = ticks;
+	opening_fade_from_ms = opening_played_ms;
+}
+
+void hardcore_rules_opening_go(long update_number, boolean host)
+{
+	long late = 0;
+
+	if (!opening_hold || opening_go)
+		return;
+	if (!host)
+	{
+		struct network_game_client *client = global_network_game_client_get();
+		long next = client ? network_game_client_get_next_update_number(client) : 0;
+
+		/* Updates that already arrived are fade ticks already spent. */
+		late = next - update_number;
+		if (late < 0)
+			late = 0;
+	}
+	opening_begin_fade(OPENING_FADE_TICKS - (int)late);
+}
+
+void hardcore_rules_opening_defer_sound(long sound_index)
+{
+	if (!opening_hold || opening_fading)
+	{
+		game_engine_play_multiplayer_sound(sound_index);
+		return;
+	}
+	opening_deferred_sound = sound_index;
+}
+
+/* A presented frame moves the film by at most one of its frames. */
+static unsigned long opening_advance(void)
+{
+	unsigned long now = system_milliseconds();
+	unsigned long step;
+	unsigned long cap;
+
+	if (opening_last_present_ms == 0)
+	{
+		opening_last_present_ms = now;
+		return opening_played_ms;
+	}
+	step = now - opening_last_present_ms;
+	opening_last_present_ms = now;
+	cap = opening_film_step_ms();
+	if (step > cap)
+		step = cap;
+	opening_played_ms += step;
+	return opening_played_ms;
+}
+
 void hardcore_rules_opening_before_tick(void)
 {
 	if (!opening_hold)
@@ -646,23 +823,26 @@ void hardcore_rules_opening_before_tick(void)
 	}
 	if (opening_fading)
 	{
-		if (opening_fade_done)
+		opening_fade_ticks--;
+		if (opening_fade_ticks <= 0)
 			opening_finish();
 		return;
 	}
 	if (opening_release)
 		opening_finish();
-	else if (opening_started_ms != 0 &&
-		system_milliseconds() - opening_started_ms > OPENING_WAIT_MS)
+	/* A network match starts from the host. This only frees a local game
+	whose weapon never finishes drawing. */
+	else if (!opening_network() && opening_started_ms != 0 &&
+		system_milliseconds() - opening_started_ms > OPENING_READY_WAIT_MS)
 		opening_finish();
 }
 
 void hardcore_rules_opening_frame(void)
 {
-	unsigned long now;
-	unsigned long shown;
+	unsigned long played;
 	unsigned long film_ms;
 	unsigned long hold_ms;
+	unsigned long ring_ms;
 	real progress;
 
 	if (!opening_hold || opening_fading)
@@ -672,17 +852,15 @@ void hardcore_rules_opening_frame(void)
 		opening_finish();
 		return;
 	}
-	now = system_milliseconds();
-	if (opening_shown_ms == 0)
-		opening_shown_ms = now;
-	shown = now - opening_shown_ms;
-	/* The film is the original loading animation. Its last moment plays
-	   while the picture fades. A player still drawing holds the frame
-	   that is up. Without the film, the sweep is the stand-in ring. */
+	played = opening_advance();
+	/* The film is the original loading animation. Its last frame holds
+	while a network world is still arriving. Without the film, the sweep
+	is the stand-in ring. */
 	film_ms = opening_film_duration_ms();
-	if (!opening_film_show(shown, 1.f))
+	if (!opening_film_show(played, 1.f))
 	{
-		progress = (real)shown / (real)OPENING_RING_MS;
+		ring_ms = opening_started_ms != 0 ? system_milliseconds() - opening_started_ms : 0;
+		progress = (real)ring_ms / (real)OPENING_RING_MS;
 		if (progress < 0.02f)
 			progress = 0.02f;
 		if (progress > 1.f)
@@ -690,7 +868,11 @@ void hardcore_rules_opening_frame(void)
 		progress_bar_show_ring(progress);
 		film_ms = 0;
 	}
-	if (!opening_players_ready())
+	/* The host names the tick. This machine does not fade because it
+	happens to look ready. */
+	if (opening_network())
+		return;
+	if (!hardcore_rules_opening_world_ready())
 		return;
 	if (film_ms > OPENING_FADE_MS)
 		hold_ms = film_ms - OPENING_FADE_MS;
@@ -698,44 +880,44 @@ void hardcore_rules_opening_frame(void)
 		hold_ms = 0;
 	else
 		hold_ms = OPENING_RING_MS;
-	if (shown < hold_ms)
+	if (film_ms > 0)
+	{
+		if (played < hold_ms)
+			return;
+	}
+	else if (opening_started_ms == 0 ||
+		system_milliseconds() - opening_started_ms < hold_ms)
 		return;
-	opening_fading = TRUE;
-	opening_fade_ms = 0;
-	opening_fade_shown = 0;
-	opening_fade_done = FALSE;
+	opening_begin_fade(OPENING_FADE_TICKS);
 }
 
 void hardcore_rules_opening_overlay(void)
 {
-	unsigned long now;
+	unsigned long film_ms;
+	unsigned long left;
 	unsigned long shown;
-	unsigned long step;
 	real alpha;
+	real done;
 
 	if (!opening_hold || !opening_fading)
 		return;
-	now = system_milliseconds();
-	if (opening_fade_ms == 0)
-		opening_fade_ms = now;
-	else
-	{
-		step = now - opening_fade_ms;
-		if (step > OPENING_FADE_STEP_MS)
-			step = OPENING_FADE_STEP_MS;
-		opening_fade_shown += step;
-		opening_fade_ms = now;
-	}
-	if (opening_fade_shown >= OPENING_FADE_MS)
-	{
-		opening_fade_done = TRUE;
-		return;
-	}
-	shown = opening_shown_ms != 0 ? now - opening_shown_ms : 0;
-	alpha = 1.f - (real)opening_fade_shown / (real)OPENING_FADE_MS;
+	alpha = opening_fade_ticks > 0 ?
+		(real)opening_fade_ticks / (real)OPENING_FADE_TICKS : 0.f;
 	/* Stay under a full replace so this draws over the match. */
 	if (alpha > 0.998f)
 		alpha = 0.998f;
+	film_ms = opening_film_duration_ms();
+	if (film_ms == 0)
+	{
+		opening_film_show(opening_fade_from_ms, alpha);
+		return;
+	}
+	/* Whatever of the film is left plays out as the fade does. */
+	left = opening_fade_from_ms < film_ms ? film_ms - opening_fade_from_ms : 0;
+	done = 1.f - alpha;
+	shown = opening_fade_from_ms + (unsigned long)((real)left * done);
+	if (shown > film_ms)
+		shown = film_ms;
 	opening_film_show(shown, alpha);
 }
 

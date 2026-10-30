@@ -7439,6 +7439,12 @@ weapons and powerups are placed on the first of those, and not again
 until the clock moves. */
 static boolean map_items_placed_at_start;
 
+boolean game_engine_opening_items_placed(
+	void)
+{
+	return map_items_placed_at_start;
+}
+
 void game_engine_initialize_for_new_map(
 	void)
 {

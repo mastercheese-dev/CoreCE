@@ -70,6 +70,9 @@ corridors are kept for the goal. A short one is the usual trip. Another
 is taken when this one has stopped, or when the body is already on it. */
 int bot_nav_steer(float fx, float fy, float fz, float gx, float gy, float gz,
 	int agent, int blocked, struct bot_nav_step *step);
+/* The mesh is usable, or the build has stopped. A build still running is
+not settled. A failed build does not hold the match. */
+int bot_nav_settled(void);
 /* up to limit places the mesh can reach, spread around the bot.
 the furthest tile is one stop on that circuit, not the only one.
 points is x,y,z triples. returns how many were written. */

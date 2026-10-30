@@ -1370,6 +1370,14 @@ game ran faster than this one's: network_distributed.c); it is, once this
 server next looks at its machines, not while its messages are read. Its
 address kept out of this server's games (kept_out), else it may join
 again, as a kick's */
+long network_game_server_get_next_update_number(
+	void)
+{
+	struct network_game_server *server = global_network_game_server_get();
+
+	return server ? server->next_update_number : 0;
+}
+
 void network_game_server_kick_machine(
 	long machine_index,
 	boolean kept_out)

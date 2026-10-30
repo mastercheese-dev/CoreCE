@@ -10,6 +10,10 @@ def staged = new File(rootDir, "../../build/android")
 // increasing install version so same-key APKs can upgrade each other.
 def buildNumberText = System.getenv("HALO_BUILD_NUMBER") ?: "0"
 def buildNumber = buildNumberText.isInteger() ? buildNumberText.toInteger() : 0
+def updateChannel = System.getenv("HALO_BUILD_CHANNEL") ?: "main"
+if (updateChannel != "main" && updateChannel != "testing")
+    updateChannel = "main"
+def updateRepository = System.getenv("HALO_UPDATE_REPOSITORY") ?: "mastercheese-dev/CoreCE"
 def installBuildNumberText = providers.gradleProperty("haloInstallBuildNumber").getOrElse(buildNumberText)
 def installBuildNumber = installBuildNumberText.isInteger() ? installBuildNumberText.toInteger() : 0
 
@@ -29,6 +33,8 @@ android {
         versionCode Math.max(1, installBuildNumber)
         versionName installBuildNumber > 0 ? "build " + installBuildNumber : "1.0"
         buildConfigField "int", "HALO_BUILD_NUMBER", "${buildNumber}"
+        buildConfigField "String", "HALO_BUILD_CHANNEL", "\"${updateChannel}\""
+        buildConfigField "String", "HALO_UPDATE_REPOSITORY", "\"${updateRepository}\""
         ndk {
             abiFilters "arm64-v8a"
         }

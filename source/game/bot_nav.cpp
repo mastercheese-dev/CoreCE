@@ -1096,6 +1096,17 @@ extern "C" int bot_nav_ready(void)
 	return 1;
 }
 
+extern "C" int bot_nav_settled(void)
+{
+	struct bot_nav_identity id;
+
+	if (!bot_nav_bsp_identity(&id))
+		return 1;
+	if (nav_state == NAV_FAILED && nav_same_map(&id))
+		return 1;
+	return bot_nav_ready();
+}
+
 static void nav_note(float x, float z)
 {
 	int tx;

@@ -1696,16 +1696,17 @@ static short map_kind_first(short chosen, short count)
 	return (short)PIN(chosen - MAP_KIND_ROWS / 2, 0, MAX(count - MAP_KIND_ROWS, 0));
 }
 
-static boolean list_scrolls_at_end(void);
-
 static void map_kind_focus(struct widget_instance *list, short first, short chosen)
 {
 	focus_row(list, (short)(1 + chosen - first));
 }
 
-/* the rows after the chooser: count entries from *first's, scrolled on at
-their ends; the entry focused, NONE when the chooser or the buttons have the
-focus */
+/* the rows after the chooser: count entries from *first's; the entry
+focused, NONE when the chooser or the buttons have the focus. The d-pad
+scrolls it (menu_window_set) */
+static void menu_window_set(struct widget_instance *list, short *first, short count, short rows,
+	short origin, boolean named_rows);
+
 static short map_kind_rows_update(struct widget_instance *list, short *first, short count,
 	void (*entry_text)(short entry, wchar_t *text))
 {
@@ -1713,16 +1714,7 @@ static short map_kind_rows_update(struct widget_instance *list, short *first, sh
 	short row = focused_row(list), index = 0;
 	struct widget_instance *child;
 
-	if (row != NONE && row >= 1 && row == shown && *first + shown < count && list_scrolls_at_end())
-	{
-		(*first)++;
-		focus_row(list, --row);
-	}
-	else if (row == 1 && *first > 0 && list_scrolls_at_end())
-	{
-		(*first)--;
-		focus_row(list, ++row);
-	}
+	menu_window_set(list, first, count, MAP_KIND_ROWS, 1, FALSE);
 	for (child = list->child; child; child = child->next, index++)
 	{
 		wchar_t text[ROW_TEXT_LENGTH];
@@ -2274,35 +2266,159 @@ static boolean color_list_initialize(struct widget_instance *list)
 	return TRUE;
 }
 
-/* (ui_widget.c) whether the pointer moved the menus' focus last */
-boolean ui_widget_port_pointer_focused(void);
+/* (ui_widget.c) whether the pointer passing over a widget moved the focus */
 boolean ui_widget_port_hover_focused(void);
 
-/* Whether a list whose focus is on its first or last row moves on: when the
-d-pad put it there. The pointer resting there would make it move every
-frame; the wheel scrolls it instead. */
-static boolean list_scrolls_at_end(void)
+/* the browser's rows are named, and are not its first children */
+static short browser_row_index(struct widget_instance *row);
+static void lobby_browser_focus_row(struct widget_instance *list, short row);
+
+/* the list on screen that shows part of a longer one. The d-pad, the stick
+and the triggers scroll it from here (ui_widget.c) */
+static struct
 {
-	return !ui_widget_port_pointer_focused();
+	struct widget_instance *list;
+	short *first;
+	short count;
+	short rows;
+	/* the child the first entry is, or the browser's named rows */
+	short origin;
+	boolean named_rows;
+} menu_window;
+
+static void menu_window_set(struct widget_instance *list, short *first, short count, short rows,
+	short origin, boolean named_rows)
+{
+	menu_window.list = list;
+	menu_window.first = first;
+	menu_window.count = count;
+	menu_window.rows = rows;
+	menu_window.origin = origin;
+	menu_window.named_rows = named_rows;
 }
 
-/* a list of more items than its rows: the row chosen kept off its ends
-while there are more past them, the list moving instead; the item chosen,
-or NONE (its buttons) */
+void menu_list_detach(struct widget_instance *widget)
+{
+	if (widget && widget == menu_window.list)
+	{
+		menu_window.list = NULL;
+		menu_window.first = NULL;
+	}
+}
+
+static short menu_window_shown(void)
+{
+	if (menu_window.count <= 0 || menu_window.rows <= 0)
+		return 0;
+	return (short)MIN(menu_window.count, menu_window.rows);
+}
+
+/* the entry the focus is on, within the rows on screen, else NONE */
+static short menu_window_index(struct widget_instance *list)
+{
+	struct widget_instance *child;
+	short index = 0;
+	short data;
+
+	if (list != menu_window.list)
+		return NONE;
+	if (menu_window.named_rows)
+	{
+		data = browser_row_index(list->focused_child);
+		if (data < 0 || data >= menu_window.rows)
+			return NONE;
+		return data;
+	}
+	for (child = list->child; child; child = child->next, index++)
+	{
+		if (child == list->focused_child)
+		{
+			data = (short)(index - menu_window.origin);
+			if (data < 0 || data >= menu_window.rows)
+				return NONE;
+			return data;
+		}
+	}
+	return NONE;
+}
+
+static void menu_window_focus(struct widget_instance *list, short index)
+{
+	if (menu_window.named_rows)
+		lobby_browser_focus_row(list, index);
+	else
+		focus_row(list, (short)(menu_window.origin + index));
+}
+
+boolean menu_list_is_window(struct widget_instance *list)
+{
+	return list && list == menu_window.list && menu_window.first != NULL;
+}
+
+boolean menu_list_nudge(struct widget_instance *list, boolean forward)
+{
+	short shown = menu_window_shown();
+	short index = menu_window_index(list);
+
+	if (!menu_list_is_window(list) || index == NONE || shown <= 0)
+		return FALSE;
+	if (forward)
+	{
+		if (index != shown - 1 || *menu_window.first + shown >= menu_window.count)
+			return FALSE;
+		(*menu_window.first)++;
+		return TRUE;
+	}
+	if (index != 0 || *menu_window.first <= 0)
+		return FALSE;
+	(*menu_window.first)--;
+	return TRUE;
+}
+
+short menu_list_past(struct widget_instance *list, boolean forward)
+{
+	short shown = menu_window_shown();
+	short index = menu_window_index(list);
+
+	if (!menu_list_is_window(list) || index == NONE || shown <= 0)
+		return 0;
+	if (forward)
+	{
+		if (index != shown - 1)
+			return 0;
+		return (short)MAX(0, menu_window.count - (*menu_window.first + shown));
+	}
+	if (index != 0)
+		return 0;
+	return *menu_window.first > 0 ? *menu_window.first : 0;
+}
+
+boolean menu_list_jump(struct widget_instance *list, boolean top)
+{
+	short shown;
+
+	if (!menu_list_is_window(list))
+		return FALSE;
+	if (top)
+	{
+		*menu_window.first = 0;
+		return FALSE;
+	}
+	shown = menu_window_shown();
+	if (shown <= 0)
+		return FALSE;
+	*menu_window.first = (short)MAX(0, menu_window.count - shown);
+	menu_window_focus(list, (short)(shown - 1));
+	return TRUE;
+}
+
+/* a list of more items than its rows: the item the focus is on, or NONE
+(its buttons). The d-pad scrolls it (menu_window_set) */
 static short list_scroll(struct widget_instance *list, short *first, short count, short rows)
 {
 	short row = focused_row(list);
 
-	if (row == rows - 1 && *first + rows < count && list_scrolls_at_end())
-	{
-		(*first)++;
-		focus_row(list, --row);
-	}
-	else if (row == 0 && *first > 0 && list_scrolls_at_end())
-	{
-		(*first)--;
-		focus_row(list, ++row);
-	}
+	menu_window_set(list, first, count, rows, 0, FALSE);
 	return row == NONE || row >= rows ? NONE : (short)(*first + row);
 }
 
@@ -3430,16 +3546,7 @@ static void mods_update(struct widget_instance *list)
 	short count = (short)port_mods_count();
 	short focused_index = focused ? (short)(atoi(focused->name + 7) - 1) : NONE;
 
-	if (focused_index == MOD_ROWS - 1 && mods_screen.first + MOD_ROWS < count && list_scrolls_at_end())
-	{
-		mods_screen.first++;
-		focus_row(list, --focused_index);
-	}
-	else if (focused_index == 0 && mods_screen.first > 0 && list_scrolls_at_end())
-	{
-		mods_screen.first--;
-		focus_row(list, ++focused_index);
-	}
+	menu_window_set(list, &mods_screen.first, count, MOD_ROWS, 0, FALSE);
 	if (mods_screen.first > 0 && mods_screen.first + MOD_ROWS > count)
 		mods_screen.first = (short)MAX(0, count - MOD_ROWS);
 	if (focused_index != NONE && mods_screen.first + focused_index < count)
@@ -4101,23 +4208,12 @@ static void gametype_list_update(struct widget_instance *list)
 	if (spinner && spinner->parameters.list.selected_index != multiplayer.bank_shown)
 		gametype_bank_read(spinner->parameters.list.selected_index);
 	count = (short)MIN(multiplayer.bank_count, GAMETYPE_ROWS);
-	/* (the rows after the spinner's: scrolled as list_scroll does) */
+	/* (the rows after the spinner's) */
+	menu_window_set(list, &multiplayer.gametype_first, multiplayer.bank_count, GAMETYPE_ROWS, 1, FALSE);
 	for (row = list->child; row; row = row->next, row_index++)
 	{
 		if (row == list->focused_child && row_index >= 1 && row_index <= GAMETYPE_ROWS)
 			focused = (short)(row_index - 1);
-	}
-	if (focused == count - 1 && multiplayer.gametype_first + count < multiplayer.bank_count && list_scrolls_at_end())
-	{
-		multiplayer.gametype_first++;
-		focus_row(list, (short)focused);
-		focused--;
-	}
-	else if (focused == 0 && multiplayer.gametype_first > 0 && list_scrolls_at_end())
-	{
-		multiplayer.gametype_first--;
-		focus_row(list, 2);
-		focused++;
 	}
 	if (focused != NONE)
 		multiplayer.gametype_chosen = (short)(multiplayer.gametype_first + focused);
@@ -4980,16 +5076,7 @@ static void lobby_browser_update(struct widget_instance *list)
 
 	lobby_browser.count = lobby_browser_valid_games(lobby_browser.games,
 		(short)p2p_lobby_games(lobby_browser.games, LOBBY_BROWSER_GAMES));
-	if (focused == BROWSER_ROWS - 1 && lobby_browser.first + BROWSER_ROWS < lobby_browser.count && list_scrolls_at_end())
-	{
-		lobby_browser.first++;
-		lobby_browser_focus_row(list, --focused);
-	}
-	else if (focused == 0 && lobby_browser.first > 0 && list_scrolls_at_end())
-	{
-		lobby_browser.first--;
-		lobby_browser_focus_row(list, ++focused);
-	}
+	menu_window_set(list, &lobby_browser.first, lobby_browser.count, BROWSER_ROWS, 0, TRUE);
 	lobby_browser.first = (short)PIN(lobby_browser.first, 0, MAX(0, lobby_browser.count - BROWSER_ROWS));
 	/* (the first game found takes the focus from the buttons, which had it
 	while there were none) */

@@ -1705,14 +1705,28 @@ boolean network_game_client_handle_game_update(
 	{
 		network_event("ignoring the host's game tick #%ld", message_packet->game_time);
 	}
+	/* The opening keeps this clock at 0 until the fade ends. The host's
+	time is taken on the update after that, not while the film is up. */
+	else if (hardcore_rules_opening_hold())
+	{
+		/* The pending catch-up stays armed for the update after the fade. */
+	}
 	else if (network_game_client_late_join_clock_pending)
 	{
-		network_game_client_late_join_clock_pending = FALSE;
+		/* Updates still in flight from the opening carry time 0. Taking
+		one of those as the catch-up would drop it, and a clock a few
+		ticks behind (the way to the host) would stay behind: the later
+		catch-up only moves a clock more than a second off. A time that
+		has started, and is ahead, is the one to take. One that has
+		started and is not ahead has nothing to catch. */
 		if (message_packet->game_time > game_time_get())
 		{
+			network_game_client_late_join_clock_pending = FALSE;
 			game_time_set_distributed(message_packet->game_time);
 			network_event("the game in progress is at game tick #%ld", message_packet->game_time);
 		}
+		else if (message_packet->game_time > 0)
+			network_game_client_late_join_clock_pending = FALSE;
 	}
 	/* port: and whenever the host's time is more than a second ahead: the
 	clock catches up no more than a second (game_time_update), so a stall

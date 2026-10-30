@@ -72,6 +72,26 @@ void hardcore_rules_hold_pregame(void);
 boolean hardcore_rules_opening_hold(void);
 /* The film is leaving. The match is drawn under it. */
 boolean hardcore_rules_opening_fading(void);
+/* This machine's world is finished: players armed, the opening items down,
+and on a client the host's objects and game type state. Reporting it does
+not start the match. */
+boolean hardcore_rules_opening_world_ready(void);
+/* The film is up and the start has not been given. */
+boolean hardcore_rules_opening_waiting(void);
+/* The film has reached the moment it fades, or nothing is presenting it.
+The host waits for this before it starts the match, so a fast game still
+plays the film. A machine that hears the start early plays what is left
+across the fade. */
+boolean hardcore_rules_opening_film_at_fade(void);
+/* The ready wait is over. A network host drops a machine that never
+reported, then starts the rest. A local game starts on this too, so a
+stuck weapon cannot hold the film forever. */
+boolean hardcore_rules_opening_expired(void);
+/* The host named the game update the fade starts on. host is this machine.
+A client that hears it late keeps the fade that update still has left. */
+void hardcore_rules_opening_go(long update_number, boolean host);
+/* A mode's start announcement. While the film is up it plays when the fade ends. */
+void hardcore_rules_opening_defer_sound(long sound_index);
 void hardcore_rules_opening_before_tick(void);
 void hardcore_rules_opening_frame(void);
 void hardcore_rules_opening_overlay(void);

@@ -118,6 +118,7 @@ symbols in this file:
 #include "text/text_group.h"
 #include "text/unicode.h"
 #include "units/units.h"
+#include "hardcore_rules.h"
 
 /* ---------- constants */
 
@@ -772,7 +773,9 @@ static void oddball_engine_player_update(
 		}
 	}
 
-	if (game_engine_can_score() && accumulate_score_by_time() && ball_count > 0)
+	/* Carrying the ball scores by the tick. The opening's ticks do not. */
+	if (game_engine_can_score() && !hardcore_rules_opening_hold() &&
+		accumulate_score_by_time() && ball_count > 0)
 	{
 		if (!network_game_distributed_client())
 		{
@@ -927,7 +930,9 @@ static void oddball_engine_update(
 	{
 		/* (a client of the distributed netcode has the host's balls, and
 		says "play ball" when the host's state has one spawned) */
+		/* The spawn delay is a tick counter. It waits with the match clock. */
 		if (!network_game_distributed_client() &&
+			!hardcore_rules_opening_hold() &&
 			oddball_globals.ball_spawn_timer[ball_index] > 0)
 		{
 			if (--oddball_globals.ball_spawn_timer[ball_index] == 0)

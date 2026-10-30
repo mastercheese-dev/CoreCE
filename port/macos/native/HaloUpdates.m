@@ -84,6 +84,13 @@ static NSRegularExpression *buildTagPattern(void) {
     return pattern;
 }
 
+static NSRegularExpression *testingTagPattern(void) {
+    static NSRegularExpression *pattern;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ pattern = patternWith(@"^testing-([0-9]+)$"); });
+    return pattern;
+}
+
 static NSRegularExpression *legacyTagPattern(void) {
     static NSRegularExpression *pattern;
     static dispatch_once_t once;
@@ -107,13 +114,21 @@ static NSString *tagGroup(NSString *tag, NSTextCheckingResult *match, NSUInteger
 long HaloForkUpdateBuildFromTag(NSString *tag) {
     NSTextCheckingResult *build = tagMatch(buildTagPattern(), tag);
     if (build) return tagGroup(tag, build, 1).integerValue;
+    NSTextCheckingResult *testing = tagMatch(testingTagPattern(), tag);
+    if (testing) return tagGroup(tag, testing, 1).integerValue;
     NSTextCheckingResult *legacy = tagMatch(legacyTagPattern(), tag);
     if (!legacy) return 0;
     return tagGroup(tag, legacy, 2).integerValue;
 }
 
+NSString *HaloForkUpdateChannelFromTag(NSString *tag) {
+    if (tagMatch(buildTagPattern(), tag) || tagMatch(legacyTagPattern(), tag)) return @"main";
+    if (tagMatch(testingTagPattern(), tag)) return @"testing";
+    return nil;
+}
+
 NSString *HaloForkUpdateAssetName(NSString *tag) {
-    if (tagMatch(buildTagPattern(), tag))
+    if (tagMatch(buildTagPattern(), tag) || tagMatch(testingTagPattern(), tag))
         return @"CoreCE-macos-arm64.dmg";
     NSTextCheckingResult *legacy = tagMatch(legacyTagPattern(), tag);
     if (!legacy) return nil;
@@ -201,6 +216,9 @@ long HaloForkNewestMacRelease(NSArray *releases, NSString **tagOut, NSString **u
         long build;
         NSString *download;
         if (!release || [release[@"draft"] boolValue] || [release[@"prerelease"] boolValue]) continue;
+        /* A testing tag is not a main release, even if it was published
+           without the prerelease flag. */
+        if (![HaloForkUpdateChannelFromTag(release[@"tag_name"]) isEqual:@"main"]) continue;
         build = HaloForkUpdateBuildFromTag(release[@"tag_name"]);
         download = macDownloadURL(release);
         if (build <= best || !download) continue;
@@ -211,6 +229,60 @@ long HaloForkNewestMacRelease(NSArray *releases, NSString **tagOut, NSString **u
     if (tagOut) *tagOut = tag;
     if (urlOut) *urlOut = url;
     return best;
+}
+
+/* testing-N is a prerelease so a build that is not looking for one skips it.
+   A normal release with that tag is not taken: publishing it that way would
+   also make GitHub call it the latest release. */
+static long newestTestingRelease(NSArray *releases, NSString **tagOut, NSString **urlOut) {
+    long best = 0;
+    NSString *tag = nil;
+    NSString *url = nil;
+    if (![releases isKindOfClass:NSArray.class]) return 0;
+    for (id item in releases) {
+        NSDictionary *release = [item isKindOfClass:NSDictionary.class] ? item : nil;
+        long build;
+        NSString *download;
+        if (!release || [release[@"draft"] boolValue] || ![release[@"prerelease"] boolValue]) continue;
+        if (!tagMatch(testingTagPattern(), release[@"tag_name"])) continue;
+        build = HaloForkUpdateBuildFromTag(release[@"tag_name"]);
+        download = macDownloadURL(release);
+        if (build <= best || !download) continue;
+        best = build;
+        tag = release[@"tag_name"];
+        url = download;
+    }
+    if (tagOut) *tagOut = tag;
+    if (urlOut) *urlOut = url;
+    return best;
+}
+
+long HaloForkUpdateChoice(NSArray *releases, BOOL testing, NSString *currentChannel, long currentBuild,
+    NSString **tagOut, NSString **urlOut) {
+    BOOL onTesting = [currentChannel isEqual:@"testing"];
+    NSString *tag = nil;
+    NSString *url = nil;
+    long latest;
+    if (testing)
+        latest = newestTestingRelease(releases, &tag, &url);
+    else
+        latest = HaloForkNewestMacRelease(releases, &tag, &url);
+    if (latest <= 0 || !url) {
+        if (tagOut) *tagOut = nil;
+        if (urlOut) *urlOut = nil;
+        return 0;
+    }
+    /* The same channel moves only to a higher number. Leaving testing for
+       main installs that main release even when its number is lower. */
+    if ((testing && onTesting && latest <= currentBuild) ||
+        (!testing && !onTesting && latest <= currentBuild)) {
+        if (tagOut) *tagOut = nil;
+        if (urlOut) *urlOut = nil;
+        return 0;
+    }
+    if (tagOut) *tagOut = tag;
+    if (urlOut) *urlOut = url;
+    return latest;
 }
 
 BOOL HaloConfigAutomaticUpdates(NSString *text) {
@@ -311,6 +383,17 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
     return [NSString stringWithContentsOfURL:_configURL encoding:NSUTF8StringEncoding error:nil] ?: @"";
 }
 - (BOOL)automatic { return HaloConfigAutomaticUpdates([self configText]); }
+- (BOOL)testingReleases {
+    char value[32];
+    /* Missing means off, so a config from before this setting stays on main. */
+    if (!configValue([self configText], "update", "testing", value, sizeof(value))) return NO;
+    return strcmp(value, "true") == 0;
+}
+- (NSString *)channel {
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfURL:
+        [_bundleURL URLByAppendingPathComponent:@"Contents/Info.plist"]];
+    return [info[@"CoreCEMacUpdateChannel"] isEqual:@"testing"] ? @"testing" : @"main";
+}
 - (BOOL)setAutomatic:(BOOL)automatic error:(NSError **)error {
     NSString *updated = HaloConfigSetAutomaticUpdates([self configText], automatic);
     NSData *data = [updated dataUsingEncoding:NSUTF8StringEncoding];
@@ -399,16 +482,26 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
         NSURL *download = nil;
         long latest = 0;
         /* The newest tag may be an iOS release. Look through the page for a
-           Mac disk image instead of treating that tag as this app's update. */
+           Mac disk image instead of treating that tag as this app's update.
+           The page is only the newest hundred tags. A run of testing
+           prereleases can push the main release off it, so the one GitHub
+           calls latest (never a prerelease) is added too. */
         NSURL *api = [NSURL URLWithString:@"https://api.github.com/repos/mastercheese-dev/CoreCE/releases?per_page=100"];
         NSData *body = [self fetch:api method:@"GET" error:&error];
         id json = body ? [NSJSONSerialization JSONObjectWithData:body options:0 error:&error] : nil;
         if (!error && ![json isKindOfClass:NSArray.class])
             error = updateFailure(@"GitHub returned a release list this build could not read.");
         if (!error) {
+            NSMutableArray *releases = [json mutableCopy];
+            NSError *latestError = nil;
+            NSURL *latestURL = [NSURL URLWithString:@"https://api.github.com/repos/mastercheese-dev/CoreCE/releases/latest"];
+            NSData *latestBody = [self fetch:latestURL method:@"GET" error:&latestError];
+            id latestJSON = latestBody ? [NSJSONSerialization JSONObjectWithData:latestBody options:0 error:&latestError] : nil;
             NSString *found = nil;
-            latest = HaloForkNewestMacRelease(json, &tag, &found);
-            if (latest > current && found)
+            if ([latestJSON isKindOfClass:NSDictionary.class])
+                [releases addObject:latestJSON];
+            latest = HaloForkUpdateChoice(releases, [self testingReleases], [self channel], current, &tag, &found);
+            if (latest > 0 && found)
                 download = [NSURL URLWithString:found];
             else
                 tag = nil;
@@ -457,11 +550,15 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
     /* path is /mastercheese-dev/CoreCE/releases/download/<tag>/<asset> */
     NSArray<NSString *> *parts = [download.path componentsSeparatedByString:@"/"];
     NSString *tag = parts.count >= 2 ? parts[parts.count - 2] : nil;
-    if (!HaloForkUpdateDownloadIsTrusted(tag, download.absoluteString)) {
+    NSString *incoming = HaloForkUpdateChannelFromTag(tag);
+    if (!HaloForkUpdateDownloadIsTrusted(tag, download.absoluteString) || !incoming) {
         if (error) *error = updateFailure(@"That download is not a release from this fork.");
         return NO;
     }
-    if (build <= self.build || ![_bundleURL.lastPathComponent isEqualToString:@"CoreCE.app"]) {
+    /* The same channel only moves forward. Switching channel installs the
+       release that was chosen, even when its number is lower. */
+    if (([incoming isEqual:[self channel]] && build <= self.build) ||
+        ![_bundleURL.lastPathComponent isEqualToString:@"CoreCE.app"]) {
         if (error) *error = updateFailure(@"This copy of CoreCE cannot replace itself.");
         return NO;
     }
@@ -528,8 +625,11 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
     }
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfURL:[app URLByAppendingPathComponent:@"Contents/Info.plist"]];
     NSNumber *marked = info[@"CoreCEMacUpdateBuild"];
+    NSString *markedChannel = [info[@"CoreCEMacUpdateChannel"] isKindOfClass:NSString.class] &&
+        [info[@"CoreCEMacUpdateChannel"] length] ? info[@"CoreCEMacUpdateChannel"] : @"main";
     if (![info[@"CFBundleIdentifier"] isEqual:@"local.halo.ce-universal"] ||
-        ![marked isKindOfClass:NSNumber.class] || marked.longValue != build) {
+        ![marked isKindOfClass:NSNumber.class] || marked.longValue != build ||
+        ![markedChannel isEqual:incoming]) {
         [NSFileManager.defaultManager removeItemAtURL:staged error:nil];
         if (error) *error = updateFailure(@"The downloaded app is not the Mac release that was announced.");
         return NO;

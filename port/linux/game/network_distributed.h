@@ -136,6 +136,14 @@ enum
 
 	/* The host's mouse aim-assist policy, reliably on ready and on change. */
 	_distributed_message_aim_assist_policy = 90,
+	/* a client has its players, the host's objects and the game type's
+	state. the host starts the match once every machine still in it has
+	said so (reliably, and only on that machine's stream) */
+	_distributed_message_match_ready = 91,
+	/* the host starts the fade. the update number is the host's next game
+	update when it said so, so a client that hears it late fades only for
+	what that update still has left (reliably) */
+	_distributed_message_match_go = 92,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };
@@ -379,6 +387,10 @@ again, having failed to make one of them */
 void network_objects_client_asked(long machine_index, boolean again);
 void network_objects_handle_changes(void const *entries, short count);
 void network_objects_handle_synchronized(void);
+/* a client has the host's objects from the last time it asked */
+boolean network_objects_client_synchronized(void);
+/* a client has taken the host's game type state at least once */
+boolean distributed_opening_state_seen(void);
 void network_objects_handle_states(void const *entries, short count);
 void network_objects_handle_inventories(void const *entries, short count);
 /* (a client) its own player picked up the weapon, to ready once its unit has it */

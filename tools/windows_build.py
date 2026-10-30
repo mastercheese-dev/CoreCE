@@ -68,13 +68,20 @@ ZLIB_DEFINES = ("-DZ_PREFIX", "-Dz_errmsg=z_port_errmsg")
 
 def updater_defines(release: bool) -> str:
     """the self-updater's build (port/linux/src/updater.c): its number, from
-    HALO_BUILD_NUMBER (tools/ci_build.py gives it for builds of main; none
-    elsewhere, which never look for updates), and its configuration"""
+    HALO_BUILD_NUMBER (none never looks), its channel (main or testing), the
+    GitHub repository it asks, and its configuration"""
     number = os.environ.get("HALO_BUILD_NUMBER", "0")
     if not number.isdigit():
         number = "0"
+    channel = os.environ.get("HALO_BUILD_CHANNEL", "main")
+    if channel not in ("main", "testing"):
+        raise RuntimeError("HALO_BUILD_CHANNEL must be main or testing")
+    repository = os.environ.get("HALO_UPDATE_REPOSITORY", "mastercheese-dev/CoreCE")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+        raise RuntimeError("HALO_UPDATE_REPOSITORY must be owner/name")
     flavor = "release" if release else "debug"
-    return f'-DHALO_BUILD_NUMBER={number} -DHALO_BUILD_FLAVOR=\\"{flavor}\\"'
+    return (f'-DHALO_BUILD_NUMBER={number} -DHALO_BUILD_FLAVOR=\\"{flavor}\\" '
+            f'-DHALO_BUILD_CHANNEL=\\"{channel}\\" -DHALO_UPDATE_REPOSITORY=\\"{repository}\\"')
 
 WINDOWS_ABI_FLAGS = [
     "--target=i686-pc-windows-msvc",

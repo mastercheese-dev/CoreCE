@@ -691,7 +691,11 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
 - (void)startForkUpdateCheckQuiet:(BOOL)quiet announce:(BOOL)announce {
     if (!self.forkUpdater || self.forkUpdateBusy || self.quitting) return;
     NSString *answer = quiet ? [self.forkUpdater updateAnswer] : nil;
-    if (quiet && !answer.length && (![self.forkUpdater automatic] || [self.forkUpdater suppressesPrompt])) return;
+    /* A testing app with the setting off still looks, so turning it off can
+       offer the main release even when ordinary update checks are disabled. */
+    BOOL leavingTesting = [[self.forkUpdater channel] isEqual:@"testing"] && ![self.forkUpdater testingReleases];
+    if (quiet && !answer.length && [self.forkUpdater suppressesPrompt]) return;
+    if (quiet && !answer.length && !leavingTesting && ![self.forkUpdater automatic]) return;
     if (quiet && answer.length && ![answer isEqualToString:@"yes"]) {
         if ([answer isEqualToString:@"never"]) {
             NSError *error = nil;
@@ -707,20 +711,40 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
         if (!strong) return;
         strong.forkUpdateBusy = NO;
         if (strong.quitting) return;
-        if (quiet && !answer.length && (![strong.forkUpdater automatic] || [strong.forkUpdater suppressesPrompt])) return;
+        BOOL leavingTesting = [[strong.forkUpdater channel] isEqual:@"testing"] && ![strong.forkUpdater testingReleases];
+        if (quiet && !answer.length && [strong.forkUpdater suppressesPrompt]) return;
+        if (quiet && !answer.length && !leavingTesting && ![strong.forkUpdater automatic]) return;
         if (error || !download) {
             if (!error) halo_fork_update_set_notice(NULL);
             if (!quiet) {
                 NSAlert *alert = [[NSAlert alloc] init];
+                BOOL onTesting = [[strong.forkUpdater channel] isEqual:@"testing"];
+                BOOL wantsTesting = [strong.forkUpdater testingReleases];
                 alert.messageText = error ? @"CoreCE could not check for an update" : @"CoreCE is up to date";
-                alert.informativeText = error.localizedDescription ?: @"This is the latest Mac release from this fork.";
+                if (error)
+                    alert.informativeText = error.localizedDescription;
+                else if (onTesting && !wantsTesting)
+                    alert.informativeText = @"The latest main release could not be found. This testing version stays in place.";
+                else if (wantsTesting && !onTesting)
+                    alert.informativeText = @"There is no testing release to install.";
+                else if (wantsTesting)
+                    alert.informativeText = @"This is the latest testing release.";
+                else
+                    alert.informativeText = @"This is the latest Mac release from this fork.";
                 [alert runModal];
             }
             return;
         }
-        snprintf(notice, sizeof(notice), "Mac %ld is available.", build);
+        if ([HaloForkUpdateChannelFromTag(tag) isEqual:@"testing"])
+            snprintf(notice, sizeof(notice), "Testing mac %ld is available.", build);
+        else if ([[strong.forkUpdater channel] isEqual:@"testing"])
+            snprintf(notice, sizeof(notice), "Main mac %ld is available.", build);
+        else
+            snprintf(notice, sizeof(notice), "Mac %ld is available.", build);
         halo_fork_update_set_notice(notice);
-        strong.availableVersion = [NSString stringWithFormat:@"mac %ld", build];
+        strong.availableVersion = [HaloForkUpdateChannelFromTag(tag) isEqual:@"testing"]
+            ? [NSString stringWithFormat:@"testing mac %ld", build]
+            : [NSString stringWithFormat:@"mac %ld", build];
         if (!announce) return;
         if (quiet && [answer isEqualToString:@"yes"])
             [strong installForkUpdate:download build:build];
@@ -729,21 +753,43 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     }];
 }
 - (void)offerForkUpdate:(NSString *)tag download:(NSURL *)download build:(long)build {
-    (void)tag;
     BOOL fullscreen = self.gameRunning && host_sdl_is_fullscreen();
+    BOOL toTesting = [HaloForkUpdateChannelFromTag(tag) isEqual:@"testing"];
+    BOOL fromTesting = [[self.forkUpdater channel] isEqual:@"testing"];
+    BOOL switching = toTesting != fromTesting;
     if (fullscreen) host_sdl_set_fullscreen(0);
     host_sdl_release_mouse();
     [NSApp activateIgnoringOtherApps:YES];
     NSAlert *question = [[NSAlert alloc] init];
-    question.messageText = @"A new version of CoreCE is available";
-    question.informativeText = [NSString stringWithFormat:
-        @"Mac %ld is available. This is mac %d.\n\nDo you want to update? The game will close and start the new version.",
-        build, HALO_MAC_UPDATE_BUILD];
+    if (switching && toTesting) {
+        question.messageText = @"A testing version of CoreCE is available";
+        question.informativeText = [NSString stringWithFormat:
+            @"Testing mac %ld is available. This is mac %d.\n\nDo you want to update? The game will close and start the testing version.",
+            build, HALO_MAC_UPDATE_BUILD];
+    } else if (switching) {
+        question.messageText = @"Return to the main CoreCE release?";
+        question.informativeText = [NSString stringWithFormat:
+            @"Mac %ld is the latest main release. This is testing mac %d.\n\nThe game will close and start that version.",
+            build, HALO_MAC_UPDATE_BUILD];
+    } else if (toTesting) {
+        question.messageText = @"A new testing version of CoreCE is available";
+        question.informativeText = [NSString stringWithFormat:
+            @"Testing mac %ld is available. This is testing mac %d.\n\nDo you want to update? The game will close and start the new version.",
+            build, HALO_MAC_UPDATE_BUILD];
+    } else {
+        question.messageText = @"A new version of CoreCE is available";
+        question.informativeText = [NSString stringWithFormat:
+            @"Mac %ld is available. This is mac %d.\n\nDo you want to update? The game will close and start the new version.",
+            build, HALO_MAC_UPDATE_BUILD];
+    }
     [question addButtonWithTitle:@"Yes"];
     [question addButtonWithTitle:@"No"];
-    [question addButtonWithTitle:@"Do not ask again"];
+    /* A channel change is the setting the player already chose. "Do not ask
+       again" would leave a testing app in place after they turned that off. */
+    if (!switching)
+        [question addButtonWithTitle:@"Do not ask again"];
     NSModalResponse answer = [question runModal];
-    if (answer == NSAlertThirdButtonReturn) {
+    if (!switching && answer == NSAlertThirdButtonReturn) {
         NSAlert *confirm = [[NSAlert alloc] init];
         confirm.messageText = @"Stop asking about new versions?";
         confirm.informativeText = @"To ask again, set auto = true in the [update] section of config.toml.";

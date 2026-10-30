@@ -9,6 +9,9 @@
 boolean opening_film_show(unsigned long shown_ms, real opacity);
 /* The film's length, or 0 when the file is not a film. */
 unsigned long opening_film_duration_ms(void);
+/* One frame of the film, in milliseconds. A presented frame advances the
+picture by at most this, so a hitch does not skip ahead. */
+unsigned long opening_film_step_ms(void);
 
 /* A campaign or co-op load. The next map copy plays the film instead of
    the stand-in ring, then fades it off the level. A multiplayer match

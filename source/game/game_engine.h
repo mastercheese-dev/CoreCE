@@ -469,6 +469,10 @@ void game_engine_nonplayer_post_rasterize(
 	void);
 void game_engine_update(
 	void);
+/* The map's weapons and powerups have been placed for this match.
+The opening holds the clock at 0, and that placement runs once there. */
+boolean game_engine_opening_items_placed(
+	void);
 
 void game_engine_update_non_deterministic(
 	real delta_seconds);

@@ -45,6 +45,7 @@ same datum index (identifier and all), so that any message can name one:
 */
 
 #include "cseries.h"
+#include "cseries/cseries_windows.h"
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/players.h"
@@ -67,6 +68,7 @@ same datum index (identifier and all), so that any message can name one:
 #include "cutscene/cinematics.h"
 #include "network_coop.h"
 #include "network_distributed.h"
+#include "hardcore_rules.h"
 #include "profile_sections.h"
 
 #include <math.h>
@@ -485,6 +487,7 @@ static boolean objects_client_ask_again;
 long until it asks again */
 static boolean objects_client_synchronized;
 static long objects_client_ready_time;
+static unsigned long objects_client_ready_ms;
 static long objects_client_ready_interval;
 /* ... when it last failed to make one (NONE: not since the host last told
 it all), and how long it waits after the next failure */
@@ -2473,6 +2476,12 @@ void network_objects_handle_changes(
 	}
 }
 
+boolean network_objects_client_synchronized(
+	void)
+{
+	return objects_client_synchronized;
+}
+
 void network_objects_handle_synchronized(
 	void)
 {
@@ -3350,8 +3359,15 @@ void network_objects_client_tick(
 {
 	/* (loaded: the host's objects, please; flagged when one of them failed
 	since it last asked) */
+	/* The opening holds the clock at 0, so a retry measured in game ticks
+	would never come. Wall time covers that wait. */
 	if (!objects_client_synchronized &&
-		(objects_client_ready_time == NONE || game_time_get() - objects_client_ready_time >= objects_client_ready_interval))
+		(hardcore_rules_opening_hold() ?
+			(objects_client_ready_ms == 0 ||
+				system_milliseconds() - objects_client_ready_ms >=
+					(unsigned long)objects_client_ready_interval * 1000UL / TICKS_PER_SECOND) :
+			(objects_client_ready_time == NONE ||
+				game_time_get() - objects_client_ready_time >= objects_client_ready_interval)))
 	{
 		struct distributed_message_header message;
 
@@ -3360,6 +3376,7 @@ void network_objects_client_tick(
 		if (objects_client_ready_time != NONE)
 			objects_client_ready_interval = MIN(2 * objects_client_ready_interval, CLIENT_READY_MAXIMUM_INTERVAL_TICKS);
 		objects_client_ready_time = game_time_get();
+		objects_client_ready_ms = system_milliseconds();
 		distributed_send(&message, _distributed_message_client_ready, objects_client_ask_again ? 1 : 0,
 			(word)sizeof(message), _distributed_to_host_reliably);
 		objects_client_ask_again = FALSE;
@@ -3419,6 +3436,7 @@ void network_objects_new_game(
 	}
 	objects_client_synchronized = FALSE;
 	objects_client_ready_time = NONE;
+	objects_client_ready_ms = 0;
 	objects_client_ready_interval = CLIENT_READY_INTERVAL_TICKS;
 	objects_client_failed_time = NONE;
 	objects_client_retry_ticks = CLIENT_RETRY_TICKS;

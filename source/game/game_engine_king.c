@@ -363,7 +363,8 @@ static void king_engine_player_added(
 static void king_engine_game_starting(
 	void)
 {
-	game_engine_play_multiplayer_sound(
+	/* The film is still up when this runs. The stinger plays as it fades. */
+	hardcore_rules_opening_defer_sound(
 		game_engine_has_teams() ?
 			_multiplayer_sound_team_king :
 			_multiplayer_sound_king);
@@ -466,7 +467,8 @@ static void king_engine_player_update(
 	{
 		struct unit_datum *unit = unit_get(player->unit_index);
 
-		if (game_engine_can_score() && player_inside_hill(player_index))
+		if (game_engine_can_score() && !hardcore_rules_opening_hold() &&
+			player_inside_hill(player_index))
 		{
 			king_globals.on_the_hill[DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index)] = TRUE;
 			/* (a client of the distributed netcode has the host's scores,
@@ -786,7 +788,10 @@ static void king_engine_update(
 	short hill_tries;
 
 	/* (a client of the distributed netcode has the host's hill) */
+	/* The hill's period is a tick counter. The opening runs ticks with the
+	clock held, and that period waits with the clock. */
 	if (!network_game_distributed_client() &&
+		!hardcore_rules_opening_hold() &&
 		game_engine_can_score() &&
 		game_engine_get_variant()->game_engine_variant.king.moving_hill &&
 		--king_globals.hill_timer == 0)

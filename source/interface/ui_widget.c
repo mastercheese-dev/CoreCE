@@ -2313,6 +2313,9 @@ static void dispose_widget_stack(
 	return;
 }
 
+/* the scrolling list forgets a widget as it is freed (menu_functions.c) */
+void menu_list_detach(struct widget_instance *widget);
+
 void ui_widget_delete(
 	struct widget_instance *widget)
 {
@@ -2435,6 +2438,10 @@ void ui_widget_delete(
 			ui_widget_delete(widget->parameters.list.extended_description);
 		break;
 	}
+	/* A later menu can be given this same block. The scroll record must not
+	still name it. A deleted handler that already opened the next list is
+	left alone: its widget is a different one. */
+	menu_list_detach(widget);
 	dispose_pointer(widget_memory_pool, widget);
 	for (widget_index = 0;
 		widget_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
@@ -2775,6 +2782,20 @@ static void widget_instance_give_focus_by_tag(
 	return;
 }
 
+/* port: a list that shows part of a longer one (menu_functions.c). Down or
+up at the last row on screen scrolls that list, so the d-pad and the stick
+reach its real first and last entries. TRUE when it scrolled and the focus
+stays. */
+boolean menu_list_nudge(struct widget_instance *list, boolean forward);
+/* the entries still past the rows on screen, in that direction; 0 when this
+is not such a list or the focus is not on its edge */
+short menu_list_past(struct widget_instance *list, boolean forward);
+/* TRUE when this list shows part of a longer one */
+boolean menu_list_is_window(struct widget_instance *list);
+/* the bottom of a longer list, focused. A request for its top resets the
+rows to the first entries and returns FALSE, so the first row is focused */
+boolean menu_list_jump(struct widget_instance *list, boolean top);
+
 boolean widget_event_function_list_widget_goto_next_item(
 	struct widget_instance *widget,
 	struct event_record *event,
@@ -2859,6 +2880,13 @@ boolean widget_event_function_list_widget_goto_next_item(
 		}
 		else
 		{
+			/* the last row on screen, with more entries past it: the list
+			moves and the focus stays, instead of leaving for the buttons */
+			if (widget->type == _ui_widget_type_column_list && menu_list_nudge(widget, TRUE))
+			{
+				widget->parameters.list.last_list_tab_direction = 15;
+				return TRUE;
+			}
 			child = NULL;
 			if (widget->focused_child)
 			{
@@ -3001,6 +3029,11 @@ boolean widget_event_function_list_widget_goto_previous_item(
 		}
 		else
 		{
+			if (widget->type == _ui_widget_type_column_list && menu_list_nudge(widget, FALSE))
+			{
+				widget->parameters.list.last_list_tab_direction = -15;
+				return TRUE;
+			}
 			child = NULL;
 			if (widget->focused_child)
 			{
@@ -7091,6 +7124,11 @@ static long ui_mouse_wheel_room(
 				_widget_dpad_updown_tabs_thru_children_bit) &&
 			widget->focused_child)
 		{
+			/* entries past the rows on screen, before the buttons after them */
+			short past = menu_list_past(widget, forward);
+
+			if (past > 0)
+				return past;
 			/* a child the tab functions would skip gives no press a place to
 			land, so only the ones that take events, pass them on, or sit in
 			a list count */
@@ -7118,6 +7156,12 @@ static long ui_mouse_wheel_room(
 			/* a setting is changed by clicks only */
 			if (widget->type == _ui_widget_type_spinner_list && !ui_mouse_list_shows_several(widget))
 				return 0;
+			{
+				short past = menu_list_past(widget, forward);
+
+				if (past > 0)
+					return past;
+			}
 			if (widget->parameters.list.list_items && widget->parameters.list.number_of_items > 0)
 			{
 				room = forward ?
@@ -8256,6 +8300,8 @@ static void widget_instance_tab_to_next_valid_widget(
 {
 	struct widget_instance *child;
 
+	if (menu_list_nudge(widget, TRUE))
+		return;
 	if (widget->focused_child && widget->focused_child->next)
 		child = widget->focused_child->next;
 	else
@@ -8290,6 +8336,8 @@ static void widget_instance_tab_to_previous_valid_widget(
 {
 	struct widget_instance *child;
 
+	if (menu_list_nudge(widget, FALSE))
+		return;
 	if (widget->focused_child)
 	{
 		if (widget->focused_child->previous)
@@ -8382,6 +8430,79 @@ static boolean widget_takes_events_of_controller(
 	return FALSE;
 }
 
+/* the first or last child the d-pad would land on */
+static void widget_instance_focus_end_child(
+	struct widget_instance *widget,
+	boolean top)
+{
+	struct widget_instance *child;
+	struct widget_instance *chosen = NULL;
+	boolean skip_labels = widget->type == _ui_widget_type_column_list &&
+		pc_menu_tag(widget->definition_tag_index);
+
+	for (child = widget->child; child; child = child->next)
+	{
+		if (skip_labels && widget_instance_port_is_label(child))
+			continue;
+		chosen = child;
+		if (top)
+			break;
+	}
+	if (chosen)
+		widget_instance_give_focus_directly(widget, chosen);
+
+	return;
+}
+
+/* how many children the d-pad can land on */
+static short widget_instance_focusable_child_count(
+	struct widget_instance *widget)
+{
+	struct widget_instance *child;
+	short count = 0;
+	boolean skip_labels = widget->type == _ui_widget_type_column_list &&
+		pc_menu_tag(widget->definition_tag_index);
+
+	for (child = widget->child; child; child = child->next)
+	{
+		if (skip_labels && widget_instance_port_is_label(child))
+			continue;
+		count++;
+	}
+
+	return count;
+}
+
+/* right trigger to the top of this menu, left trigger to the bottom. A
+list of two (a confirm) keeps the trigger that accepts it. TRUE when the
+trigger was taken */
+static boolean widget_instance_port_trigger_jump(
+	struct widget_instance *widget,
+	boolean top)
+{
+	struct ui_widget_definition *definition;
+
+	if (widget->type != _ui_widget_type_column_list ||
+		!pc_menu_tag(widget->definition_tag_index))
+	{
+		return FALSE;
+	}
+	definition = ui_widget_definition_get(widget->definition_tag_index);
+	if (!TEST_FLAG(definition->flags, _widget_dpad_updown_tabs_thru_children_bit) &&
+		!TEST_FLAG(definition->flags, _widget_dpad_updown_tabs_thru_list_items_bit))
+	{
+		return FALSE;
+	}
+	if (!menu_list_is_window(widget) && widget_instance_focusable_child_count(widget) <= 2)
+		return FALSE;
+	if (!menu_list_jump(widget, top))
+		widget_instance_focus_end_child(widget, top);
+	ui_mouse_focused_last = FALSE;
+	ui_mouse_hovered_last = FALSE;
+
+	return TRUE;
+}
+
 static void widget_instance_process_one_event_recursive(
 	struct widget_instance *widget,
 	struct ui_widget_definition *definition,
@@ -8397,9 +8518,11 @@ static void widget_instance_process_one_event_recursive(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
 		3067,
 		widget && definition && event && return_widget_deleted);
-	if (event->type == _event_type_button &&
+	if ((event->type == _event_type_button &&
 		event->data.button.index >= _widget_event_dpad_up &&
-		event->data.button.index <= _widget_event_dpad_right)
+		event->data.button.index <= _widget_event_dpad_right) ||
+		event->type == _event_type_left_stick ||
+		event->type == _event_type_right_stick)
 	{
 		ui_mouse_focused_last = FALSE;
 		ui_mouse_hovered_last = FALSE;
@@ -8742,6 +8865,20 @@ static void widget_instance_process_one_event_recursive(
 	{
 		long handler_index;
 
+		/* taken here, so a trigger bound to accept does not also confirm */
+		if (!widget_deleted &&
+			event->type == _event_type_button &&
+			event->data.button.value == 1 &&
+			(event->data.button.index == _gamepad_analog_button_left_trigger ||
+				event->data.button.index == _gamepad_analog_button_right_trigger) &&
+			widget_instance_port_trigger_jump(widget,
+				event->data.button.index == _gamepad_analog_button_right_trigger))
+		{
+			event_handled = TRUE;
+			event->data.button.value = 0;
+			if (audio_feedback == _ui_audio_feedback_none)
+				audio_feedback = _ui_audio_feedback_cursor;
+		}
 		for (handler_index = 0;
 			handler_index < definition->event_handlers.count;
 			handler_index++)

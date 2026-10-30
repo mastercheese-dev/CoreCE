@@ -53,6 +53,9 @@ void network_game_generate_join_game_token(
 void network_game_server_kick_machine(
 	long machine_index,
 	boolean kept_out);
+/* The next game update the host will send. The match fade is counted from it. */
+long network_game_server_get_next_update_number(
+	void);
 /* port: the rejection code of the last machine
 network_game_server_accept_client_machine_into_game refused */
 short network_game_server_last_refusal_code(

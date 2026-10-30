@@ -85,6 +85,7 @@ symbols in this file:
 #include "text/text_group.h"
 #include "text/unicode.h"
 #include "units/units.h"
+#include "hardcore_rules.h"
 
 /* ---------- constants */
 
@@ -246,7 +247,8 @@ static void slayer_engine_player_added(
 static void slayer_engine_game_starting(
 	void)
 {
-	game_engine_play_multiplayer_sound(
+	/* The film is still up when this runs. The stinger plays as it fades. */
+	hardcore_rules_opening_defer_sound(
 		game_engine_has_teams()
 			? _multiplayer_sound_team_slayer
 			: _multiplayer_sound_slayer);

@@ -132,6 +132,7 @@ symbols in this file:
 #include "text/text_group.h"
 #include "text/unicode.h"
 #include "units/units.h"
+#include "hardcore_rules.h"
 
 /* ---------- constants */
 
@@ -392,8 +393,8 @@ static void ctf_engine_player_added(
 static void ctf_engine_game_starting(
 	void)
 {
-	game_engine_play_multiplayer_sound(
-		_multiplayer_sound_capture_the_flag);
+	/* The film is still up when this runs. The stinger plays as it fades. */
+	hardcore_rules_opening_defer_sound(_multiplayer_sound_capture_the_flag);
 
 	return;
 }

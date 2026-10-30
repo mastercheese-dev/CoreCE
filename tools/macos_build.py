@@ -79,6 +79,16 @@ def resolve_update_build(explicit):
     return explicit
 
 
+def resolve_update_channel(explicit):
+    """main follows build-N. testing follows testing-N prereleases. The
+    installed app records this so turning testing off can return to main."""
+    if explicit is None:
+        explicit = os.environ.get("HALO_MAC_UPDATE_CHANNEL", "main")
+    if explicit not in ("main", "testing"):
+        raise RuntimeError("The Mac update channel must be main or testing")
+    return explicit
+
+
 def build_host(update_build):
     native_metal = RENDERER == "metal"
     sparkle = setup_sparkle()
@@ -191,7 +201,7 @@ def update_configuration(config):
 
 
 def package(data_root, *, sign_identity="-", release=False, version=APP_VERSION, build=APP_BUILD,
-            content_tools=None, update_build=0):
+            content_tools=None, update_build=0, update_channel="main"):
     configuration = json.loads((ROOT / "port/macos/release-config.json").read_text())
     if release:
         if not update_configuration(configuration):
@@ -202,7 +212,7 @@ def package(data_root, *, sign_identity="-", release=False, version=APP_VERSION,
     with tempfile.TemporaryDirectory(prefix=".halo-package-", dir=BUILD) as temporary:
         staged = Path(temporary) / destination.name
         package_into(staged, data_root, sign_identity=sign_identity, release=release, version=version, build=build,
-                     content_tools=content_tools, update_build=update_build)
+                     content_tools=content_tools, update_build=update_build, update_channel=update_channel)
         # A fresh bundle prevents old development resources entering a release.
         # Preserve the previous build, including a running executable's inode.
         backup = None
@@ -219,7 +229,8 @@ def package(data_root, *, sign_identity="-", release=False, version=APP_VERSION,
     print(f"Built {destination}")
 
 
-def package_into(app, data_root, *, sign_identity, release, version, build, content_tools=None, update_build=0):
+def package_into(app, data_root, *, sign_identity, release, version, build, content_tools=None, update_build=0,
+                 update_channel="main"):
     contents = app / "Contents"
     macos = contents / "MacOS"
     frameworks = contents / "Frameworks"
@@ -297,7 +308,10 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
         "NSHumanReadableCopyright": "Local experimental Apple Silicon port",
     }
     if update_build > 0:
+        if update_channel not in ("main", "testing"):
+            raise RuntimeError("The Mac update channel must be main or testing")
         info["CoreCEMacUpdateBuild"] = update_build
+        info["CoreCEMacUpdateChannel"] = update_channel
     configuration = json.loads((ROOT / "port/macos/release-config.json").read_text())
     if release:
         updates = update_configuration(configuration)
@@ -479,6 +493,8 @@ def main():
     parser.add_argument("--build-number", default=APP_BUILD)
     parser.add_argument("--update-build", type=int, default=None,
                         help="Offer a newer Mac release from mastercheese-dev/CoreCE. 0 does not look.")
+    parser.add_argument("--update-channel", choices=("main", "testing"), default=None,
+                        help="main follows build-N. testing follows testing-N prereleases.")
     parser.add_argument("--content-tools", type=Path, metavar="TOOLCHAIN_DIRECTORY",
                         help="Opt in to reviewed Invader helpers for local community package import")
     parser.add_argument("--install", nargs="?", const=Path("/Applications"), type=Path,
@@ -498,7 +514,8 @@ def main():
         build_plugin()
         return
     update_build = resolve_update_build(args.update_build)
-    print(f"Fork updates: {'mac ' + str(update_build) if update_build else 'off'}")
+    update_channel = resolve_update_channel(args.update_channel)
+    print(f"Fork updates: {update_channel + ' ' + str(update_build) if update_build else 'off'}")
     if not args.host_only:
         llvm_bin = ROOT / "build/macos/toolchain/bin"
         require(llvm_bin / "llvm-ar")
@@ -514,7 +531,7 @@ def main():
     build_host(update_build)
     package(None if args.no_data_path or args.release else args.data_root,
             sign_identity=args.sign_identity, release=args.release, version=args.version, build=args.build_number,
-            content_tools=args.content_tools, update_build=update_build)
+            content_tools=args.content_tools, update_build=update_build, update_channel=update_channel)
     if args.install:
         install_app(BUILD / (APP_NAME + ".app"), args.install)
 
