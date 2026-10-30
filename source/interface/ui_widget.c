@@ -8473,7 +8473,7 @@ static short widget_instance_focusable_child_count(
 	return count;
 }
 
-/* right trigger to the top of this menu, left trigger to the bottom. A
+/* left trigger to the top of this menu, right trigger to the bottom. A
 list of two (a confirm) keeps the trigger that accepts it. TRUE when the
 trigger was taken */
 static boolean widget_instance_port_trigger_jump(
@@ -8872,7 +8872,7 @@ static void widget_instance_process_one_event_recursive(
 			(event->data.button.index == _gamepad_analog_button_left_trigger ||
 				event->data.button.index == _gamepad_analog_button_right_trigger) &&
 			widget_instance_port_trigger_jump(widget,
-				event->data.button.index == _gamepad_analog_button_right_trigger))
+				event->data.button.index == _gamepad_analog_button_left_trigger))
 		{
 			event_handled = TRUE;
 			event->data.button.value = 0;

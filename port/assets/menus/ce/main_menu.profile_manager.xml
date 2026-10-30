@@ -15,6 +15,8 @@
 		<child widget="main_menu/player_profiles_select/player_profile_right_item" x="22" y="2"/>
 	</widget>
 	<widget name="main_menu/profile_manager/player_profile_manager" width="640" height="480" flags="pass_unhandled_to_focused_child">
+		<on event="b" run="port list copy back"/>
+		<on event="back" run="port list copy back"/>
 		<child widget="main_menu/profile_manager/player_profile_manager_screen"/>
 	</widget>
 	<widget name="main_menu/profile_manager/player_profile_manager_screen" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/gradient">
@@ -89,7 +91,9 @@
 		<data input="3wide player profile list update"/>
 		<on event="created" run="player profile list initialize"/>
 		<on event="deleted" run="player profile list dispose"/>
-		<on event="custom_activation" run="profile manager select" back="true" branch="true"/>
+		<on event="custom_activation" run="profile manager select" branch="true"/>
+		<on event="b" run="port list copy back"/>
+		<on event="back" run="port list copy back"/>
 		<conditional widget="main_menu/profile_manager/pm_empty_selected" if_failed="true"/>
 		<child widget="main_menu/new_select/list_item_0" x="20" y="73"/>
 		<child widget="main_menu/new_select/list_item_1" x="20" y="103"/>

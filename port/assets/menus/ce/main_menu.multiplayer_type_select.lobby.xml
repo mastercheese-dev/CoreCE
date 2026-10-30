@@ -134,6 +134,8 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/player_profile_screen" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/gradient">
 		<on event="created" run="net server defer start"/>
+		<on event="b" run="port list copy back"/>
+		<on event="back" run="port list copy back"/>
 		<child widget="main_menu/new_select/sel_list_desc_bkd"/>
 		<child widget="main_menu/multiplayer_type_select/lobby/player_profile_list"/>
 		<child widget="main_menu/multiplayer_type_select/lobby/header_add_player"/>
@@ -145,7 +147,9 @@
 		<data input="3wide player profile list update"/>
 		<on event="created" run="port lobby player list initialize"/>
 		<on event="deleted" run="player profile list dispose"/>
-		<on event="custom_activation" run="port lobby player choose" open="main_menu/multiplayer_type_select/lobby/player_assign_screen" branch="true"/>
+		<on event="custom_activation" run="port lobby player choose" branch="true"/>
+		<on event="b" run="port list copy back"/>
+		<on event="back" run="port list copy back"/>
 		<conditional widget="main_menu/multiplayer_type_select/lobby/bot_screen" if_failed="true"/>
 		<child widget="main_menu/multiplayer_type_select/coop/list_item_0" x="20" y="73"/>
 		<child widget="main_menu/multiplayer_type_select/coop/list_item_1" x="20" y="103"/>
@@ -164,8 +168,8 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/lan_add_player_screen" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/gradient">
 		<on event="created" run="net server defer start"/>
-		<on event="b" back="true"/>
-		<on event="back" back="true"/>
+		<on event="b" run="port list copy back"/>
+		<on event="back" run="port list copy back"/>
 		<child widget="main_menu/multiplayer_type_select/lobby/header_add_player"/>
 		<child widget="main_menu/multiplayer_type_select/lobby/lan_add/player_profile_list"/>
 		<child widget="main_menu/multiplayer_type_select/lobby/lan_add/player_profile_help" x="68" y="364"/>

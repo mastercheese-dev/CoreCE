@@ -5,6 +5,8 @@
 		<child widget="main_menu/gametype_select/gametype_right_item" x="22" y="2"/>
 	</widget>
 	<widget name="main_menu/settings_select/multiplayer_setup/playlist_select/gametype_select_screen" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/gradient">
+		<on event="b" run="port list copy back"/>
+		<on event="back" run="port list copy back"/>
 		<child widget="main_menu/new_select/sel_list_desc_bkd"/>
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_select/playlist_select_list"/>
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_select/header_select_gametype_to_edit"/>
@@ -38,7 +40,9 @@
 		<data input="gt edit list update"/>
 		<on event="created" run="mp profiles list initialize"/>
 		<on event="deleted" run="mp profiles list dispose"/>
-		<on event="custom_activation" run="mp profile begin editing" open="main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_edit_screen"/>
+		<on event="custom_activation" run="mp profile begin editing"/>
+		<on event="b" run="port list copy back"/>
+		<on event="back" run="port list copy back"/>
 		<on event="x" run="request del playlist profile" open="error/confirm_delete_gametype_modal_fullscreen"/>
 		<child widget="main_menu/new_select/list_item_0" x="20" y="73"/>
 		<child widget="main_menu/new_select/list_item_1" x="20" y="103"/>

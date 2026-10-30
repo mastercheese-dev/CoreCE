@@ -2493,11 +2493,15 @@ static struct
 {
 	long indices[MAXIMUM_PROFILES];
 	struct player_profile profiles[MAXIMUM_PROFILES];
-	/* the profiles; the row after them makes a new one */
+	/* the profiles; the row after them makes a new one, and the row after
+	that copies one */
 	short count;
 	short first;
 	short chosen;
 	long to_delete;
+	/* the list is asking which profile to copy */
+	boolean picking;
+	long copy_from;
 } profile_list;
 
 /* the lobby's add player list also offers a bot, between the profiles and
@@ -2505,11 +2509,24 @@ the row that makes a new one */
 static boolean profile_list_bot_row;
 /* the LAN list's last row is naming a profile on the keyboard */
 static boolean profile_list_making;
+/* a copy is waiting on the keyboard for the name it will be saved as */
+static boolean profile_list_copying;
 static wchar_t profile_list_new_name[MAX_GAMENAME];
 
 static short profile_list_slots(void)
 {
-	return (short)(profile_list.count + 1 + (profile_list_bot_row ? 1 : 0));
+	if (profile_list.picking)
+		return profile_list.count;
+	return (short)(profile_list.count + 2 + (profile_list_bot_row ? 1 : 0));
+}
+
+/* the keyboard owns the screen until it closes */
+static void profile_list_copy_reset(void)
+{
+	if (virtual_keyboard_active())
+		return;
+	profile_list.picking = FALSE;
+	profile_list_copying = FALSE;
 }
 
 /* the profiles, read again when they are not those read last */
@@ -2536,7 +2553,8 @@ static void profile_list_read(boolean always)
 		if (player_profile_get(indices[index], &profile_list.profiles[profile_list.count]))
 			profile_list.indices[profile_list.count++] = indices[index];
 	}
-	profile_list.chosen = (short)PIN(profile_list.chosen, 0, profile_list.count);
+	/* CREATE NEW and DUPLICATE sit past the profiles, so a reload keeps them */
+	profile_list.chosen = (short)PIN(profile_list.chosen, 0, MAX(0, profile_list_slots() - 1));
 }
 
 static short profile_list_rows(void)
@@ -2551,6 +2569,7 @@ static boolean profile_list_initialize(struct widget_instance *list)
 	short index;
 
 	profile_list_bot_row = FALSE;
+	profile_list_copy_reset();
 	profile_list_read(TRUE);
 	if (active == NONE)
 		active = player_ui_get_player1_last_used_profile_index();
@@ -2561,7 +2580,7 @@ static boolean profile_list_initialize(struct widget_instance *list)
 			profile_list.chosen = index;
 	}
 	profile_list.first = (short)PIN(profile_list.chosen - PROFILE_ROWS / 2, 0,
-		MAX(0, profile_list.count + 1 - PROFILE_ROWS));
+		MAX(0, profile_list_slots() - PROFILE_ROWS));
 	focus_row(list, (short)(profile_list.chosen - profile_list.first));
 	return TRUE;
 }
@@ -2580,6 +2599,11 @@ static void profile_row_text(short row, wchar_t *text)
 		ustrncpy(text, L"BOT (EXPERIMENTAL)", ROW_TEXT_LENGTH - 1);
 		text[ROW_TEXT_LENGTH - 1] = 0;
 	}
+	else if (item == (short)(profile_list.count + (profile_list_bot_row ? 1 : 0) + 1))
+	{
+		ustrncpy(text, L"DUPLICATE", ROW_TEXT_LENGTH - 1);
+		text[ROW_TEXT_LENGTH - 1] = 0;
+	}
 	else
 	{
 		string_get("pc\\main_menu\\player_profiles_select\\profile_description_labels", 4, text);
@@ -2595,7 +2619,64 @@ static void visible_set(struct widget_instance *widget, boolean visible)
 /* the row after the profiles, and after BOT on the LAN list */
 static boolean profile_list_is_new(short item)
 {
+	if (profile_list.picking)
+		return FALSE;
 	return item == (short)(profile_list.count + (profile_list_bot_row ? 1 : 0));
+}
+
+/* the row under CREATE NEW */
+static boolean profile_list_is_duplicate(short item)
+{
+	if (profile_list.picking)
+		return FALSE;
+	return item == (short)(profile_list.count + (profile_list_bot_row ? 1 : 0) + 1);
+}
+
+/* DUPLICATE shows the profiles on their own, then the keyboard names the copy */
+static boolean profile_list_begin_copy(void)
+{
+	if (profile_list.chosen < 0 || profile_list.chosen >= profile_list.count)
+		return TRUE;
+	if (virtual_keyboard_active())
+		return TRUE;
+	profile_list.copy_from = profile_list.indices[profile_list.chosen];
+	csmemset(profile_list_new_name, 0, sizeof(profile_list_new_name));
+	saved_game_file_get_useable_untitled_profile_name(profile_list_new_name);
+	if (!virtual_keyboard_launch(profile_list_new_name, sizeof(profile_list_new_name), 8))
+	{
+		display_error_text_deferred(L"The name could not be edited.", NONE);
+		return TRUE;
+	}
+	profile_list.picking = FALSE;
+	profile_list_copying = TRUE;
+	profile_list_making = FALSE;
+	return TRUE;
+}
+
+static boolean profile_list_begin_pick(void)
+{
+	if (profile_list.count <= 0)
+	{
+		display_error_text_deferred(L"There is no profile to copy.", NONE);
+		ui_play_audio_feedback_sound(SOUND_ERROR);
+		return TRUE;
+	}
+	profile_list.picking = TRUE;
+	profile_list.chosen = 0;
+	profile_list.first = 0;
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+	return TRUE;
+}
+
+/* TRUE when this press was the copy row or a profile chosen to copy, so the
+list stays where it is */
+static boolean profile_list_action(void)
+{
+	if (profile_list.picking)
+		return profile_list_begin_copy();
+	if (profile_list_is_duplicate(profile_list.chosen))
+		return profile_list_begin_pick();
+	return FALSE;
 }
 
 /* the highlighted row, as soon as the focus moves. The redraw is what usually
@@ -2625,6 +2706,7 @@ static boolean profile_list_begin_new(void)
 		return TRUE;
 	}
 	profile_list_making = TRUE;
+	profile_list_copying = FALSE;
 	return TRUE;
 }
 
@@ -2678,6 +2760,55 @@ static void profile_list_finish_new(struct widget_instance *list)
 	focus_row(list, (short)(profile_list.chosen - profile_list.first));
 }
 
+/* the keyboard has closed: the profile that was chosen is saved under the
+name that was kept. Cancelling leaves the list as it was */
+static void profile_list_finish_copy(struct widget_instance *list)
+{
+	struct player_profile profile;
+	long index;
+	short row;
+
+	if (!profile_list_copying || virtual_keyboard_active())
+		return;
+	profile_list_copying = FALSE;
+	profile_list.picking = FALSE;
+	if (!virtual_keyboard_last_exit_saved_text() || !profile_list_new_name[0])
+		return;
+	if (!player_profile_get(profile_list.copy_from, &profile))
+	{
+		display_error_text_deferred(L"That profile could not be copied.", NONE);
+		return;
+	}
+	index = player_profile_new(0, profile_list_new_name);
+	if (index == NONE)
+	{
+		display_error_text_deferred(L"That profile could not be made.", NONE);
+		return;
+	}
+	ustrncpy(profile.player_name, profile_list_new_name, MAXIMUM_PLAYER_PROFILE_NAME_LENGTH - 1);
+	profile.player_name[MAXIMUM_PLAYER_PROFILE_NAME_LENGTH - 1] = 0;
+	if (profile.primary_color_index < 0)
+		profile.primary_color_index = 0;
+	player_profile_save(index, &profile);
+	profile_list_read(TRUE);
+	profile_list.chosen = 0;
+	{
+		wchar_t stored[MAXIMUM_PLAYER_PROFILE_NAME_LENGTH];
+
+		ustrncpy(stored, profile_list_new_name, MAXIMUM_PLAYER_PROFILE_NAME_LENGTH - 1);
+		stored[MAXIMUM_PLAYER_PROFILE_NAME_LENGTH - 1] = 0;
+		for (row = 0; row < profile_list.count; row++)
+		{
+			if (profile_list.indices[row] == index ||
+				!ustrcmp(profile_list.profiles[row].player_name, stored))
+				profile_list.chosen = row;
+		}
+	}
+	profile_list.first = (short)PIN(profile_list.chosen - PROFILE_ROWS / 2, 0,
+		MAX(0, profile_list_slots() - PROFILE_ROWS));
+	focus_row(list, (short)(profile_list.chosen - profile_list.first));
+}
+
 /* "3wide player profile list update": the rows, and the profile chosen:
 its name, colour, current level, best difficulty and controls */
 static void profile_list_update(struct widget_instance *list)
@@ -2689,6 +2820,7 @@ static void profile_list_update(struct widget_instance *list)
 	boolean bot;
 
 	profile_list_finish_new(list);
+	profile_list_finish_copy(list);
 	profile_list_read(FALSE);
 	if (!(list->name && !strcmp(list->name, "player_profile_list")))
 		profile_list_bot_row = FALSE;
@@ -2699,7 +2831,8 @@ static void profile_list_update(struct widget_instance *list)
 	profile = profile_list.chosen < profile_list.count;
 	bot = profile_list_bot_row && profile_list.chosen == profile_list.count;
 	text_set(named(description, "player_profile_right_name", 0),
-		profile ? profile_list.profiles[profile_list.chosen].player_name : (bot ? L"BOT" : L""));
+		profile ? profile_list.profiles[profile_list.chosen].player_name :
+		(bot ? L"BOT" : (profile_list_is_duplicate(profile_list.chosen) ? L"DUPLICATE" : L"")));
 	visible_set(named(description, "empty_profile_slot_text", 0), !profile && !bot);
 	{
 		struct widget_instance *screen = screen_of(list);
@@ -2707,7 +2840,11 @@ static void profile_list_update(struct widget_instance *list)
 
 		/* the LAN add-player screen has no side card, so the line under the
 		list names who A will add, or that BOT opens its own screen */
-		if (screen->name && !strcmp(screen->name, "lan_add_player_screen"))
+		if (profile_list.picking)
+			label_set(help, L"Choose a profile to copy.");
+		else if (profile_list_is_duplicate(profile_list.chosen))
+			label_set(help, L"A copy of a profile, saved under a new name.");
+		else if (screen->name && !strcmp(screen->name, "lan_add_player_screen"))
 		{
 			/* label_set keeps this line. A plain text_set is replaced on the
 			next draw by the caption baked into the widget. */
@@ -2770,7 +2907,7 @@ static boolean profile_choose(short controller)
 {
 	struct player_profile profile;
 
-	if (profile_list.chosen >= profile_list.count ||
+	if (profile_list.picking || profile_list.chosen >= profile_list.count ||
 		!player_profile_get(profile_list.indices[profile_list.chosen], &profile))
 	{
 		return FALSE;
@@ -2781,10 +2918,24 @@ static boolean profile_choose(short controller)
 	return TRUE;
 }
 
+/* "profile manager select": a profile leaves this list as player 1's.
+CREATE NEW fails, so its dialog opens. DUPLICATE stays on the list. */
+static boolean profile_manager_select(struct widget_instance *widget, short controller, boolean *widget_deleted)
+{
+	if (profile_list_action())
+		return TRUE;
+	if (!profile_choose(controller))
+		return FALSE;
+	ui_widget_port_go_back(widget);
+	if (widget_deleted)
+		*widget_deleted = TRUE;
+	return TRUE;
+}
+
 /* "request del player profile" (before its question) */
 static boolean profile_delete_request(void)
 {
-	if (profile_list.chosen >= profile_list.count)
+	if (profile_list.picking || profile_list.chosen >= profile_list.count)
 		return campaign_fail();
 	profile_list.to_delete = profile_list.indices[profile_list.chosen];
 	return TRUE;
@@ -2852,6 +3003,7 @@ static boolean coop_player2_list_initialize(struct widget_instance *list)
 	long player2 = player_ui_get_active_player_profile_index(1);
 	short index;
 
+	profile_list_copy_reset();
 	profile_list_read(TRUE);
 	profile_list.chosen = 0;
 	for (index = profile_list.count - 1; index >= 0; index--)
@@ -2865,17 +3017,21 @@ static boolean coop_player2_list_initialize(struct widget_instance *list)
 			profile_list.chosen = index;
 	}
 	profile_list.first = (short)PIN(profile_list.chosen - PROFILE_ROWS / 2, 0,
-		MAX(0, profile_list.count + 1 - PROFILE_ROWS));
+		MAX(0, profile_list_slots() - PROFILE_ROWS));
 	focus_row(list, (short)(profile_list.chosen - profile_list.first));
 	return TRUE;
 }
 
 /* "port coop player 2": the profile chosen made player 2's, on the controller
 that chose it, which must not be player 1's */
-static boolean coop_player2_choose(short controller)
+static boolean menu_open_screen(struct widget_instance *widget, char const *name, boolean *widget_deleted);
+
+static boolean coop_player2_choose(struct widget_instance *widget, short controller, boolean *widget_deleted)
 {
 	struct player_profile profile;
 
+	if (profile_list_action())
+		return TRUE;
 	if (player_spawn_count < 2 || profile_list.chosen >= profile_list.count ||
 		!player_profile_get(profile_list.indices[profile_list.chosen], &profile))
 	{
@@ -2889,6 +3045,9 @@ static boolean coop_player2_choose(short controller)
 	}
 	player_ui_set_single_player_local_player_controller(1, controller);
 	player_ui_set_active_player_profile(1, profile_list.indices[profile_list.chosen], &profile);
+	if (!menu_open_screen(widget, "pc\\main_menu\\solo_level_select\\solo_level_select_screen", widget_deleted))
+		return campaign_fail();
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
 	return TRUE;
 }
 
@@ -3715,6 +3874,9 @@ boolean network_player_is_valid(struct network_player *player);
 boolean playlist_profile_get(long index, struct game_variant *variant);
 boolean playlist_profile_get_display_name(long index, wchar_t *name);
 boolean playlist_profile_get_options(long index, struct game_variant_options *options);
+long playlist_profile_new(short local_player_index, wchar_t *name);
+void playlist_profile_save_with_options(long playlist_profile_index, struct game_variant *variant,
+	struct game_variant_options const *options);
 void playlist_profiles_enumerate_available_to_local_player_index(short local_player_index,
 	word *number_of_profiles, long *playlist_profile_indices);
 boolean input_get_key(struct key_stroke *key);
@@ -5847,6 +6009,28 @@ static boolean lobby_open_named(struct widget_instance *widget, char const *name
 	return TRUE;
 }
 
+/* the next screen, the way a list's open attribute launches it: on the list's
+controller, from the screen that list is in */
+static boolean menu_open_screen(struct widget_instance *widget, char const *name, boolean *widget_deleted)
+{
+	struct widget_instance *root = widget ? widget_instance_get_topmost_parent(widget) : NULL;
+	long tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, name);
+	short player;
+
+	if (!root || tag == NONE)
+		return FALSE;
+	player = widget->local_player_index;
+	if (player != NONE && (player < 0 || player >= MAXIMUM_GAMEPADS))
+		player = 0;
+	if (!ui_widget_load_by_name_or_tag(NULL, tag, NULL, player, root->definition_tag_index,
+		widget->parent ? widget->parent->definition_tag_index : NONE,
+		(short)(widget->parent ? widget_instance_get_child_index_from_parent(widget) : 0)))
+		return FALSE;
+	if (widget_deleted)
+		*widget_deleted = TRUE;
+	return TRUE;
+}
+
 /* a controller already on this machine, not one the player still has to
 press START on. The press's own controller when it is free, else the next. */
 static short lobby_free_controller(short preferred)
@@ -5932,6 +6116,7 @@ static boolean lobby_player_list_initialize(struct widget_instance *list)
 	profile_list_bot_row = multiplayer.mode == _multiplayer_mode_host_lan;
 	if (!virtual_keyboard_active())
 		profile_list_making = FALSE;
+	profile_list_copy_reset();
 	profile_list_read(TRUE);
 	profile_list.chosen = 0;
 	for (index = profile_list.count - 1; index >= 0; index--)
@@ -6229,8 +6414,10 @@ static boolean lobby_bot_add(struct widget_instance *widget)
 /* "port lobby player choose": a profile opens the screen that asks for START
 or ENTER. BOT opens the bot screen instead, on a free seat, and does not take
 a controller */
-static boolean lobby_player_choose(void)
+static boolean lobby_player_choose(struct widget_instance *widget, boolean *widget_deleted)
 {
+	if (profile_list_action())
+		return TRUE;
 	if (profile_list_bot_row && profile_list.chosen == profile_list.count)
 	{
 		lobby_join_reset();
@@ -6239,6 +6426,10 @@ static boolean lobby_player_choose(void)
 	if (profile_list.chosen >= profile_list.count)
 		return campaign_fail();
 	lobby_join.profile = profile_list.indices[profile_list.chosen];
+	if (!menu_open_screen(widget,
+		"pc\\main_menu\\multiplayer_type_select\\lobby\\player_assign_screen", widget_deleted))
+		return campaign_fail();
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
 	return TRUE;
 }
 
@@ -6256,6 +6447,8 @@ static boolean lobby_player_confirm(struct widget_instance *widget, short contro
 		lobby_join_reset();
 		return FALSE;
 	}
+	if (profile_list_action())
+		return TRUE;
 	if (profile_list_is_new(profile_list.chosen))
 		return profile_list_begin_new();
 	if (profile_list.chosen < 0 || profile_list.chosen >= profile_list.count)
@@ -6708,6 +6901,11 @@ static struct
 	struct game_variant_options setup_options;
 	/* the vehicle screen's side shown */
 	short vehicle_side;
+	/* the list is asking which gametype to copy, then the keyboard names it */
+	boolean picking;
+	boolean copying;
+	long copy_from;
+	wchar_t copy_name[12];
 } gametype_edit = { { 0 }, 0, 0, 0, TRUE, NONE, FALSE };
 
 static struct game_variant *edit_variant(void)
@@ -7387,12 +7585,33 @@ static boolean gametype_setup_edit(void)
 
 /* ---- Edit Gametypes' list */
 
+/* the saved gametypes, then CREATE NEW and DUPLICATE, unless a copy is
+being chosen */
+static short gametype_edit_slots(void)
+{
+	if (gametype_edit.picking)
+		return gametype_edit.count;
+	return (short)(gametype_edit.count + 2);
+}
+
+static boolean gametype_edit_is_new(void)
+{
+	return !gametype_edit.picking && gametype_edit.chosen == gametype_edit.count;
+}
+
+static boolean gametype_edit_is_duplicate(void)
+{
+	return !gametype_edit.picking && gametype_edit.chosen == (short)(gametype_edit.count + 1);
+}
+
 static void gametype_edit_read(void)
 {
 	short last;
+	short slots;
 
 	gametype_edit.count = ui_widget_port_gametypes(gametype_edit.gametypes, MAXIMUM_GAMETYPES, &last);
-	gametype_edit.chosen = (short)MIN(gametype_edit.chosen, MAX(0, gametype_edit.count - 1));
+	slots = gametype_edit_slots();
+	gametype_edit.chosen = (short)MIN(gametype_edit.chosen, MAX(0, slots - 1));
 	gametype_edit.stale = FALSE;
 }
 
@@ -7405,9 +7624,14 @@ static boolean gametype_edit_list_initialize(struct widget_instance *list)
 	   its radar rows, and that flag does not belong here. */
 	multiplayer.hardcore = FALSE;
 	gametype_edit.setup = FALSE;
+	if (!virtual_keyboard_active())
+	{
+		gametype_edit.picking = FALSE;
+		gametype_edit.copying = FALSE;
+	}
 	gametype_edit.count = ui_widget_port_gametypes(gametype_edit.gametypes, MAXIMUM_GAMETYPES, &last);
 	gametype_edit.chosen = last;
-	gametype_edit.first = (short)MAX(0, MIN(last - GAMETYPE_EDIT_ROWS / 2, gametype_edit.count - GAMETYPE_EDIT_ROWS));
+	gametype_edit.first = (short)MAX(0, MIN(last - GAMETYPE_EDIT_ROWS / 2, gametype_edit_slots() - GAMETYPE_EDIT_ROWS));
 	gametype_edit.stale = FALSE;
 	focus_row(list, (short)(gametype_edit.chosen - gametype_edit.first));
 	return TRUE;
@@ -7415,7 +7639,71 @@ static boolean gametype_edit_list_initialize(struct widget_instance *list)
 
 static void gametype_edit_row_text(short row, wchar_t *text)
 {
-	gametype_display_name(gametype_edit.gametypes[gametype_edit.first + row], text);
+	short item = (short)(gametype_edit.first + row);
+
+	if (item >= 0 && item < gametype_edit.count)
+		gametype_display_name(gametype_edit.gametypes[item], text);
+	else if (item == gametype_edit.count)
+		string_get("pc\\main_menu\\player_profiles_select\\profile_description_labels", 4, text);
+	else
+	{
+		ustrncpy(text, L"DUPLICATE", ROW_TEXT_LENGTH - 1);
+		text[ROW_TEXT_LENGTH - 1] = 0;
+	}
+}
+
+/* the keyboard has closed: the gametype that was chosen is saved under the
+name that was kept. Cancelling leaves the list as it was */
+static void gametype_edit_finish_copy(struct widget_instance *list)
+{
+	struct game_variant variant;
+	struct game_variant_options options;
+	wchar_t name[12];
+	long index;
+	short row;
+
+	if (!gametype_edit.copying || virtual_keyboard_active())
+		return;
+	gametype_edit.copying = FALSE;
+	gametype_edit.picking = FALSE;
+	if (!virtual_keyboard_last_exit_saved_text() || !gametype_edit.copy_name[0])
+		return;
+	if (!playlist_profile_get(gametype_edit.copy_from, &variant))
+	{
+		display_error_text_deferred(L"That gametype could not be copied.", NONE);
+		return;
+	}
+	if (!playlist_profile_get_options(gametype_edit.copy_from, &options))
+		game_variant_options_default(&variant, &options);
+	ustrncpy(name, gametype_edit.copy_name, NUMBEROF(name) - 1);
+	name[NUMBEROF(name) - 1] = 0;
+	index = playlist_profile_new(0, name);
+	if (index == NONE)
+	{
+		display_error_text_deferred(L"That gametype could not be made.", NONE);
+		return;
+	}
+	ustrncpy(variant.human_readable_game_description, name, NUMBEROF(variant.human_readable_game_description) - 1);
+	variant.human_readable_game_description[NUMBEROF(variant.human_readable_game_description) - 1] = 0;
+	/* a built-in's copy is a saved gametype. bit 0 is the system default
+	(playlist_profile.c). the save writes the sheet loaded here, so the
+	copy keeps that gametype's match rules */
+	variant.flags = (word)(variant.flags & ~(word)1);
+	hardcore_rules_choose(gametype_edit.copy_from);
+	playlist_profile_save_with_options(index, &variant, &options);
+	gametype_edit_read();
+	gametype_edit.chosen = 0;
+	for (row = 0; row < gametype_edit.count; row++)
+	{
+		wchar_t shown[MAX_GAMENAME];
+
+		if (gametype_edit.gametypes[row] == index ||
+			(playlist_profile_get_display_name(gametype_edit.gametypes[row], shown) && !ustrcmp(shown, name)))
+			gametype_edit.chosen = row;
+	}
+	gametype_edit.first = (short)PIN(gametype_edit.chosen - GAMETYPE_EDIT_ROWS / 2, 0,
+		MAX(0, gametype_edit_slots() - GAMETYPE_EDIT_ROWS));
+	focus_row(list, (short)(gametype_edit.chosen - gametype_edit.first));
 }
 
 /* "gt edit list update": the rows (scrolled), the gametype chosen's
@@ -7425,14 +7713,17 @@ static void gametype_edit_list_update(struct widget_instance *list)
 	struct widget_instance *description = list->parameters.list.extended_description;
 	struct widget_instance *widget;
 	short focused;
+	short slots;
 
+	gametype_edit_finish_copy(list);
 	if (gametype_edit.stale)
 		gametype_edit_read();
-	focused = list_scroll(list, &gametype_edit.first, gametype_edit.count, GAMETYPE_EDIT_ROWS);
+	slots = gametype_edit_slots();
+	focused = list_scroll(list, &gametype_edit.first, slots, GAMETYPE_EDIT_ROWS);
 	if (focused != NONE)
-		gametype_edit.chosen = (short)MAX(0, MIN(focused, gametype_edit.count - 1));
-	rows_update(list, (short)MIN(gametype_edit.count, GAMETYPE_EDIT_ROWS), gametype_edit_row_text);
-	visible_set(named(description, "gametype_right_item", 0), gametype_edit.count > 0);
+		gametype_edit.chosen = (short)MAX(0, MIN(focused, MAX(0, slots - 1)));
+	rows_update(list, (short)MIN(slots, GAMETYPE_EDIT_ROWS), gametype_edit_row_text);
+	visible_set(named(description, "gametype_right_item", 0), slots > 0);
 	if (gametype_edit.chosen < gametype_edit.count)
 	{
 		long profile_index = gametype_edit.gametypes[gametype_edit.chosen];
@@ -7454,6 +7745,17 @@ static void gametype_edit_list_update(struct widget_instance *list)
 			text[NUMBEROF(text) - 1] = 0;
 			text_set(named(description, "gametype_right_data", 0), text);
 		}
+		if (gametype_edit.picking)
+			text_set(named(description, "gametype_right_data", 0), L"Choose a gametype to copy.");
+	}
+	else
+	{
+		visible_set(named(description, "locked_gametype_icon", 0), FALSE);
+		text_set(named(description, "gametype_right_name", 0),
+			gametype_edit_is_duplicate() ? L"DUPLICATE" : L"CREATE NEW");
+		text_set(named(description, "gametype_right_data", 0),
+			gametype_edit_is_duplicate() ? L"A copy of a gametype, saved under a new name." :
+			L"A new gametype.");
 	}
 	profile_name_show(description);
 }
@@ -7471,10 +7773,81 @@ static boolean gametype_edit_begin(void)
 	return TRUE;
 }
 
+/* DUPLICATE shows the gametypes on their own. The keyboard then names the copy */
+static boolean gametype_edit_begin_copy(void)
+{
+	wchar_t untitled[MAX_GAMENAME];
+
+	if (gametype_edit.chosen < 0 || gametype_edit.chosen >= gametype_edit.count)
+		return TRUE;
+	if (virtual_keyboard_active())
+		return TRUE;
+	gametype_edit.copy_from = gametype_edit.gametypes[gametype_edit.chosen];
+	csmemset(gametype_edit.copy_name, 0, sizeof(gametype_edit.copy_name));
+	saved_game_file_get_useable_untitled_profile_name(untitled);
+	ustrncpy(gametype_edit.copy_name, untitled, NUMBEROF(gametype_edit.copy_name) - 1);
+	if (!virtual_keyboard_launch(gametype_edit.copy_name, sizeof(gametype_edit.copy_name), 9))
+	{
+		display_error_text_deferred(L"The name could not be edited.", NONE);
+		return TRUE;
+	}
+	gametype_edit.picking = FALSE;
+	gametype_edit.copying = TRUE;
+	return TRUE;
+}
+
+static boolean gametype_edit_begin_pick(void)
+{
+	if (gametype_edit.count <= 0)
+	{
+		display_error_text_deferred(L"There is no gametype to copy.", NONE);
+		ui_play_audio_feedback_sound(SOUND_ERROR);
+		return TRUE;
+	}
+	gametype_edit.picking = TRUE;
+	gametype_edit.chosen = 0;
+	gametype_edit.first = 0;
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+	return TRUE;
+}
+
+/* "mp profile begin editing": a gametype opens its editor. CREATE NEW opens
+the new gametype screen. DUPLICATE stays here to pick one, then asks for a name */
+static boolean gametype_row(struct widget_instance *widget, struct event_record *event, boolean *widget_deleted)
+{
+	if (gametype_edit.picking)
+		return gametype_edit_begin_copy();
+	if (gametype_edit_is_duplicate())
+		return gametype_edit_begin_pick();
+	if (gametype_edit_is_new())
+	{
+		if (!game_function("create&edit playlist profile", widget, event, widget_deleted))
+			return FALSE;
+		if (!menu_open_screen(widget,
+			"pc\\main_menu\\settings_select\\multiplayer_setup\\create_and_edit_new_gametype_screen",
+			widget_deleted))
+			return campaign_fail();
+		ui_play_audio_feedback_sound(SOUND_FORWARD);
+		return TRUE;
+	}
+	if (!gametype_edit_begin())
+		return FALSE;
+	if (!menu_open_screen(widget,
+		"pc\\main_menu\\settings_select\\multiplayer_setup\\playlist_edit\\gametype_edit_screen",
+		widget_deleted))
+		return campaign_fail();
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+	return TRUE;
+}
+
 /* "request del playlist profile" (X, DELETE): not a built-in one */
 static boolean gametype_delete_request(void)
 {
-	long profile_index = gametype_edit.chosen < gametype_edit.count ? gametype_edit.gametypes[gametype_edit.chosen] :
+	long profile_index;
+
+	if (gametype_edit.picking)
+		return campaign_fail();
+	profile_index = gametype_edit.chosen < gametype_edit.count ? gametype_edit.gametypes[gametype_edit.chosen] :
 		NONE;
 
 	if (profile_index == NONE || ((unsigned long)profile_index & PLAYLIST_READ_ONLY_BIT))
@@ -8490,6 +8863,33 @@ static void hardcore_server_update(struct widget_instance *list)
 		help->parameters.text_box.string_list_index = 0;
 }
 
+/* B on a profile or gametype screen. The open screen gets it before the
+list does, so the screen's name is here too. A copy's picker goes back to
+that list. Anything else leaves the screen */
+static boolean list_copy_back(struct widget_instance *widget, boolean *widget_deleted)
+{
+	char const *name = widget && widget->name ? widget->name : "";
+	boolean gametype = !strcmp(name, "playlist_select_list") || !strcmp(name, "gametype_select_screen");
+
+	if (gametype && gametype_edit.picking)
+	{
+		gametype_edit.picking = FALSE;
+		ui_play_audio_feedback_sound(SOUND_BACK);
+		return TRUE;
+	}
+	if (!gametype && profile_list.picking)
+	{
+		profile_list.picking = FALSE;
+		ui_play_audio_feedback_sound(SOUND_BACK);
+		return TRUE;
+	}
+	ui_play_audio_feedback_sound(SOUND_BACK);
+	ui_widget_port_go_back(widget);
+	if (widget_deleted)
+		*widget_deleted = TRUE;
+	return TRUE;
+}
+
 /* ---------- public code */
 
 boolean pc_menu_event_function_invoke(
@@ -8605,7 +9005,7 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "mp profile begin editing"))
 		{
-			return gametype_edit_begin();
+			return gametype_row(widget, event, widget_deleted);
 		}
 		else if (!strcmp(name, "request del playlist profile"))
 		{
@@ -8800,7 +9200,11 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "profile manager select"))
 		{
-			return profile_choose(controller);
+			return profile_manager_select(widget, controller, widget_deleted);
+		}
+		else if (!strcmp(name, "port list copy back"))
+		{
+			return list_copy_back(widget, widget_deleted);
 		}
 		else if (!strcmp(name, "port lobby open"))
 		{
@@ -8828,7 +9232,7 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port lobby player choose"))
 		{
-			return lobby_player_choose();
+			return lobby_player_choose(widget, widget_deleted);
 		}
 		else if (!strcmp(name, "port lobby player confirm"))
 		{
@@ -8872,7 +9276,7 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port coop player 2"))
 		{
-			return coop_player2_choose(controller);
+			return coop_player2_choose(widget, controller, widget_deleted);
 		}
 		else if (!strcmp(name, "request del player profile"))
 		{
