@@ -132,6 +132,7 @@ symbols in this file:
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
 #include "game/bots.h"
+#include "game/bot_nav.h"
 #include "game/game_globals.h"
 #include "items/item_definitions.h"
 #include "items/equipment_definitions.h"
@@ -1165,6 +1166,8 @@ struct bot_state
 	real wander_yaw;
 	long look_ticks;
 	long stuck_ticks;
+	/* walking out of a spot the body cannot leave. The fight waits. */
+	long unstick_ticks;
 	long melee_ticks;
 	long reload_ticks;
 	long grenade_ticks;
@@ -1190,6 +1193,10 @@ struct bot_state
 	boolean last_seen_valid;
 	real_point3d roam_goal;
 	boolean roam_valid;
+	/* the circuit being walked. roam_goal is the stop they are on. */
+	real_point3d roam_list[3];
+	short roam_count;
+	short roam_at;
 	real_point3d hunt_goal;
 	boolean hunt_valid;
 	long hunt_ticks;
@@ -1295,6 +1302,16 @@ struct bot_state
 	/* a forced open step, so a zero-throttle tick does not put them back on the wall */
 	short escape_ticks;
 	real escape_yaw;
+	/* this tick's step came from the navmesh. The ray walker stays out of it. */
+	boolean nav_steer;
+	/* on a ladder link. yaw looks into the face. exit is the floor it comes out on. */
+	boolean climb;
+	boolean climb_up;
+	short climb_miss;
+	real climb_yaw;
+	real climb_top;
+	real_point3d climb_exit;
+	real_point3d climb_face;
 };
 
 enum
@@ -1782,6 +1799,12 @@ static real bot_first_block(real_point3d const *feet, real yaw, real height, rea
 		if (!bot_ray_clear_z(feet, yaw, marks[index], height, ignore_object_index))
 			return marks[index];
 	}
+	/* the reach itself. A wall between the last mark and the reach was open. */
+	if (index == 0 || marks[index - 1] + 0.05f < reach)
+	{
+		if (!bot_ray_clear_z(feet, yaw, reach, height, ignore_object_index))
+			return reach;
+	}
 	return -1.0f;
 }
 
@@ -2118,11 +2141,106 @@ static boolean bot_slide_around(real_point3d const *feet, real toward, real faci
 	return TRUE;
 }
 
+/* a post ahead of one shoulder. The wall beside a hallway is not one:
+that ray starts in the wall, and running along it stays the walk. */
+static boolean bot_shoulder_ahead(real_point3d const *feet, real yaw, real side, real reach,
+	long ignore_object_index)
+{
+	real_point3d shoulder;
+	real lateral;
+
+	lateral = side >= 0.0f ? _pi * 0.5f : -(_pi * 0.5f);
+	if (!bot_ray_clear(feet, yaw + lateral, 0.30f, ignore_object_index))
+		return FALSE;
+	shoulder = *feet;
+	shoulder.x += -sine(yaw) * 0.30f * (side >= 0.0f ? 1.0f : -1.0f);
+	shoulder.y += cosine(yaw) * 0.30f * (side >= 0.0f ? 1.0f : -1.0f);
+	return !bot_ray_clear(&shoulder, yaw, reach, ignore_object_index);
+}
+
+/* the chest ray, and both shoulders, for the whole reach. A clear chest
+ray through a doorway still fails when a shoulder meets the frame. */
+static boolean bot_body_clear(real_point3d const *feet, real yaw, real reach, long ignore_object_index)
+{
+	if (!bot_ray_clear(feet, yaw, reach, ignore_object_index))
+		return FALSE;
+	if (bot_shoulder_ahead(feet, yaw, 1.0f, reach, ignore_object_index))
+		return FALSE;
+	if (bot_shoulder_ahead(feet, yaw, -1.0f, reach, ignore_object_index))
+		return FALSE;
+	return TRUE;
+}
+
+static boolean bot_drop_ahead(real_point3d const *feet, real yaw);
+
+/* how far this heading stays open. The shared marks jump from 0.8 to 1.6,
+and a doorway often ends between them. */
+static real bot_gap_open(real_point3d const *feet, real yaw, long ignore_object_index)
+{
+	real open;
+
+	open = bot_open_distance(feet, yaw, ignore_object_index);
+	if (open >= 1.6f)
+		return open;
+	if (open >= 0.8f && bot_ray_clear(feet, yaw, 1.25f, ignore_object_index))
+		return 1.25f;
+	return open;
+}
+
+/* a hallway opening near this heading. The nose is on the frame and a
+small turn is the gap. A heading that is already through it is left
+alone, so the shoulder lineup can still slide off the post. The longest
+nearby hall is not the answer: that is how they walk past the doorway. */
+static boolean bot_passage(real_point3d const *feet, real yaw, long ignore_object_index,
+	real *lined)
+{
+	static real const offsets[] = { 0.20f, -0.20f, 0.40f, -0.40f, 0.65f, -0.65f };
+	real best_turn;
+	real best_yaw;
+	boolean found;
+	long index;
+
+	if (bot_gap_open(feet, yaw, ignore_object_index) >= 1.25f)
+		return FALSE;
+	best_turn = 1.0e9f;
+	best_yaw = yaw;
+	found = FALSE;
+	for (index = 0; index < (long)NUMBEROF(offsets); index++)
+	{
+		real turn = offsets[index] < 0.0f ? -offsets[index] : offsets[index];
+		real try_yaw = yaw + offsets[index];
+		real open;
+
+		if (try_yaw > _pi)
+			try_yaw -= _pi * 2.0f;
+		else if (try_yaw < -_pi)
+			try_yaw += _pi * 2.0f;
+		if (bot_drop_ahead(feet, try_yaw))
+			continue;
+		open = bot_gap_open(feet, try_yaw, ignore_object_index);
+		if (open < 1.25f)
+			continue;
+		if (turn < best_turn)
+		{
+			best_turn = turn;
+			best_yaw = try_yaw;
+			found = TRUE;
+		}
+	}
+	if (!found)
+		return FALSE;
+	if (lined)
+		*lined = best_yaw;
+	return TRUE;
+}
+
 /* ahead closes up and both shoulders are already in a wall: a corner.
 A corridor has those same walls and still has room to walk, so a step
-of clearance is not a corner. */
+of clearance is not a corner. A doorway beside the nose is not one either. */
 static boolean bot_heading_is_corner(real_point3d const *feet, real yaw, long ignore_object_index)
 {
+	if (bot_passage(feet, yaw, ignore_object_index, NULL))
+		return FALSE;
 	if (bot_open_distance(feet, yaw, ignore_object_index) >= 1.15f)
 		return FALSE;
 	if (bot_ray_clear(feet, yaw + _pi * 0.5f, 0.4f, ignore_object_index))
@@ -2130,6 +2248,60 @@ static boolean bot_heading_is_corner(real_point3d const *feet, real yaw, long ig
 	if (bot_ray_clear(feet, yaw - _pi * 0.5f, 0.4f, ignore_object_index))
 		return FALSE;
 	return TRUE;
+}
+
+/* a wall within arm's length and both shoulders already in walls.
+One shoulder is a door frame, and that is a sidestep, not a pocket.
+A hall that is still open ahead is not one. */
+static boolean bot_corner_trap(real_point3d const *feet, real yaw, long ignore_object_index)
+{
+	real ahead;
+	boolean left;
+	boolean right;
+
+	/* the frame is in front of them and the hall is beside it.
+	that is the opening, not a place to back out of. */
+	if (bot_passage(feet, yaw, ignore_object_index, NULL))
+		return FALSE;
+	if (bot_open_distance(feet, yaw, ignore_object_index) >= 1.6f)
+		return FALSE;
+	ahead = bot_first_block(feet, yaw, 0.45f, 0.90f, ignore_object_index);
+	if (ahead < 0.0f)
+		return FALSE;
+	left = !bot_ray_clear(feet, yaw + _pi * 0.5f, 0.50f, ignore_object_index);
+	right = !bot_ray_clear(feet, yaw - _pi * 0.5f, 0.50f, ignore_object_index);
+	/* one wall is the frame of an opening. Both walls are the pocket. */
+	return left && right;
+}
+
+/* back out, biased toward the shoulder that still has room. */
+static boolean bot_drop_ahead(real_point3d const *feet, real yaw);
+
+static boolean bot_corner_exit(real_point3d const *feet, real yaw, long unit_index, real *exit)
+{
+	real left;
+	real right;
+	real side;
+	real options[3];
+	long index;
+
+	left = bot_open_distance(feet, yaw + _pi * 0.5f, unit_index);
+	right = bot_open_distance(feet, yaw - _pi * 0.5f, unit_index);
+	side = left >= right ? _pi * 0.5f : -(_pi * 0.5f);
+	options[0] = yaw + _pi - side * 0.40f;
+	options[1] = yaw + _pi;
+	options[2] = yaw + side;
+	for (index = 0; index < 3; index++)
+	{
+		if (bot_drop_ahead(feet, options[index]))
+			continue;
+		if (bot_open_distance(feet, options[index], unit_index) < 0.8f &&
+			bot_first_block(feet, options[index], 0.45f, 0.55f, unit_index) >= 0.0f)
+			continue;
+		*exit = options[index];
+		return TRUE;
+	}
+	return FALSE;
 }
 
 /* 1 is a sniper, 2 is a rocket. The tag is often just "sniper" or
@@ -2163,6 +2335,16 @@ static boolean bot_side_path(real_point3d const *feet, real forward, long unit_i
 		real candidate = forward + offsets[index];
 		real clear = bot_open_distance(feet, candidate, unit_index);
 
+		{
+			real lined;
+
+			if (bot_passage(feet, candidate, unit_index, &lined))
+			{
+				candidate = lined;
+				if (clear < 2.0f)
+					clear = 2.0f;
+			}
+		}
 		if (clear < 1.5f)
 			continue;
 		if (bot_heading_is_corner(feet, candidate, unit_index))
@@ -2240,6 +2422,22 @@ static boolean bot_hall_heading(real_point3d const *feet, real facing, real pref
 		dirs[count] = facing - _pi * 0.5f;
 		open[count++] = right;
 	}
+	/* the goal is through a doorway the cardinal rays clip. The lined
+	heading is that opening, and it has to be a choice. */
+	if (count < 6)
+	{
+		real lined;
+
+		if (bot_passage(feet, prefer, unit_index, &lined))
+		{
+			real through = bot_gap_open(feet, lined, unit_index);
+
+			/* the goal is this gap. A longer hall beside it must not win. */
+			through += 6.0f;
+			dirs[count] = lined;
+			open[count++] = through;
+		}
+	}
 	prefer_clear = 0.0f;
 	for (index = 0; index < count; index++)
 	{
@@ -2276,9 +2474,10 @@ static boolean bot_hall_heading(real_point3d const *feet, real facing, real pref
 		/* straight back down the corridor is the bounce */
 		if (reverse < 0.7f)
 			score -= 12.0f;
-		/* the hall ahead is already short, and a doorway is open.
-		take it before another lap of the corridor. */
-		if (prefer_clear < 3.0f && side < 0.45f && open[index] >= 1.5f)
+		/* the hall ahead is already at its end, and a doorway is open.
+		take it before another lap of the corridor. A hall that still
+		has room keeps its direction. */
+		if (prefer_clear < 1.6f && side < 0.45f && open[index] >= 1.5f)
 			score += 14.0f;
 		if (score > best_score)
 		{
@@ -2309,6 +2508,12 @@ static real bot_route_heading(real_point3d const *feet, real desired, real prefe
 	real turn_b;
 	real tangent;
 
+	{
+		real lined;
+
+		if (bot_passage(feet, desired, unit_index, &lined))
+			return lined;
+	}
 	best_hit = 1.05f;
 	into = desired;
 	for (index = 0; index < (long)NUMBEROF(offsets); index++)
@@ -2392,9 +2597,28 @@ static real bot_door_yaw(real_point3d const *feet, real yaw, long unit_index)
 	real left_clear;
 	real right_clear;
 
+	{
+		real lined;
+
+		if (bot_passage(feet, yaw, unit_index, &lined))
+			return lined;
+	}
 	center = bot_first_block(feet, yaw, 0.45f, 2.40f, unit_index);
 	if (center < 0.0f)
+	{
+		boolean left_post;
+		boolean right_post;
+
+		/* the chest ray is through the opening and a shoulder is on
+		the frame. A small lineup now is the miss. */
+		left_post = bot_shoulder_ahead(feet, yaw, 1.0f, 1.35f, unit_index);
+		right_post = bot_shoulder_ahead(feet, yaw, -1.0f, 1.35f, unit_index);
+		if (left_post && !right_post)
+			return yaw - 0.30f;
+		if (right_post && !left_post)
+			return yaw + 0.30f;
 		return yaw;
+	}
 	left = bot_first_block(feet, yaw + 0.40f, 0.45f, 2.40f, unit_index);
 	right = bot_first_block(feet, yaw - 0.40f, 0.45f, 2.40f, unit_index);
 	left_clear = left < 0.0f ? 2.40f : left;
@@ -2415,6 +2639,15 @@ static boolean bot_clear_yaw(real_point3d const *feet, real desired, long ignore
 	};
 	long index;
 
+	{
+		real lined;
+
+		if (bot_passage(feet, desired, ignore_object_index, &lined))
+		{
+			*yaw = lined;
+			return TRUE;
+		}
+	}
 	for (index = 0; index < (long)NUMBEROF(offsets); index++)
 	{
 		real candidate = desired + offsets[index];
@@ -2430,53 +2663,64 @@ static boolean bot_clear_yaw(real_point3d const *feet, real desired, long ignore
 }
 
 static boolean bot_drop_ahead(real_point3d const *feet, real yaw);
+static boolean bot_climbing_ramp(real_point3d const *feet, real yaw);
+static boolean bot_ramp_ledge(real_point3d const *feet, real yaw, real side);
 
 /* the way they are moving meets a wall at about an arm's length. A small
-turn toward the side that is open, not a spin and not a stop. */
+turn toward the side the body fits through. A hallway that is still open
+only lines up on a frame. The wide turn is the corner, where the small
+one aims down the gap. */
 static real bot_ease_wall(real_point3d const *feet, real yaw, long unit_index)
 {
-	static real const offsets[] = { 0.30f, -0.30f, 0.55f, -0.55f, 0.80f, -0.80f };
-	real hit;
-	real best;
-	real best_clear;
+	static real const offsets[] = {
+		0.22f, -0.22f, 0.40f, -0.40f, 0.55f, -0.55f, 0.80f, -0.80f, 1.15f, -1.15f, 1.50f, -1.50f
+	};
+	real center;
+	boolean post;
+	boolean hall;
 	long index;
-	boolean found;
 
-	hit = bot_first_block(feet, yaw, 0.45f, 0.80f, unit_index);
-	if (hit < 0.0f)
+	{
+		real lined;
+
+		/* the opening is the step. A wide turn here is how they miss it. */
+		if (bot_passage(feet, yaw, unit_index, &lined))
+			return lined;
+	}
+	center = bot_first_block(feet, yaw, 0.45f, 1.15f, unit_index);
+	post = bot_shoulder_ahead(feet, yaw, 1.0f, 1.20f, unit_index) ||
+		bot_shoulder_ahead(feet, yaw, -1.0f, 1.20f, unit_index);
+	if (center < 0.0f && !post)
 		return yaw;
-	best = yaw;
-	best_clear = hit;
-	found = FALSE;
+	/* the corridor is still ahead. Leave it. A frame gets a short lineup. */
+	hall = center < 0.0f && bot_open_distance(feet, yaw, unit_index) >= 1.6f;
 	for (index = 0; index < (long)NUMBEROF(offsets); index++)
 	{
 		real try_yaw;
-		real open;
-		real clear;
+		real turn;
 
-		try_yaw = yaw + offsets[index];
+		turn = offsets[index];
+		if (hall && (turn > 0.45f || turn < -0.45f))
+			continue;
+		try_yaw = yaw + turn;
 		if (try_yaw > _pi)
 			try_yaw -= _pi * 2.0f;
 		else if (try_yaw < -_pi)
 			try_yaw += _pi * 2.0f;
 		if (bot_drop_ahead(feet, try_yaw))
 			continue;
-		open = bot_first_block(feet, try_yaw, 0.45f, 1.40f, unit_index);
-		clear = open < 0.0f ? 1.40f : open;
-		if (clear <= hit + 0.15f)
+		/* already on the way up a ramp. A turn toward the open side
+		is the walk off that edge. */
+		if (bot_climbing_ramp(feet, yaw) &&
+			((turn > 0.0f && bot_ramp_ledge(feet, yaw, 1.0f)) ||
+			(turn < 0.0f && bot_ramp_ledge(feet, yaw, -1.0f))))
 			continue;
-		/* the smaller turns are first. The first one that is actually
-		open is the correction. */
-		if (clear >= 1.05f)
+		if (bot_heading_is_corner(feet, try_yaw, unit_index))
+			continue;
+		if (bot_body_clear(feet, try_yaw, 1.05f, unit_index))
 			return try_yaw;
-		if (!found || clear > best_clear)
-		{
-			best = try_yaw;
-			best_clear = clear;
-			found = TRUE;
-		}
 	}
-	return best;
+	return yaw;
 }
 
 /* an open step that is still on this floor. The first heading out of a
@@ -2656,6 +2900,8 @@ static void bot_refresh_route(struct bot_state *state, long unit_index, real_poi
 clear chest ray is not a path. */
 static boolean bot_drop_ahead(real_point3d const *feet, real yaw);
 static boolean bot_ramp_ahead(real_point3d const *feet, real yaw);
+static boolean bot_climbing_ramp(real_point3d const *feet, real yaw);
+static boolean bot_ramp_ledge(real_point3d const *feet, real yaw, real side);
 
 /* a gap with a platform on the far side, inside a running jump. */
 static boolean bot_jump_across(real_point3d const *feet, real yaw, long unit_index,
@@ -2706,7 +2952,8 @@ static real bot_step_heading(struct bot_state *state, real_point3d const *feet,
 				aim -= _pi * 2.0f;
 			else if (aim < -_pi)
 				aim += _pi * 2.0f;
-			if (bot_first_block(feet, aim, 0.45f, 0.90f, unit_index) < 0.0f &&
+			if (bot_body_clear(feet, aim, 1.05f, unit_index) &&
+				!bot_heading_is_corner(feet, aim, unit_index) &&
 				!bot_drop_ahead(feet, aim))
 			{
 				desired = aim;
@@ -2935,33 +3182,40 @@ static boolean bot_apply_heading(struct bot_state *state, long unit_index, real_
 		real nose = bot_first_block(feet, state->facing_yaw, 0.45f, 0.80f, unit_index);
 
 		walk_hit = bot_first_block(feet, walk, 0.45f, 1.50f, unit_index);
-		/* the wall is still in front of the step. An arm's length away,
-		the turn is already chosen and the walk continues. Farther out,
-		creep until the heading clears. */
+		/* the wall is still in front of the step. Inside an arm's length
+		the stick only turns. Farther out, creep while the body still fits. */
 		if (walk_hit >= 0.0f && walk_hit < 1.25f)
 		{
 			action->throttle.j = 0.0f;
 			if (rel > 0.20f || rel < -0.20f)
 				action->throttle.j = -sine(rel);
-			if (action->throttle.j > 0.45f)
-				action->throttle.j = 1.0f;
-			else if (action->throttle.j < -0.45f)
-				action->throttle.j = -1.0f;
 			if (walk_hit <= 0.80f && (rel > 0.18f || rel < -0.18f))
-				action->throttle.i = 0.70f;
+				action->throttle.i = 0.0f;
 			else
 			{
 				action->throttle.i = 0.0f;
-				if (walk_hit > 0.80f && cosine(rel) > 0.5f)
+				if (walk_hit > 0.80f && cosine(rel) > 0.5f &&
+					bot_body_clear(feet, walk, 0.90f, unit_index))
 					action->throttle.i = 0.35f;
+			}
+			/* still aimed into the wall. Slide toward the open side and
+			keep the step. Dropping it here is the turnaround. */
+			if (action->throttle.i == 0.0f && action->throttle.j == 0.0f)
+			{
+				real left = bot_open_distance(feet, walk + _pi * 0.5f, unit_index);
+				real right = bot_open_distance(feet, walk - _pi * 0.5f, unit_index);
+
+				if (left < 1.6f && right < 1.6f)
+					return FALSE;
+				action->throttle.j = left >= right ? -0.45f : 0.45f;
 			}
 			return TRUE;
 		}
 		if (nose >= 0.0f && (rel > 0.18f || rel < -0.18f))
 		{
 			/* facing the wall, with an open heading off to the side.
-			slide that way while the turn happens. */
-			action->throttle.i = 0.65f;
+			slide that way. Forward here is into the wall. */
+			action->throttle.i = 0.0f;
 			action->throttle.j = -sine(rel);
 			if (action->throttle.j > 0.70f)
 				action->throttle.j = 0.70f;
@@ -2994,9 +3248,33 @@ static boolean bot_apply_heading(struct bot_state *state, long unit_index, real_
 			action->throttle.i = 1.0f;
 			action->throttle.j = 0.0f;
 		}
+		/* the nose is on the frame. Slide off the post. A walk that
+		already clears the opening keeps its step, or the strafe
+		carries them past the doorway. */
+		if (!bot_ray_clear(feet, walk, 1.25f, unit_index) &&
+			(!bot_body_clear(feet, state->facing_yaw, 0.85f, unit_index) ||
+			!bot_body_clear(feet, walk, 0.85f, unit_index)))
+		{
+			boolean left_post = bot_shoulder_ahead(feet, walk, 1.0f, 1.05f, unit_index);
+			boolean right_post = bot_shoulder_ahead(feet, walk, -1.0f, 1.05f, unit_index);
+
+			if (action->throttle.i > 0.40f)
+				action->throttle.i = 0.40f;
+			if (left_post && !right_post)
+				action->throttle.j = 0.40f;
+			else if (right_post && !left_post)
+				action->throttle.j = -0.40f;
+		}
 		return TRUE;
 	}
-	if (clear < 1.1f || bot_heading_is_corner(feet, walk, unit_index))
+	/* the marks jump from 0.8 to 1.6, so a doorway reads as blocked.
+	the chest ray is through it. Walk it at a normal step. */
+	if (bot_ray_clear(feet, walk, 1.25f, unit_index))
+	{
+		if (clear < 2.0f)
+			clear = 2.0f;
+	}
+	else if (clear < 1.1f || bot_heading_is_corner(feet, walk, unit_index))
 	{
 		action->throttle.i = 0.0f;
 		action->throttle.j = 0.0f;
@@ -3033,8 +3311,10 @@ static boolean bot_walk_hall(struct bot_state *state, long unit_index,
 	action->throttle.i = cosine(rel);
 	action->throttle.j = -sine(rel);
 	/* the wall is an arm's length ahead and the hall heading is the turn.
-	keep walking it. Stopping is how they meet the wall. */
-	if (action->throttle.i > 0.0f && ahead < 1.0f)
+	keep walking it. Stopping is how they meet the wall. A heading that
+	already clears the frame is the doorway, and stopping there is the miss. */
+	if (action->throttle.i > 0.0f && ahead < 1.0f &&
+		!bot_ray_clear(feet, hall, 1.25f, unit_index))
 	{
 		if (rel > 0.18f || rel < -0.18f)
 		{
@@ -3044,14 +3324,28 @@ static boolean bot_walk_hall(struct bot_state *state, long unit_index,
 		else
 			action->throttle.i = 0.0f;
 	}
-	if (action->throttle.i > 0.45f)
-		action->throttle.i = 1.0f;
-	else if (action->throttle.i < -0.45f)
-		action->throttle.i = -1.0f;
-	if (action->throttle.j > 0.45f)
-		action->throttle.j = 1.0f;
-	else if (action->throttle.j < -0.45f)
-		action->throttle.j = -1.0f;
+	{
+		boolean through = bot_ray_clear(feet, hall, 1.25f, unit_index);
+		boolean left_post = bot_shoulder_ahead(feet, hall, 1.0f, 1.05f, unit_index);
+		boolean right_post = bot_shoulder_ahead(feet, hall, -1.0f, 1.05f, unit_index);
+
+		/* the nose is on the frame. Slide off that post. The chest ray
+		is already through the opening, so a strafe here leaves the gap. */
+		if (!through)
+		{
+			if (action->throttle.i > 0.40f)
+				action->throttle.i = 0.40f;
+			if (left_post && !right_post)
+				action->throttle.j = 0.40f;
+			else if (right_post && !left_post)
+				action->throttle.j = -0.40f;
+		}
+		else if (action->throttle.i > 0.45f &&
+			bot_open_distance(feet, hall, unit_index) >= 1.6f)
+			action->throttle.i = 1.0f;
+		else if (action->throttle.i < -0.45f)
+			action->throttle.i = -1.0f;
+	}
 	return action->throttle.i != 0.0f || action->throttle.j != 0.0f;
 }
 
@@ -3521,20 +3815,70 @@ static boolean bot_ground_at(real_point3d const *point, real_point3d *ground, lo
 	return TRUE;
 }
 
+/* how far down still counts as a landing. The globals speed is where a
+fall starts to hurt. Short of that, they get up. */
+static real bot_survivable_drop(void)
+{
+	real speed;
+	real distance;
+
+	speed = bot_harmful_fall_speed();
+	distance = (speed * speed) / (2.0f * 0.0035651792f);
+	distance *= 0.85f;
+	if (distance < 0.80f)
+		distance = 0.80f;
+	if (distance > 2.0f)
+		distance = 2.0f;
+	return distance;
+}
+
+/* the floor under a map point, including a ramp that has already risen.
+FALSE when nothing is there, or the drop is deeper than limit. */
+static boolean bot_probe_floor(real x, real y, real feet_z, real limit, real *ground_z)
+{
+	struct collision_bsp *bsp;
+	struct collision_bsp_test_vector_result result;
+	real_point3d origin;
+	real_vector3d down;
+
+	bsp = global_collision_bsp_get();
+	if (!bsp || !global_down3d)
+		return FALSE;
+	origin.x = x;
+	origin.y = y;
+	origin.z = feet_z + 1.20f;
+	scale_vector3d(global_down3d, 1.20f + limit, &down);
+	if (!collision_bsp_test_vector(
+			FLAG(_collision_test_front_facing_surfaces_bit),
+			bsp, 0, NULL, &origin, &down, 1.0f, &result) ||
+		result.surface_index == NONE)
+		return FALSE;
+	*ground_z = origin.z + down.k * result.t;
+	if (feet_z - *ground_z > limit)
+		return FALSE;
+	return TRUE;
+}
+
 static boolean bot_drop_ahead(real_point3d const *feet, real yaw)
 {
-	real_point3d probe;
-	real_point3d ground;
-	long surface;
+	static real const reach[3] = { 0.45f, 0.95f, 1.40f };
+	real safe;
+	long index;
 
 	if (!global_collision_bsp_get())
 		return FALSE;
-	probe.x = feet->x + cosine(yaw) * 1.05f;
-	probe.y = feet->y + sine(yaw) * 1.05f;
-	probe.z = feet->z;
-	if (!bot_ground_at(&probe, &ground, &surface))
-		return TRUE;
-	return feet->z - ground.z > 1.5f;
+	safe = bot_survivable_drop();
+	for (index = 0; index < 3; index++)
+	{
+		real ground_z;
+
+		if (!bot_probe_floor(
+				feet->x + cosine(yaw) * reach[index],
+				feet->y + sine(yaw) * reach[index],
+				feet->z, safe, &ground_z))
+			return TRUE;
+	}
+	return FALSE;
 }
 
 /* the path already chose this step. A ramp is still under them as it
@@ -3567,6 +3911,96 @@ static boolean bot_ramp_ahead(real_point3d const *feet, real yaw)
 	if (drop[1] > drop[0] + 0.75f || drop[2] > drop[1] + 0.80f)
 		return FALSE;
 	return TRUE;
+}
+
+/* the floor ahead is above the feet. They are going up the slope,
+not stepping off it. */
+static boolean bot_climbing_ramp(real_point3d const *feet, real yaw)
+{
+	real near_z;
+	real far_z;
+
+	if (!bot_probe_floor(
+			feet->x + cosine(yaw) * 0.40f,
+			feet->y + sine(yaw) * 0.40f,
+			feet->z, 1.20f, &near_z))
+		return FALSE;
+	if (feet->z - near_z > 0.40f)
+		return FALSE;
+	if (!bot_probe_floor(
+			feet->x + cosine(yaw) * 1.15f,
+			feet->y + sine(yaw) * 1.15f,
+			feet->z, 1.20f, &far_z))
+		return FALSE;
+	return far_z > feet->z + 0.10f;
+}
+
+/* side >= 0 is the left shoulder. The ramp is still under the center
+and gone beside it. That is the edge, even when the fall would be short. */
+static boolean bot_ramp_ledge(real_point3d const *feet, real yaw, real side)
+{
+	static real const reach[2] = { 0.40f, 0.95f };
+	real sign;
+	long index;
+
+	sign = side >= 0.0f ? 1.0f : -1.0f;
+	for (index = 0; index < 2; index++)
+	{
+		real center_z;
+		real side_z;
+		real cx;
+		real cy;
+
+		cx = feet->x + cosine(yaw) * reach[index];
+		cy = feet->y + sine(yaw) * reach[index];
+		if (!bot_probe_floor(cx, cy, feet->z, 1.20f, &center_z))
+			continue;
+		if (feet->z - center_z > 0.35f)
+			continue;
+		if (!bot_probe_floor(
+				cx - sine(yaw) * 0.34f * sign,
+				cy + cosine(yaw) * 0.34f * sign,
+				feet->z, 1.20f, &side_z))
+			return TRUE;
+		if (center_z - side_z > 0.40f)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* one shoulder is on a frame and the other side is open. Positive is a
+strafe to the right, off that frame and into the opening. A wall that
+still runs ahead is not a frame, and a drop on the open side is not an
+exit. */
+static real bot_frame_slide(real_point3d const *feet, real yaw, long unit_index)
+{
+	boolean left_hit;
+	boolean right_hit;
+	real strafe;
+	real away;
+
+	left_hit = !bot_ray_clear(feet, yaw + _pi * 0.5f, 0.30f, unit_index);
+	right_hit = !bot_ray_clear(feet, yaw - _pi * 0.5f, 0.30f, unit_index);
+	if (left_hit == right_hit)
+		return 0.0f;
+	if (left_hit)
+	{
+		strafe = 1.0f;
+		away = yaw - _pi * 0.5f;
+	}
+	else
+	{
+		strafe = -1.0f;
+		away = yaw + _pi * 0.5f;
+	}
+	/* a wall an arm's length out is not an opening to strafe into. */
+	if (!bot_ray_clear(feet, away, 1.25f, unit_index))
+		return 0.0f;
+	if (bot_drop_ahead(feet, away))
+		return 0.0f;
+	if (bot_climbing_ramp(feet, yaw) && bot_ramp_ledge(feet, yaw, strafe > 0.0f ? -1.0f : 1.0f))
+		return 0.0f;
+	return strafe;
 }
 
 /* how far a running jump carries them back to the same height. The
@@ -3670,6 +4104,68 @@ static boolean bot_jump_across(real_point3d const *feet, real yaw, long unit_ind
 		return TRUE;
 	}
 	return FALSE;
+}
+
+/* the stick is about to leave the floor. A killing fall stops. The side
+of a ramp they are climbing turns back onto the slope, unless that side
+is a jump onto another platform. */
+static void bot_keep_on_floor(real_point3d const *feet, real facing, long unit_index,
+	struct player_action *action)
+{
+	real motion;
+	boolean left;
+	boolean right;
+
+	if (action->throttle.i * action->throttle.i +
+		action->throttle.j * action->throttle.j < 0.02f)
+		return;
+	motion = facing + arctangent(-action->throttle.j, action->throttle.i);
+	if (bot_drop_ahead(feet, motion))
+	{
+		/* the slope still under them is a walk down, not a fall */
+		if (bot_ramp_ahead(feet, motion) &&
+			!bot_ramp_ledge(feet, motion, 1.0f) &&
+			!bot_ramp_ledge(feet, motion, -1.0f))
+			return;
+		if (!bot_jump_across(feet, motion, unit_index, NULL, NULL))
+		{
+			action->throttle.i = 0.0f;
+			action->throttle.j = 0.0f;
+		}
+		return;
+	}
+	if (!bot_climbing_ramp(feet, motion))
+		return;
+	left = bot_ramp_ledge(feet, motion, 1.0f);
+	right = bot_ramp_ledge(feet, motion, -1.0f);
+	if (left == right)
+		return;
+	/* one edge. Slide back onto the slope. The stick is in facing
+	space, so the correction is perpendicular to the way they are moving. */
+	if (left && !bot_jump_across(feet, motion + _pi * 0.5f, unit_index, NULL, NULL))
+	{
+		real ni = action->throttle.i;
+		real nj = action->throttle.j;
+
+		action->throttle.i = ni * 0.45f - nj * 0.85f;
+		action->throttle.j = nj * 0.45f + ni * 0.85f;
+	}
+	else if (right && !bot_jump_across(feet, motion - _pi * 0.5f, unit_index, NULL, NULL))
+	{
+		real ni = action->throttle.i;
+		real nj = action->throttle.j;
+
+		action->throttle.i = ni * 0.45f + nj * 0.85f;
+		action->throttle.j = nj * 0.45f - ni * 0.85f;
+	}
+	if (action->throttle.i > 1.0f)
+		action->throttle.i = 1.0f;
+	else if (action->throttle.i < -1.0f)
+		action->throttle.i = -1.0f;
+	if (action->throttle.j > 1.0f)
+		action->throttle.j = 1.0f;
+	else if (action->throttle.j < -1.0f)
+		action->throttle.j = -1.0f;
 }
 
 /* a landing off the straight step, closer to where they are going.
@@ -3863,8 +4359,7 @@ static boolean bot_ladder_near(real_point3d const *feet, real *yaw)
 			ray.j = sine(heading) * 6.0f;
 			ray.k = 0.0f;
 			if (!collision_bsp_test_vector(
-					FLAG(_collision_test_front_facing_surfaces_bit) |
-						FLAG(_collision_test_back_facing_surfaces_bit),
+					FLAG(_collision_test_front_facing_surfaces_bit),
 					bsp, 0, NULL, &origin, &ray, 1.0f, &hit) ||
 				hit.surface_index == NONE ||
 				!TEST_FLAG(hit.flags, _bot_collision_surface_climbable_bit))
@@ -3887,9 +4382,22 @@ static boolean bot_ladder_near(real_point3d const *feet, real *yaw)
 			dist = hit.t * 6.0f;
 			if (dist < best)
 			{
+				real nx;
+				real ny;
+				real approach;
+
 				best = dist;
-				/* the ray that hit the face is the direction into it. */
-				*yaw = heading;
+				/* the normal, not the ray. A heading 15 degrees off
+				walks into the frame instead of the rungs. */
+				nx = plane.n.i;
+				ny = plane.n.j;
+				approach = nx * cosine(heading) + ny * sine(heading);
+				if (approach < 0.0f)
+				{
+					nx = -nx;
+					ny = -ny;
+				}
+				*yaw = arctangent(ny, nx);
 				found = TRUE;
 			}
 		}
@@ -6301,6 +6809,39 @@ static void bot_give_up(struct bot_state *state, long player_index, real_point3d
 	state->fight_idle = 0;
 }
 
+/* the step ahead did not move the body. Take the open heading instead
+of the same wall. */
+static void bot_step_aside(struct bot_state *state, long player_index,
+	real_point3d const *feet, long unit_index)
+{
+	real best_yaw;
+	real best;
+	long index;
+
+	best = -1.0f;
+	best_yaw = state->facing_yaw + _pi;
+	for (index = 0; index < 8; index++)
+	{
+		real yaw;
+		real open;
+
+		yaw = state->facing_yaw + _pi * (real)index / 4.0f;
+		open = bot_open_distance(feet, yaw, unit_index);
+		if ((player_index & 1) != (index & 1))
+			open += 0.35f;
+		if (open > best)
+		{
+			best = open;
+			best_yaw = yaw;
+		}
+	}
+	state->roam_goal.x = feet->x + cosine(best_yaw) * 6.0f;
+	state->roam_goal.y = feet->y + sine(best_yaw) * 6.0f;
+	state->roam_goal.z = feet->z;
+	state->roam_valid = TRUE;
+	state->unstick_ticks = 3 * TICKS_PER_SECOND;
+}
+
 static long bot_name_score(char const *name)
 {
 	long index;
@@ -6928,8 +7469,8 @@ static void update_server_generate_bot_actions(
 		return;
 	if (!game_in_progress() || !player_data || !player_data->valid)
 		return;
-	bot_routes_tick();
 	bot_assign_items();
+	bot_nav_begin_tick();
 
 	config_skill = config_integer("network.bot_skill");
 	if (config_skill < 0)
@@ -7093,6 +7634,7 @@ static void update_server_generate_bot_actions(
 			state->vault = 0;
 			state->gap_hold = FALSE;
 			state->gap_ticks = 0;
+			state->climb = FALSE;
 			state->look_ticks = 0;
 			state->facing_yaw = arctangent(unit->object.forward.j, unit->object.forward.i);
 			state->facing_pitch = 0.0f;
@@ -7261,9 +7803,10 @@ static void update_server_generate_bot_actions(
 				object_get_origin(target_player->unit_index, &point);
 				point_eye = point;
 				point_eye.z += 0.62f;
-				/* shots aim at the chest. The sight ray stays at the eyes. */
-				aim_point = point;
-				aim_point.z += 0.50f;
+				/* the chest is just under their camera. A fixed height
+				above the feet aims under a crouch and over a stand. */
+				unit_get_camera_position(target_player->unit_index, &aim_point);
+				aim_point.z -= 0.12f;
 				distance = distance3d(&eye, &aim_point);
 				visible = bot_can_see(&eye, &point_eye, player->unit_index);
 				/* the ray that arms a reaction is every five ticks. Losing
@@ -7393,6 +7936,7 @@ static void update_server_generate_bot_actions(
 
 		{
 			real_point3d move_goal;
+			real_point3d nav_point;
 			real_point3d look;
 			real goal_yaw;
 			real goal_pitch;
@@ -7403,11 +7947,11 @@ static void update_server_generate_bot_actions(
 			boolean on_item;
 			boolean waiting;
 			boolean hunting;
-			boolean stepped;
-			boolean in_hall;
-			real step_yaw;
-			real hall_yaw;
+			boolean combat_look;
+			real combat_yaw;
+			real combat_pitch;
 			real_point3d hunt_point;
+			struct bot_nav_step nav_step;
 
 			move_goal = feet;
 			goal_yaw = state->facing_yaw;
@@ -7416,9 +7960,11 @@ static void update_server_generate_bot_actions(
 			on_item = FALSE;
 			waiting = FALSE;
 			hunting = FALSE;
-			stepped = FALSE;
-			in_hall = FALSE;
-			hall_yaw = state->facing_yaw;
+			combat_look = FALSE;
+			combat_yaw = 0.0f;
+			combat_pitch = 0.0f;
+			state->nav_steer = FALSE;
+			nav_point = feet;
 			if (player_index >= 0 && player_index < MAXIMUM_NUMBER_OF_PLAYERS &&
 				bot_item_goals[player_index].valid)
 			{
@@ -7508,9 +8054,8 @@ static void update_server_generate_bot_actions(
 				real dy;
 				real dz;
 
-				/* walk to where they were. Getting there, or finding that
-				the spot is another floor, is the end of it. Standing and
-				glancing is not a search, and it is not a way upstairs. */
+				/* walk to where they were, including a floor the mesh can
+				reach by ladder. Standing and glancing is not a search. */
 				state->search_ticks--;
 				dx = state->search_position.x - feet.x;
 				dy = state->search_position.y - feet.y;
@@ -7518,7 +8063,6 @@ static void update_server_generate_bot_actions(
 				if (dz < 0.0f)
 					dz = -dz;
 				if (state->search_ticks <= 0 ||
-					bot_different_floor(&feet, &state->search_position) ||
 					(dx * dx + dy * dy < 4.0f && dz < 2.5f))
 				{
 					state->search_ticks = 0;
@@ -7665,7 +8209,15 @@ static void update_server_generate_bot_actions(
 					}
 				}
 			}
-			if (holding && state->last_seen_valid &&
+			if (state->unstick_ticks > 0)
+			{
+				state->unstick_ticks--;
+				move_goal = state->roam_goal;
+				goal_yaw = bot_yaw_between(&feet, &move_goal);
+				goal_pitch = 0.0f;
+				combat_look = FALSE;
+			}
+			else if (holding && state->last_seen_valid &&
 				!bot_different_floor(&feet, &state->last_seen))
 			{
 				real_vector3d direction;
@@ -7688,7 +8240,7 @@ static void update_server_generate_bot_actions(
 
 				bot_job_maintain(state, &feet, player->unit_index, player_index,
 					hunting, &hunt_point);
-				if (state->job != _bot_job_none)
+				if (state->job == _bot_job_fetch)
 				{
 					move_goal = state->job_goal;
 					goal_yaw = bot_yaw_between(&feet, &move_goal);
@@ -7793,39 +8345,59 @@ static void update_server_generate_bot_actions(
 				}
 				else if (!waiting)
 				{
-					/* nothing to shoot and no spawn to take: walk to a
-					place across the map, and stay on that path until it
-					is done. A new heading every few seconds is the
-					back-and-forth. */
+					/* nothing to shoot: a few places the mesh can reach,
+					walked in order. the far tile is one stop. */
+					real dz;
+					boolean arrived;
+
 					dx = state->roam_goal.x - feet.x;
 					dy = state->roam_goal.y - feet.y;
-					if (!state->roam_valid || state->look_ticks <= 0 ||
-						square_root(dx * dx + dy * dy) < 3.5f)
+					dz = state->roam_goal.z - feet.z;
+					arrived = state->roam_valid &&
+						dx * dx + dy * dy < 4.0f * 4.0f && dz * dz < 2.5f * 2.5f;
+					if (arrived || (state->roam_valid && state->look_ticks <= 0))
 					{
-						if (!bot_choose_tour(state, &feet, player->unit_index))
-							bot_choose_roam(state, &feet, player->unit_index);
-					}
-					move_goal = state->roam_goal;
-					goal_yaw = bot_yaw_between(&feet, &move_goal);
-					/* the high ground is another floor. The path is the
-					stairs, not a line across this one. */
-					if (bot_different_floor(&feet, &move_goal))
-					{
-						real_point3d ground;
-						long surface;
-
-						if (bot_ground_at(&move_goal, &ground, &surface))
+						state->look_ticks = 0;
+						state->roam_at++;
+						if (state->roam_at >= 0 && state->roam_at < state->roam_count)
 						{
-							state->route_floor = TRUE;
-							state->route_surface = surface;
-							move_goal = ground;
-							state->roam_goal = ground;
+							state->roam_goal = state->roam_list[state->roam_at];
+							state->look_ticks = 25 * TICKS_PER_SECOND;
 						}
 						else
+							state->roam_valid = FALSE;
+					}
+					if (!state->roam_valid && state->look_ticks <= 0)
+					{
+						float dest[9];
+						int count;
+						int stop;
+
+						count = bot_nav_explore(feet.x, feet.y, feet.z, (int)player_index,
+							dest, 3);
+						if (count > 0)
 						{
-							move_goal.z = feet.z;
-							state->roam_goal.z = feet.z;
+							if (count > 3)
+								count = 3;
+							state->roam_count = (short)count;
+							state->roam_at = 0;
+							for (stop = 0; stop < count; stop++)
+							{
+								state->roam_list[stop].x = dest[stop * 3];
+								state->roam_list[stop].y = dest[stop * 3 + 1];
+								state->roam_list[stop].z = dest[stop * 3 + 2];
+							}
+							state->roam_goal = state->roam_list[0];
+							state->roam_valid = TRUE;
+							state->look_ticks = 25 * TICKS_PER_SECOND;
 						}
+						else if (bot_nav_ready())
+							state->look_ticks = TICKS_PER_SECOND;
+					}
+					if (state->roam_valid)
+					{
+						move_goal = state->roam_goal;
+						goal_yaw = bot_yaw_between(&feet, &move_goal);
 					}
 					state->route_tour = TRUE;
 				}
@@ -7886,15 +8458,41 @@ static void update_server_generate_bot_actions(
 			}
 			else
 			{
+				real_point3d camera;
 				real_vector3d direction;
 				real_euler_angles2d angles;
+				real range;
+				real cap;
+				real yaw_off;
+				real pitch_off;
 
-				vector_from_points3d(&eye, &aim_point, &direction);
+				/* the shot is the line through the camera, so the aim
+				is built from there. The error stays inside the cone
+				they will actually fire in, or the gun parks past the body. */
+				unit_get_camera_position(player->unit_index, &camera);
+				vector_from_points3d(&camera, &aim_point, &direction);
 				if (normalize3d(&direction) != 0.0f)
 				{
+					range = distance3d(&camera, &aim_point);
+					if (range < 0.5f)
+						range = 0.5f;
+					cap = (arctangent(0.30f, range) + bot_aim_slack[skill]) * 0.5f;
+					yaw_off = state->yaw_error;
+					pitch_off = state->pitch_error;
+					if (yaw_off > cap)
+						yaw_off = cap;
+					if (yaw_off < -cap)
+						yaw_off = -cap;
+					if (pitch_off > cap)
+						pitch_off = cap;
+					if (pitch_off < -cap)
+						pitch_off = -cap;
 					euler_angles2d_from_vector3d(&angles, &direction);
-					goal_yaw = angles.yaw + state->yaw_error;
-					goal_pitch = PIN(angles.pitch + state->pitch_error, -1.0f, 1.0f);
+					goal_yaw = angles.yaw + yaw_off;
+					goal_pitch = PIN(angles.pitch + pitch_off, -1.0f, 1.0f);
+					combat_yaw = goal_yaw;
+					combat_pitch = goal_pitch;
+					combat_look = TRUE;
 				}
 				if (fetching)
 					move_goal = bot_item_goals[player_index].point;
@@ -7902,51 +8500,8 @@ static void update_server_generate_bot_actions(
 					bot_fight_goal(state, &feet, &aim_point, near_range, far_range,
 						player->unit_index, skill, &move_goal);
 			}
-			/* a corridor is one committed direction. Recomputing it from
-			the nose turns a dead end into a walk back down the same hall. */
-			if (engage == NONE && !holding && !fetching && !waiting &&
-				state->search_ticks <= 0 && !state->route_floor && !state->route_tour &&
-				unit->object.parent_object_index == NONE &&
-				bot_hall_heading(&feet, state->facing_yaw, bot_yaw_between(&feet, &move_goal),
-					state->wander_yaw, player->unit_index, &hall_yaw))
-			{
-				real reach;
-
-				/* hold the direction only while it still has room.
-				a shortening hall is the moment to take the doorway,
-				not two seconds later at the wall. */
-				if (state->hall_lock > 0 &&
-					bot_open_distance(&feet, state->wander_yaw, player->unit_index) >= 3.0f)
-				{
-					hall_yaw = state->wander_yaw;
-					state->hall_lock--;
-				}
-				else
-					state->hall_lock = 18;
-				state->wander_yaw = hall_yaw;
-				state->commit_yaw = hall_yaw;
-				state->commit_ticks = 15;
-				reach = bot_open_distance(&feet, hall_yaw, player->unit_index);
-				if (reach < 2.0f)
-					reach = 2.0f;
-				if (reach > 6.0f)
-					reach = 6.0f;
-				move_goal.x = feet.x + cosine(hall_yaw) * reach;
-				move_goal.y = feet.y + sine(hall_yaw) * reach;
-				move_goal.z = feet.z;
-				goal_yaw = hall_yaw;
-				state->roam_goal = move_goal;
-				state->roam_valid = TRUE;
-				state->look_ticks = 30;
-				in_hall = TRUE;
-			}
-			else
-				state->hall_lock = 0;
-			/* a teleporter is a route when its exit is nearer the goal
-			than this side of the map. A fight already in sight stays.
-			a link the graph already chose is the walk, including its pad. */
-			if (engage == NONE && !holding && !waiting && unit->object.parent_object_index == NONE &&
-				!bot_hop_owned(state))
+			/* the pad is a destination. The mesh walks onto it. */
+			if (engage == NONE && !waiting && unit->object.parent_object_index == NONE)
 			{
 				real_point3d destination;
 				real_point3d pad;
@@ -7964,317 +8519,432 @@ static void update_server_generate_bot_actions(
 					state->pad_point = pad;
 					state->pad_valid = TRUE;
 					move_goal = pad;
-					/* the pad is on this floor. The route to their floor
-					starts again on the other side. */
-					state->route_floor = FALSE;
 				}
 				else
 					state->pad_valid = FALSE;
 			}
 			else
 				state->pad_valid = FALSE;
-			/* face the step the walk will take. The point itself can sit
-			around a corner, and turning toward that point never lines up
-			with the step, so the bot stays planted. */
-			if ((engage == NONE || !visible) && !holding && !waiting && !in_hall &&
-				!(state->search_ticks > 0 && state->search_arrived))
-				stepped = bot_step_yaw(state, player->unit_index, &feet, &move_goal, &step_yaw);
-			if (stepped)
-			{
-				real flip;
-				real magnitude;
-				real side;
 
-				/* a new step well off the one already being walked waits.
-				taking it immediately is the left-right look down a hall. */
-				if ((engage == NONE || !visible) && state->route.valid &&
-					(state->route_tour || state->route_floor))
-				{
-					real swing = bot_angle_delta(state->step_yaw, step_yaw);
-
-					if (swing < 0.0f)
-						swing = -swing;
-					if (swing > 0.50f && state->step_hold < 5 &&
-						bot_open_distance(&feet, state->step_yaw, player->unit_index) >= 2.5f &&
-						!bot_drop_ahead(&feet, state->step_yaw))
-					{
-						state->step_hold++;
-						step_yaw = state->step_yaw;
-					}
-					else
-						state->step_hold = 0;
-				}
-				else
-					state->step_hold = 0;
-				flip = bot_angle_delta(state->commit_yaw, step_yaw);
-				magnitude = flip < 0.0f ? -flip : flip;
-
-				/* a step straight back is the hallway bounce. Take an
-				opening off to the side before turning around. A floor
-				change is allowed to turn around: that is the stairs. */
-				if (!state->route_floor && !state->route_tour &&
-					state->commit_ticks > 0 && magnitude > 2.2f)
-				{
-					if (bot_side_path(&feet, state->commit_yaw, player->unit_index, &side))
-						step_yaw = side;
-					else if (bot_open_distance(&feet, state->commit_yaw, player->unit_index) >= 1.4f)
-						step_yaw = state->commit_yaw;
-					flip = bot_angle_delta(state->commit_yaw, step_yaw);
-					magnitude = flip < 0.0f ? -flip : flip;
-				}
-				if (state->commit_ticks <= 0 || magnitude <= 1.2f)
-				{
-					state->commit_yaw = step_yaw;
-					state->commit_ticks = 50;
-				}
-				state->step_yaw = step_yaw;
-				if (state->commit_ticks > 0)
-					state->commit_ticks--;
-				goal_yaw = step_yaw;
-			}
-			else if ((engage == NONE || !visible) &&
-				(state->route_tour || state->route_floor))
-			{
-				/* no step yet. The far point is around a corner, and
-				looking at it is the scan. */
-				goal_yaw = state->facing_yaw;
-				goal_pitch = 0.0f;
-			}
-			/* the next step is a gap, and a landing on this heading is closer
-			to that step. A landing closer to a far flag is how they leave
-			the catwalk. A stored link jumps from its own lip. */
-			if (engage == NONE && !state->gap_hold && state->gap_ticks == 0 &&
-				state->vault == 0 && !state->job_climb && !waiting && !in_hall)
-			{
-				real_point3d jump_goal;
-				real toward;
-
-				jump_goal = move_goal;
-				if (bot_jump_choice(&feet, player->unit_index, &jump_goal, &toward))
-				{
-					step_yaw = toward;
-					stepped = TRUE;
-					goal_yaw = toward;
-					state->commit_yaw = toward;
-					state->commit_ticks = 20;
-					state->gap_ticks = 50;
-					state->gap_yaw = toward;
-				}
-			}
-			if (state->pad_valid)
-			{
-				real dx = state->pad_point.x - feet.x;
-				real dy = state->pad_point.y - feet.y;
-
-				/* the last steps are into the closet. The path step stops
-				short of the back wall and never reaches the flag. */
-				if (dx * dx + dy * dy < 2.4f * 2.4f)
-					goal_yaw = bot_yaw_between(&feet, &state->pad_point);
-			}
-			if (engage == NONE && state->job != _bot_job_none && state->route_tour && !state->job_climb)
-			{
-				/* a missing path that still produced a step is a walk, not a stall */
-				if (!state->route.valid && !stepped)
-					state->job_path_fail++;
-				else
-					state->job_path_fail = 0;
-			}
-			if (state->job == _bot_job_none && fetching && bot_item_goals[player_index].present)
-			{
-				real dx = bot_item_goals[player_index].point.x - feet.x;
-				real dy = bot_item_goals[player_index].point.y - feet.y;
-				real dist2 = dx * dx + dy * dy;
-				real dist = square_root(dist2);
-				real_point3d item = bot_item_goals[player_index].point;
-
-				/* the path stops a unit short of the wall the powerup
-				sits against. Walk onto it when the point is in the open.
-				a marker inside a solid keeps one slide. The reverse
-				heading is the turn-around on either side of the object. */
-				if (!bot_solid_before_point(&feet, &item, dist, player->unit_index))
-				{
-					if (dist2 < 2.4f * 2.4f)
-						goal_yaw = bot_yaw_between(&feet, &item);
-				}
-				else
-				{
-					real slide;
-					real toward = bot_yaw_between(&feet, &item);
-
-					if (bot_slide_around(&feet, toward, state->facing_yaw,
-							player->unit_index, &slide))
-					{
-						real held = bot_angle_delta(state->facing_yaw, state->commit_yaw);
-						real proposed = bot_angle_delta(state->facing_yaw, slide);
-
-						if (held < 0.0f)
-							held = -held;
-						if (proposed < 0.0f)
-							proposed = -proposed;
-						if (state->commit_ticks > 0 && held < 0.8f && proposed > 1.2f)
-							slide = state->commit_yaw;
-						goal_yaw = slide;
-						state->commit_yaw = slide;
-						state->commit_ticks = 25;
-					}
-					else
-						goal_yaw = toward;
-				}
-			}
-			/* the reaction wait holds the trigger. Facing still turns. */
 			limit = bot_look_step(skill, FALSE);
 			pitch_limit = bot_look_step(skill, TRUE);
-			/* a lip they cannot walk over. Face it and run at it. The
-			trench on Hang 'em High ends in that lip, and turning around
-			leaves them on the floor. */
-			if (state->vault == 0 && !waiting &&
-				unit->object.parent_object_index == NONE &&
-				unit->object.type == _object_type_biped)
+			if (combat_look && visible && !fetching)
 			{
-				real lip;
-				struct biped_datum *grounded;
-				real pad_dx;
-				real pad_dy;
-				boolean at_pad;
-
-				at_pad = FALSE;
-				if (state->pad_valid)
-				{
-					pad_dx = state->pad_point.x - feet.x;
-					pad_dy = state->pad_point.y - feet.y;
-					at_pad = pad_dx * pad_dx + pad_dy * pad_dy < 2.4f * 2.4f;
-				}
-				grounded = biped_try_and_get(player->unit_index);
-				/* a trench is a place to leave, unless they are walking to
-				a pickup that is still on this floor */
-				if (!at_pad && !state->gap_hold && grounded &&
-					!TEST_FLAG(grounded->biped.flags, _biped_airborne_bit) &&
-					bot_find_ledge(&feet, state->facing_yaw, player->unit_index,
-						engage == NONE && !fetching, &lip))
-				{
-					state->vault = 1;
-					state->vault_yaw = lip;
-					state->vault_ticks = 0;
-					state->vault_run = 0;
-					state->vault_air = FALSE;
-				}
+				goal_yaw = combat_yaw;
+				goal_pitch = combat_pitch;
 			}
-			if (state->pad_valid)
-			{
-				real dx = state->pad_point.x - feet.x;
-				real dy = state->pad_point.y - feet.y;
-
-				if (dx * dx + dy * dy < 2.4f * 2.4f)
-					state->vault = 0;
-			}
-			if (state->vault != 0)
-			{
-				goal_yaw = state->vault_yaw;
-				limit = bot_look_step(skill, FALSE);
-				pitch_limit = bot_look_step(skill, TRUE);
-			}
-			/* nothing in sight. The walk is level, down the step.
-			a jump they have already chosen stays on that diagonal. */
-			if (engage == NONE)
+			else if (engage == NONE)
 				goal_pitch = 0.0f;
-			if (engage == NONE && state->gap_ticks > 0 && !state->gap_hold)
-				goal_yaw = state->gap_yaw;
-			else if (state->vault == 0 && !state->gap_hold && !holding &&
-				(engage == NONE || !visible))
-			{
-				real before;
-				real eased;
-				real off;
 
-				/* the step, or the way they are already moving, meets a
-				wall at an arm's length. Turn a little toward the open
-				side before the body gets there. */
-				before = goal_yaw;
-				eased = bot_ease_wall(&feet, goal_yaw, player->unit_index);
-				if (eased == goal_yaw &&
-					bot_first_block(&feet, state->facing_yaw, 0.45f, 0.80f,
-						player->unit_index) >= 0.0f)
-				{
-					off = bot_angle_delta(state->facing_yaw, goal_yaw);
-					if (off < 0.30f && off > -0.30f)
-						eased = bot_ease_wall(&feet, state->facing_yaw,
-							player->unit_index);
-				}
-				if (eased != before)
-				{
-					goal_yaw = eased;
-					if (stepped)
-						step_yaw = eased;
-					if (in_hall)
-						hall_yaw = eased;
-					limit *= 2.0f;
-				}
-			}
-			state->facing_yaw = bot_slew(state->facing_yaw, goal_yaw, limit);
-			state->facing_pitch = bot_slew(state->facing_pitch, goal_pitch, pitch_limit);
-			look.x = eye.x + cosine(state->facing_yaw) * cosine(state->facing_pitch);
-			look.y = eye.y + sine(state->facing_yaw) * cosine(state->facing_pitch);
-			look.z = eye.z + sine(state->facing_pitch);
-			bot_face(player, &action, &eye, &look, 0.0f, 0.0f, &aim);
-			if (holding)
+			walking = FALSE;
+			state->nav_steer = FALSE;
 			{
-				action.throttle.i = 0.0f;
-				action.throttle.j = 0.0f;
-				walking = TRUE;
-			}
-			else if (in_hall)
-				walking = bot_walk_hall(state, player->unit_index, &feet, hall_yaw, &action);
-			else if (waiting && engage == NONE)
-			{
-				action.throttle.i = 0.0f;
-				action.throttle.j = 0.0f;
-				walking = TRUE;
-			}
-			else if (engage != NONE && visible && !fetching)
-			{
-				real side;
-				real side_yaw;
-				real forward;
+				boolean steered;
 
-				/* face the target and step across, then back. The weave
-				is the dodge. Closing and backing up stay on top of it. */
-				side = state->strafe >= 0.0f ? 1.0f : -1.0f;
-				side_yaw = state->facing_yaw - side * (_pi * 0.5f);
-				if (bot_open_distance(&feet, side_yaw, player->unit_index) < 0.75f)
+				/* half a second without moving, and another corridor is tried */
+				steered = !waiting && unit->object.parent_object_index == NONE &&
+					bot_nav_steer(feet.x, feet.y, feet.z, move_goal.x, move_goal.y, move_goal.z,
+						(int)player_index,
+						state->stuck_ticks > TICKS_PER_SECOND / 2 ? 1 : 0, &nav_step);
+				if (steered && nav_step.switched)
+					state->stuck_ticks = 0;
+				if (steered && nav_step.ladder)
 				{
-					side = -side;
-					state->strafe = side;
-					state->strafe_ticks = 8;
-					side_yaw = state->facing_yaw - side * (_pi * 0.5f);
+					state->climb = TRUE;
+					state->climb_up = nav_step.up ? TRUE : FALSE;
+					state->climb_yaw = nav_step.yaw;
+					state->climb_top = nav_step.top;
+					state->climb_exit.x = nav_step.land_x;
+					state->climb_exit.y = nav_step.land_y;
+					state->climb_exit.z = nav_step.land_z;
+					state->climb_face.x = nav_step.face_x;
+					state->climb_face.y = nav_step.face_y;
+					state->climb_face.z = nav_step.top;
+					state->climb_miss = 0;
 				}
-				forward = 0.0f;
-				if (distance > far_range)
-					forward = 0.8f;
-				else if (distance < near_range)
-					forward = -0.5f;
-				if (bot_open_distance(&feet, side_yaw, player->unit_index) >= 0.55f)
+				else if (state->climb)
+					state->climb_miss++;
+				if (waiting || unit->object.parent_object_index != NONE)
+					state->climb = FALSE;
+				if (state->climb)
 				{
-					state->strafe = side;
-					action.throttle.i = forward;
-					action.throttle.j = side;
+					real support_yaw_now;
+					real face_dx;
+					real face_dy;
+					real ahead_now;
+					real side_now;
+
+					/* already on the rungs. Stay in the climb. */
+					if (!bot_support_ladder_yaw(player->unit_index, &support_yaw_now))
+					{
+						/* the link is in range, but the body is still beside
+						the shaft. Drop the climb and let the mesh finish the
+						walk to the stand. */
+						face_dx = state->climb_face.x - feet.x;
+						face_dy = state->climb_face.y - feet.y;
+						ahead_now = cosine(state->climb_yaw) * face_dx +
+							sine(state->climb_yaw) * face_dy;
+						side_now = -sine(state->climb_yaw) * face_dx +
+							cosine(state->climb_yaw) * face_dy;
+						if (side_now < 0.0f)
+							side_now = -side_now;
+						if (side_now > 0.50f || ahead_now > 1.90f || ahead_now < -0.20f)
+							state->climb = FALSE;
+					}
+				}
+
+				if (state->climb)
+				{
+					real face_yaw;
+					real pitch;
+					real rel;
+					real support_yaw;
+					boolean on;
+					boolean dismount;
+					boolean airborne;
+					boolean grounded_floor;
+					struct biped_datum *biped;
+
+					on = bot_support_ladder_yaw(player->unit_index, &support_yaw);
+					if (on)
+						state->climb_miss = 0;
+					biped = NULL;
+					airborne = FALSE;
+					if (unit->object.type == _object_type_biped)
+						biped = biped_try_and_get(player->unit_index);
+					if (biped)
+						airborne = TEST_FLAG(biped->biped.flags, _biped_airborne_bit);
+					grounded_floor = biped && !airborne && !on;
+					{
+						real line_x;
+						real line_y;
+						real ldx;
+						real ldy;
+						real exit_dx;
+						real exit_dy;
+						real ahead;
+						real side;
+						real side_abs;
+						real exit_yaw;
+						real deck;
+						real turn_at;
+						real yaw_rate;
+						real push;
+						real slide;
+						boolean side_exit;
+						boolean at_ladder;
+						boolean into_face;
+						real seen_yaw;
+
+						/* a ray from the back is about half a turn off.
+						following that yaw is the walk around the ladder. */
+						if (bot_ladder_near(&feet, &seen_yaw))
+						{
+							real off;
+
+							off = bot_angle_delta(state->climb_yaw, seen_yaw);
+							if (off < 0.0f)
+								off = -off;
+							if (off < 0.9f)
+								state->climb_yaw = seen_yaw;
+						}
+
+						/* ahead is how far the face is in front of the yaw
+						that looks straight into it. side is the miss to
+						the left. Chasing a point on that line is the circle. */
+						exit_dx = state->climb_face.x - feet.x;
+						exit_dy = state->climb_face.y - feet.y;
+						ahead = cosine(state->climb_yaw) * exit_dx +
+							sine(state->climb_yaw) * exit_dy;
+						side = -sine(state->climb_yaw) * exit_dx +
+							cosine(state->climb_yaw) * exit_dy;
+						side_abs = side < 0.0f ? -side : side;
+						{
+							real approach;
+
+							/* off to the side, a point on the rungs is
+							behind the rail. Aim at the centerline out
+							where the body already is. */
+							approach = 0.70f;
+							if (side_abs > 0.20f && ahead + 0.15f > approach)
+								approach = ahead + 0.15f;
+							if (approach > 1.70f)
+								approach = 1.70f;
+							line_x = state->climb_face.x - cosine(state->climb_yaw) * approach;
+							line_y = state->climb_face.y - sine(state->climb_yaw) * approach;
+						}
+						ldx = line_x - feet.x;
+						ldy = line_y - feet.y;
+						at_ladder = ahead > -0.15f && side_abs < 1.80f;
+						/* up close and on the rungs. Looking up farther out
+						walks the body into the frame beside the face. */
+						into_face = side_abs <= 0.12f && ahead <= 0.55f && ahead > 0.02f;
+						exit_dx = state->climb_exit.x - state->climb_face.x;
+						exit_dy = state->climb_exit.y - state->climb_face.y;
+						{
+							real along;
+							real across;
+
+							along = cosine(state->climb_yaw) * exit_dx +
+								sine(state->climb_yaw) * exit_dy;
+							across = -sine(state->climb_yaw) * exit_dx +
+								cosine(state->climb_yaw) * exit_dy;
+							if (across < 0.0f)
+								across = -across;
+							/* the floor is beside the shaft, not through the face.
+							prisoner is this one: reach the opening, then turn. */
+							side_exit = across > 0.65f && across > along * 0.85f;
+						}
+						exit_yaw = bot_yaw_between(&feet, &state->climb_exit);
+						deck = state->climb_exit.z;
+						turn_at = state->climb_top;
+						if (side_exit && deck + 0.15f < turn_at)
+							turn_at = deck + 0.40f;
+						face_yaw = state->climb_yaw;
+						pitch = state->climb_up ? 0.95f : -0.90f;
+						dismount = FALSE;
+						push = 0.0f;
+						slide = 0.0f;
+						if (state->climb_up && !side_exit && feet.z > deck - 0.50f &&
+							(on || feet.z > state->climb_top - 0.90f))
+						{
+							real off;
+
+							/* the deck continues past the face. Stay on the
+							normal and level off, so the step at the lip is
+							forward. A turn here is what lets go early. */
+							off = bot_angle_delta(state->climb_yaw, exit_yaw);
+							if (off > 0.30f)
+								off = 0.30f;
+							if (off < -0.30f)
+								off = -0.30f;
+							face_yaw = state->climb_yaw + off;
+							/* any look up while still on the face climbs
+							past the lip. Level, and the step is forward. */
+							pitch = 0.0f;
+							dismount = TRUE;
+							push = 1.0f;
+						}
+						else if (state->climb_up && side_exit && feet.z >= turn_at - 0.15f)
+						{
+							real edx;
+							real edy;
+							real across_exit;
+
+							/* the opening is beside the shaft. Turning
+							toward it while still on the rungs lets go,
+							and they fall. Slide along the face first. */
+							edx = state->climb_exit.x - feet.x;
+							edy = state->climb_exit.y - feet.y;
+							across_exit = -sine(state->climb_yaw) * edx +
+								cosine(state->climb_yaw) * edy;
+							if (across_exit < 0.0f)
+								across_exit = -across_exit;
+							if (across_exit > 0.55f)
+							{
+								face_yaw = state->climb_yaw;
+								pitch = 0.0f;
+								dismount = TRUE;
+								push = 0.35f;
+								/* positive strafe is to the left of the look. */
+								slide = (-sine(state->climb_yaw) * edx +
+									cosine(state->climb_yaw) * edy) > 0.0f ?
+									0.85f : -0.85f;
+							}
+							else
+							{
+								face_yaw = exit_yaw;
+								pitch = 0.0f;
+								dismount = TRUE;
+								push = 1.0f;
+							}
+						}
+						else if (on)
+						{
+							face_yaw = support_yaw;
+							push = 1.0f;
+						}
+						else if (ahead < -0.10f && side_abs < 1.80f)
+						{
+							/* through the face without a grip. Back out
+							along the same look. Turning around is the
+							circle in front of the ladder. */
+							face_yaw = state->climb_yaw;
+							pitch = 0.0f;
+							push = -1.0f;
+						}
+						else if (!into_face && ahead > 0.15f && side_abs < 1.20f)
+						{
+							/* in front of the face, not on the rungs yet.
+							the rail is the part beside the opening, so
+							get back to the center before walking in. */
+							if (side_abs > 0.12f)
+							{
+								/* walk to the centerline. A strafe in the
+								alert stance has no speed, and the other
+								direction is into the rail. */
+								face_yaw = arctangent(ldy, ldx);
+								pitch = 0.0f;
+								push = 1.0f;
+							}
+							else
+							{
+								face_yaw = state->climb_yaw;
+								pitch = 0.0f;
+								push = 1.0f;
+							}
+						}
+						else if (!into_face)
+						{
+							/* still off the normal. Walk to the point in
+							front of the face, level, and do not strafe. */
+							face_yaw = arctangent(ldy, ldx);
+							pitch = 0.0f;
+							push = 1.0f;
+						}
+						else
+						{
+							/* on the rungs. Look straight into the face
+							and up, and walk onto it. */
+							face_yaw = state->climb_yaw;
+							push = 1.0f;
+						}
+						yaw_rate = 0.40f;
+						if (on && !dismount)
+							yaw_rate = 0.60f;
+						else if (dismount && side_exit && slide == 0.0f)
+							yaw_rate = 0.11f;
+						state->facing_yaw = bot_slew(state->facing_yaw, face_yaw, yaw_rate);
+						state->facing_pitch = bot_slew(state->facing_pitch, pitch, 0.28f);
+						look.x = eye.x + cosine(state->facing_yaw) * cosine(state->facing_pitch);
+						look.y = eye.y + sine(state->facing_yaw) * cosine(state->facing_pitch);
+						look.z = eye.z + sine(state->facing_pitch);
+						bot_face(player, &action, &eye, &look, 0.0f, 0.0f, &aim);
+						state->facing_pitch = action.desired_facing.pitch;
+						rel = bot_angle_delta(state->facing_yaw, face_yaw);
+						if (rel < 0.0f)
+							rel = -rel;
+						/* backing out has to keep moving. A forward step
+						waits until the body is nearly square to the face. */
+						if (push > 0.0f && rel > 0.55f)
+						{
+							push = 0.0f;
+							slide = 0.0f;
+						}
+						action.throttle.i = push;
+						action.throttle.j = slide;
+						{
+							static int climb_log;
+
+							if ((climb_log++ & 15) == 0)
+							{
+								extern void platform_log(char const *format, ...);
+
+								platform_log(
+									"ladder climb p%ld feet %.2f %.2f %.2f yaw %.2f pit %.2f on %d ahead %.2f side %.2f push %.2f face %.2f %.2f top %.2f",
+									player_index, feet.x, feet.y, feet.z,
+									state->facing_yaw, state->facing_pitch,
+									on ? 1 : 0, ahead, side, push,
+									state->climb_face.x, state->climb_face.y,
+									state->climb_top);
+							}
+						}
+						{
+							real edx;
+							real edy;
+							real edz;
+							boolean done;
+
+							edx = state->climb_exit.x - feet.x;
+							edy = state->climb_exit.y - feet.y;
+							edz = state->climb_exit.z - feet.z;
+							if (edz < 0.0f)
+								edz = -edz;
+							done = FALSE;
+							if (state->climb_up && dismount && grounded_floor &&
+								(edx * edx + edy * edy < 1.8f * 1.8f ||
+									feet.z >= state->climb_top - 0.25f))
+								done = TRUE;
+							else if (!state->climb_up && grounded_floor &&
+								edx * edx + edy * edy < 1.8f * 1.8f && edz < 1.1f)
+								done = TRUE;
+							else if (!on && state->climb_miss > 3 * TICKS_PER_SECOND &&
+								!at_ladder)
+								done = TRUE;
+							if (done)
+								state->climb = FALSE;
+						}
+					}
+					walking = TRUE;
+					state->nav_steer = TRUE;
+				}
+				else if (steered)
+				{
+					real yaw;
+					real rel;
+					real ahead;
+
+					nav_point.x = nav_step.x;
+					nav_point.y = nav_step.y;
+					nav_point.z = nav_step.z;
+					state->nav_steer = TRUE;
+					yaw = bot_yaw_between(&feet, &nav_point);
+					if (!(combat_look && visible && !fetching))
+						goal_yaw = yaw;
+					state->facing_yaw = bot_slew(state->facing_yaw, goal_yaw, limit);
+					state->facing_pitch = bot_slew(state->facing_pitch, goal_pitch, pitch_limit);
+					look.x = eye.x + cosine(state->facing_yaw) * cosine(state->facing_pitch);
+					look.y = eye.y + sine(state->facing_yaw) * cosine(state->facing_pitch);
+					look.z = eye.z + sine(state->facing_pitch);
+					bot_face(player, &action, &eye, &look, 0.0f, 0.0f, &aim);
+					rel = bot_angle_delta(state->facing_yaw, yaw);
+					ahead = cosine(rel);
+					/* still turning around. Walking now slides the body into the wall. */
+					if (!(combat_look && visible) && ahead < 0.0f)
+					{
+						action.throttle.i = 0.0f;
+						action.throttle.j = 0.0f;
+					}
+					else
+					{
+						action.throttle.i = ahead;
+						action.throttle.j = -sine(rel);
+						if (action.throttle.i > 1.0f)
+							action.throttle.i = 1.0f;
+						else if (action.throttle.i < -1.0f)
+							action.throttle.i = -1.0f;
+						if (action.throttle.j > 1.0f)
+							action.throttle.j = 1.0f;
+						else if (action.throttle.j < -1.0f)
+							action.throttle.j = -1.0f;
+					}
 					walking = TRUE;
 				}
 				else
-					walking = bot_walk(state, player->unit_index, &feet, &move_goal, &action, TRUE);
+				{
+					state->facing_yaw = bot_slew(state->facing_yaw, goal_yaw, limit);
+					state->facing_pitch = bot_slew(state->facing_pitch, goal_pitch, pitch_limit);
+					look.x = eye.x + cosine(state->facing_yaw) * cosine(state->facing_pitch);
+					look.y = eye.y + sine(state->facing_yaw) * cosine(state->facing_pitch);
+					look.z = eye.z + sine(state->facing_pitch);
+					bot_face(player, &action, &eye, &look, 0.0f, 0.0f, &aim);
+					if (state->unstick_ticks > 0)
+					{
+						action.throttle.i = 1.0f;
+						action.throttle.j = 0.0f;
+					}
+					else
+					{
+						action.throttle.i = 0.0f;
+						action.throttle.j = 0.0f;
+					}
+				}
 			}
-			else if (stepped)
-				walking = bot_apply_heading(state, player->unit_index, &feet, step_yaw, &action, FALSE,
-					(state->route_tour || state->route_floor) && state->route.valid);
-			else
-				walking = bot_walk(state, player->unit_index, &feet, &move_goal, &action,
-					engage != NONE && visible);
-			if (fetching && !walking)
+			if (fetching && !walking && bot_nav_ready())
 			{
 				real dx = bot_item_goals[player_index].point.x - feet.x;
 				real dy = bot_item_goals[player_index].point.y - feet.y;
 
-				/* the last steps are into the pickup. A blocked probe
-				here is the wall behind it, not a failed trip. */
 				if (!bot_item_goals[player_index].valid ||
 					!bot_item_goals[player_index].present ||
 					dx * dx + dy * dy >= 2.4f * 2.4f)
@@ -8282,25 +8952,12 @@ static void update_server_generate_bot_actions(
 			}
 			else if (!fetching || action.throttle.i != 0.0f || action.throttle.j != 0.0f)
 				state->fetch_fail = 0;
-			if (state->fetch_fail > 25)
+			if (state->fetch_fail > 2 * TICKS_PER_SECOND)
 			{
 				bot_give_up(state, player_index, &feet, FALSE);
 				fetching = FALSE;
 				waiting = FALSE;
 				state->fetch_fail = 0;
-			}
-			if (!walking && engage == NONE && !holding && !waiting && state->vault == 0 && !in_hall)
-			{
-				if (!state->roam_valid || state->look_ticks <= 0)
-					bot_choose_roam(state, &feet, player->unit_index);
-				walking = bot_walk(state, player->unit_index, &feet, &state->roam_goal, &action, FALSE);
-			}
-			if (!walking)
-				state->route.valid = FALSE;
-			if (walking && engage != NONE && visible && state->strafe_jump)
-			{
-				action.control_flags |= FLAG(_unit_control_jump_bit);
-				state->strafe_jump = FALSE;
 			}
 			planted = waiting;
 		}
@@ -8311,9 +8968,16 @@ static void update_server_generate_bot_actions(
 			boolean shoot;
 			short grenade;
 
-			/* the cone widens while the trigger was already down */
+			/* the cone widens while the trigger was already down.
+			the gun they are holding, not the facing they asked for. */
 			widen = state->trigger_down;
-			on_target = visible && bot_on_target(&eye, &aim_point, &aim, skill, widen);
+			{
+				real_point3d camera;
+
+				unit_get_camera_position(player->unit_index, &camera);
+				on_target = visible && bot_on_target(&camera, &aim_point,
+					&unit->unit.aiming_vector, skill, widen);
+			}
 			shoot = FALSE;
 
 			if (visible && distance < 1.6f && state->melee_ticks <= 0 &&
@@ -8341,7 +9005,7 @@ static void update_server_generate_bot_actions(
 				grenade = NONE;
 				if (state->grenade_ticks <= 0 &&
 					action.desired_weapon_index == NONE &&
-					state->vault == 0 && !state->gap_hold)
+					state->vault == 0 && !state->gap_hold && !state->climb)
 				{
 				if (unit->unit.current_grenade_index >= 0 &&
 					unit->unit.current_grenade_index < NUMBER_OF_UNIT_GRENADE_TYPES &&
@@ -8461,117 +9125,30 @@ static void update_server_generate_bot_actions(
 		else
 			state->trigger_down = FALSE;
 
-		if (moved < 0.03f && (action.throttle.i != 0.0f || action.throttle.j != 0.0f))
+		/* standing with the throttle up, or standing with it at rest.
+		either one for two seconds is a body that has stopped. */
+		if (moved < 0.03f && unit->object.parent_object_index == NONE)
 			state->stuck_ticks++;
 		else
 			state->stuck_ticks = 0;
-		if (engage == NONE && !planted &&
-			action.throttle.i == 0.0f && action.throttle.j == 0.0f &&
-			!((state->route_tour || state->route_floor) && state->route.valid))
-			state->idle_ticks++;
-		else
-			state->idle_ticks = 0;
-		if (state->vault == 0 && (state->stuck_ticks > 10 || state->idle_ticks > 30))
+		/* the step is into something the body cannot enter. Drop this
+		destination and take another. */
+		if (state->stuck_ticks > (state->climb ? 5 : 2) * TICKS_PER_SECOND)
 		{
-			real pad_dx;
-			real pad_dy;
-			boolean at_pad;
+			real ladder_yaw;
 
-			at_pad = FALSE;
-			if (state->pad_valid)
+			/* a climb is slow, and the first part of a turn off the face
+			barely moves. That is not a stuck walk. */
+			if (state->climb && bot_support_ladder_yaw(player->unit_index, &ladder_yaw))
+				state->stuck_ticks = 0;
+			else
 			{
-				pad_dx = state->pad_point.x - feet.x;
-				pad_dy = state->pad_point.y - feet.y;
-				at_pad = pad_dx * pad_dx + pad_dy * pad_dy < 3.0f * 3.0f;
-			}
-			/* the closet reads as a wall. Keep walking onto the flag
-			instead of giving up and turning around. */
-			if (at_pad && state->stuck_ticks > 90)
-			{
+				state->stuck_ticks = 0;
 				state->pad_valid = FALSE;
-				state->pad_cool = 150;
-				at_pad = FALSE;
-			}
-			if (!at_pad &&
-				!(player_index >= 0 && player_index < MAXIMUM_NUMBER_OF_PLAYERS &&
-					bot_item_goals[player_index].valid && bot_item_goals[player_index].present &&
-					(bot_item_goals[player_index].point.x - feet.x) *
-						(bot_item_goals[player_index].point.x - feet.x) +
-					(bot_item_goals[player_index].point.y - feet.y) *
-						(bot_item_goals[player_index].point.y - feet.y) < 2.4f * 2.4f &&
-					!bot_against_solid(&feet, &bot_item_goals[player_index].point,
-						square_root((bot_item_goals[player_index].point.x - feet.x) *
-							(bot_item_goals[player_index].point.x - feet.x) +
-							(bot_item_goals[player_index].point.y - feet.y) *
-							(bot_item_goals[player_index].point.y - feet.y)),
-						player->unit_index)))
-			{
-				real hall;
-
-				/* a failed step needs an opening off this hall. Another
-				heading down the same corridor is not one, and waiting
-				out the lock just walks the lap again. */
-				if (engage == NONE && !holding &&
-					bot_side_path(&feet, state->wander_yaw, player->unit_index, &hall))
-				{
-					state->wander_yaw = hall;
-					state->commit_yaw = hall;
-					state->commit_ticks = 15;
-					state->hall_lock = 18;
-					state->idle_ticks = 0;
-					state->stuck_ticks = 0;
-				}
-				else
-				{
-					bot_give_up(state, player_index, &feet, FALSE);
-					action.throttle.i = 0.0f;
-					action.throttle.j = 0.0f;
-				}
-			}
-		}
-		if (engage != NONE && action.throttle.i == 0.0f && action.throttle.j == 0.0f)
-			state->fight_idle++;
-		else
-			state->fight_idle = 0;
-		/* the path to the fight failed. Step sideways instead of standing. */
-		if (state->fight_idle > 10)
-		{
-			real side = state->strafe >= 0.0f ? 1.0f : -1.0f;
-			real side_yaw = state->facing_yaw - side * (_pi * 0.5f);
-
-			if (bot_open_distance(&feet, side_yaw, player->unit_index) < 1.1f ||
-				bot_heading_is_corner(&feet, side_yaw, player->unit_index))
-			{
-				side = -side;
-				side_yaw = state->facing_yaw - side * (_pi * 0.5f);
-			}
-			state->strafe = side;
-			state->strafe_ticks = 25;
-			if (bot_open_distance(&feet, side_yaw, player->unit_index) >= 1.1f &&
-				!bot_heading_is_corner(&feet, side_yaw, player->unit_index) &&
-				!bot_drop_ahead(&feet, side_yaw))
-			{
-				action.throttle.i = 0.2f;
-				action.throttle.j = side;
-				state->fight_idle = 0;
-			}
-		}
-		if (state->fight_idle > 20)
-		{
-			real away;
-
-			state->fight_idle = 0;
-			if (bot_escape_yaw(&feet, state->facing_yaw + _pi * 0.5f, player->unit_index, &away))
-			{
-				real rel = bot_angle_delta(state->facing_yaw, away);
-
-				state->commit_yaw = away;
-				state->commit_ticks = 20;
-				state->route.valid = FALSE;
-				state->escape_yaw = away;
-				state->escape_ticks = 20;
-				action.throttle.i = cosine(rel) > 0.15f ? 1.0f : 0.0f;
-				action.throttle.j = -sine(rel);
+				state->climb = FALSE;
+				bot_give_up(state, player_index, &feet, FALSE);
+				bot_step_aside(state, player_index, &feet, player->unit_index);
+				state->look_ticks = TICKS_PER_SECOND;
 			}
 		}
 
@@ -8580,179 +9157,13 @@ static void update_server_generate_bot_actions(
 			boolean airborne;
 			boolean crouch;
 
-			/* a lip: line up, run straight at it, jump, and crouch once
-			the jump stops rising so the body clears the edge. A fall that
-			would hurt waits until the ground is close, then crouches. */
 			biped = NULL;
 			airborne = FALSE;
 			crouch = FALSE;
-			if (unit->object.parent_object_index != NONE)
-				state->vault = 0;
-			else if (unit->object.type == _object_type_biped)
+			if (unit->object.type == _object_type_biped)
 				biped = biped_try_and_get(player->unit_index);
 			if (biped)
 				airborne = TEST_FLAG(biped->biped.flags, _biped_airborne_bit);
-			if (state->pad_valid && unit->object.parent_object_index == NONE)
-			{
-				real dx;
-				real dy;
-				real dist2;
-
-				dx = state->pad_point.x - feet.x;
-				dy = state->pad_point.y - feet.y;
-				dist2 = dx * dx + dy * dy;
-				/* the probes stop a unit short of a wall. The flag is
-				inside that, so the last steps ignore the closet. */
-				if (dist2 < 2.4f * 2.4f)
-				{
-					real dist;
-					real yaw;
-					real rel;
-
-					dist = square_root(dist2);
-					yaw = bot_yaw_between(&feet, &state->pad_point);
-					rel = bot_angle_delta(state->facing_yaw, yaw);
-					state->vault = 0;
-					action.throttle.i = 0.0f;
-					action.throttle.j = 0.0f;
-					if (dist > 0.05f && rel <= 0.45f && rel >= -0.45f)
-						action.throttle.i = dist < 0.35f ? 0.45f : 1.0f;
-				}
-			}
-			if (state->job == _bot_job_none &&
-				player_index >= 0 && player_index < MAXIMUM_NUMBER_OF_PLAYERS &&
-				bot_item_goals[player_index].valid && bot_item_goals[player_index].present &&
-				unit->object.parent_object_index == NONE)
-			{
-				real dx;
-				real dy;
-				real dist2;
-
-				dx = bot_item_goals[player_index].point.x - feet.x;
-				dy = bot_item_goals[player_index].point.y - feet.y;
-				dist2 = dx * dx + dy * dy;
-				if (dist2 < 2.4f * 2.4f)
-				{
-					real dist;
-					real yaw;
-					real rel;
-					real slide;
-					real_point3d item;
-
-					dist = square_root(dist2);
-					item = bot_item_goals[player_index].point;
-					yaw = bot_yaw_between(&feet, &item);
-					if (bot_against_solid(&feet, &item, dist, player->unit_index))
-					{
-						/* the pickup is inside the object. Slide along the
-						face for the few seconds the fetch is allowed to
-						last, then the tour takes them off it. */
-						if (bot_slide_around(&feet, yaw, state->facing_yaw,
-								player->unit_index, &slide))
-						{
-							rel = bot_angle_delta(state->facing_yaw, slide);
-							action.throttle.i = 0.0f;
-							action.throttle.j = 0.0f;
-							state->idle_ticks = 0;
-							state->stuck_ticks = 0;
-							if (rel <= 0.6f && rel >= -0.6f)
-								action.throttle.i = 1.0f;
-						}
-					}
-					else
-					{
-						rel = bot_angle_delta(state->facing_yaw, yaw);
-						action.throttle.i = 0.0f;
-						action.throttle.j = 0.0f;
-						state->idle_ticks = 0;
-						state->stuck_ticks = 0;
-						if (dist > 0.05f && rel <= 0.5f && rel >= -0.5f)
-							action.throttle.i = 1.0f;
-					}
-				}
-			}
-			if (state->gap_ticks < 0)
-				state->gap_ticks++;
-			else if (state->gap_ticks > 0 && state->vault == 0 && biped && !airborne &&
-				!state->job_climb && !state->gap_hold)
-			{
-				real lip;
-				real rel = bot_angle_delta(state->facing_yaw, state->gap_yaw);
-
-				if (rel > 0.35f || rel < -0.35f ||
-					!bot_jump_across(&feet, state->gap_yaw, player->unit_index, &lip, NULL))
-				{
-					state->gap_ticks--;
-					/* the lineup did not become a jump. Leave the edge
-					alone for a moment instead of standing on it. */
-					if (state->gap_ticks == 0)
-						state->gap_ticks = -30;
-				}
-				else
-				{
-					action.throttle.i = 1.0f;
-					action.throttle.j = 0.0f;
-					/* leave the ground at the edge. Earlier and the jump
-					is spent before the gap. */
-					if (lip < 0.45f)
-					{
-						real forward = biped->object.translational_velocity.i *
-								cosine(state->facing_yaw) +
-							biped->object.translational_velocity.j *
-								sine(state->facing_yaw);
-
-						if (forward > 0.035f || lip < 0.25f)
-						{
-							action.control_flags |= FLAG(_unit_control_jump_bit);
-							state->gap_hold = TRUE;
-							state->gap_left = FALSE;
-							state->gap_ticks = 0;
-						}
-					}
-				}
-			}
-			if (state->vault == 1)
-			{
-				real rel;
-
-				rel = bot_angle_delta(state->facing_yaw, state->vault_yaw);
-				state->vault_ticks++;
-				action.throttle.i = 0.0f;
-				action.throttle.j = 0.0f;
-				if (rel > 0.40f || rel < -0.40f)
-					state->vault_run = 0;
-				else
-				{
-					/* run at the lip before leaving the ground. A jump
-					from a stand does not carry them onto the edge. */
-					action.throttle.i = 1.0f;
-					state->vault_run++;
-					if (state->vault_run >= 8 &&
-						!bot_ray_clear_z(&feet, state->vault_yaw, 0.80f, 0.40f,
-							player->unit_index))
-					{
-						action.control_flags |= FLAG(_unit_control_jump_bit);
-						state->vault = 2;
-						state->vault_ticks = 0;
-						state->vault_air = FALSE;
-					}
-				}
-				if (state->vault == 1 && state->vault_ticks > 70)
-					state->vault = 0;
-			}
-			else if (state->vault == 2)
-			{
-				state->vault_ticks++;
-				action.throttle.i = 1.0f;
-				action.throttle.j = 0.0f;
-				if (airborne)
-					state->vault_air = TRUE;
-				if (state->vault_air && airborne &&
-					biped->object.translational_velocity.k <= 0.025f)
-					crouch = TRUE;
-				if ((state->vault_air && !airborne) || state->vault_ticks > 90)
-					state->vault = 0;
-			}
 			if (biped && airborne && biped->object.translational_velocity.k < 0.0f &&
 				-biped->object.translational_velocity.k > bot_harmful_fall_speed())
 			{
@@ -8774,114 +9185,10 @@ static void update_server_generate_bot_actions(
 			}
 			if (crouch)
 				action.control_flags |= FLAG(_unit_control_crouch_modifier_bit);
-			/* the light stays off. A bot never switches it on. */
 			if (TEST_FLAG(unit->unit.flags, _unit_integrated_light_on_bit))
 				unit_set_desired_flashlight_state(player->unit_index, FALSE);
 		}
 
-		bot_use_ladder(state, player, player->unit_index, &feet, engage, &action);
-		bot_respect_grenades(state, player, player->unit_index, &feet, &action);
-		/* the jump is already in the air, or it was just pressed. Keep the
-		stick forward along that heading until the landing. A new step
-		here is what drops them short of the platform. */
-		if (state->gap_hold)
-		{
-			struct biped_datum *jumping = biped_try_and_get(player->unit_index);
-			boolean left_ground = jumping &&
-				TEST_FLAG(jumping->biped.flags, _biped_airborne_bit);
-			real_point3d ahead;
-
-			if (left_ground)
-				state->gap_left = TRUE;
-			if (!left_ground && state->gap_left)
-			{
-				state->gap_hold = FALSE;
-				state->gap_left = FALSE;
-				state->gap_ticks = 0;
-			}
-			else if (!left_ground && !state->gap_left &&
-				bot_drop_ahead(&feet, state->gap_yaw) &&
-				!bot_jump_across(&feet, state->gap_yaw, player->unit_index, NULL, NULL))
-			{
-				/* still on the ground, and the landing is gone. Holding
-				forward here is the run off the map. */
-				state->gap_hold = FALSE;
-				state->gap_left = FALSE;
-				state->gap_ticks = -20;
-				action.throttle.i = 0.0f;
-				action.throttle.j = 0.0f;
-			}
-			else if (!left_ground && state->gap_ticks > 8)
-			{
-				state->gap_hold = FALSE;
-				state->gap_ticks = 0;
-			}
-			else
-			{
-				if (!left_ground)
-					state->gap_ticks++;
-				state->facing_yaw = state->gap_yaw;
-				state->facing_pitch = 0.0f;
-				ahead.x = eye.x + cosine(state->gap_yaw);
-				ahead.y = eye.y + sine(state->gap_yaw);
-				ahead.z = eye.z;
-				bot_face(player, &action, &eye, &ahead, 0.0f, 0.0f, NULL);
-				action.throttle.i = 1.0f;
-				action.throttle.j = 0.0f;
-			}
-		}
-		if (state->gap_hold)
-			state->escape_ticks = 0;
-		else if (state->escape_ticks > 0)
-		{
-			real rel = bot_angle_delta(state->facing_yaw, state->escape_yaw);
-			real_point3d ahead;
-
-			state->escape_ticks--;
-			state->stall_ticks = 0;
-			state->facing_yaw = bot_slew(state->facing_yaw, state->escape_yaw,
-				bot_look_step(skill, FALSE) * 2.0f);
-			ahead.x = eye.x + cosine(state->facing_yaw);
-			ahead.y = eye.y + sine(state->facing_yaw);
-			ahead.z = eye.z;
-			bot_face(player, &action, &eye, &ahead, 0.0f, 0.0f, NULL);
-			action.throttle.i = cosine(rel) > 0.15f ? 1.0f : 0.0f;
-			action.throttle.j = -sine(rel);
-		}
-		if (state->gap_hold || state->vault != 0 || state->job_climb || planted ||
-			state->gap_ticks > 0 || state->escape_ticks > 0)
-			state->stall_ticks = 0;
-		else if (action.throttle.i == 0.0f && action.throttle.j == 0.0f)
-			state->stall_ticks++;
-		else
-			state->stall_ticks = 0;
-		/* a second with no step. Take an open heading on this floor. */
-		if (state->stall_ticks >= TICKS_PER_SECOND && !state->gap_hold &&
-			state->escape_ticks == 0)
-		{
-			real away;
-
-			state->stall_ticks = 0;
-			if (bot_escape_yaw(&feet, state->facing_yaw + 1.2f, player->unit_index, &away))
-			{
-				real rel = bot_angle_delta(state->facing_yaw, away);
-				real_point3d ahead;
-
-				state->escape_yaw = away;
-				state->escape_ticks = 20;
-				state->facing_yaw = bot_slew(state->facing_yaw, away, bot_look_step(skill, FALSE) * 2.0f);
-				state->commit_yaw = away;
-				state->commit_ticks = 25;
-				state->route.valid = FALSE;
-				state->wander_yaw = away;
-				ahead.x = eye.x + cosine(state->facing_yaw);
-				ahead.y = eye.y + sine(state->facing_yaw);
-				ahead.z = eye.z;
-				bot_face(player, &action, &eye, &ahead, 0.0f, 0.0f, NULL);
-				action.throttle.i = cosine(rel) > 0.15f ? 1.0f : 0.0f;
-				action.throttle.j = -sine(rel);
-			}
-		}
 		/* the grenade leaves along the aim from the tick it was chosen.
 		a flee or a new step during the wind-up is the turn as it releases. */
 		if (state->grenade_aim)

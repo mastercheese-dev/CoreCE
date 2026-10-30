@@ -1,0 +1,16 @@
+/* Placement new for the guest, which is built without the C++ library.
+   Recast carries its own; Detour uses this one. */
+#ifndef BOT_NAV_PLACEMENT_NEW_H
+#define BOT_NAV_PLACEMENT_NEW_H
+
+/* The guest's C library size_t is not the type operator new is required to take. */
+inline void *operator new(__SIZE_TYPE__, void *pointer)
+{
+	return pointer;
+}
+
+inline void operator delete(void *, void *)
+{
+}
+
+#endif

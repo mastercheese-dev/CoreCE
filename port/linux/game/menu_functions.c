@@ -90,6 +90,7 @@ their handlers open opens.
 #include "game/bots.h"
 #include "interface/virtual_keyboard.h"
 #include "saved games/player_profile.h"
+#include "math/real_math.h"
 #include "saved games/saved_game_files.h"
 #include "tag_files/tag_groups.h"
 #include "text/text_group.h"
@@ -6024,6 +6025,49 @@ static void lobby_bot_take_skill(struct widget_instance *widget)
 		lobby_bot_skill = spinner->parameters.list.selected_index;
 }
 
+/* a free for all bot wears one of the profile armor colors. One nobody in
+the lobby already has, when one is free. A team game keeps the color it
+was given, because the teams are red and blue. */
+static short lobby_bot_color(struct network_game *game, short fallback)
+{
+	word count = player_profile_number_of_available_primary_colors();
+	short open[18];
+	short open_count = 0;
+	short color;
+
+	if (!game || game->variant.universal_variant.teams)
+		return fallback;
+	if (count > NUMBEROF(open))
+		count = NUMBEROF(open);
+	for (color = 0; color < (short)count; color++)
+	{
+		short index;
+		boolean taken = FALSE;
+
+		for (index = 0; index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
+		{
+			struct network_player *player = &game->players[index];
+
+			if (network_player_is_valid(player) && player->player_list_index != NONE &&
+				player->primary_color_index == color)
+			{
+				taken = TRUE;
+				break;
+			}
+		}
+		if (!taken)
+			open[open_count++] = color;
+	}
+	if (open_count < 1)
+	{
+		for (color = 0; color < (short)count; color++)
+			open[open_count++] = color;
+	}
+	if (open_count < 1)
+		return fallback;
+	return open[seed_random_range(get_global_local_random_seed_address(), 0, open_count)];
+}
+
 /* "port lobby bot add": the bot joins on a free seat. This pad stays the
 player who added it, and the screen goes back so another bot can be added */
 static boolean lobby_bot_add(struct widget_instance *widget)
@@ -6087,7 +6131,8 @@ static boolean lobby_bot_add(struct widget_instance *widget)
 		}
 	}
 	player_ui_get_active_player_profile(0, &bot);
-	if (!network_game_client_add_named_player(client, seat, lobby_bot_edit_name, bot.primary_color_index))
+	if (!network_game_client_add_named_player(client, seat, lobby_bot_edit_name,
+		lobby_bot_color(network_game_client_get_game(client), bot.primary_color_index)))
 		return campaign_fail();
 	bot_controller_set(network_game_client_get_local_machine_index(), seat, skill);
 	lobby_join_reset();

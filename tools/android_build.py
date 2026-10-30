@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional
 from .linux_build import (LINUX_PROFILE, MINIUPNPC_DEFINES, MINIUPNPC_DIR, MUSL_MATH_DIR, STB_VORBIS_SOURCE, XDK_INCLUDE,
                           compile_launcher, configuration_defines, game_defines_and_includes, game_sources,
                           miniupnpc_sources, musl_math_sources, opus_cflags, opus_sources, pgo_mode, pgo_profile,
-                          profile_use_flags, updater_defines, xdk_headers)
+                          profile_use_flags, recast_compile_flags, recast_sources, updater_defines, xdk_headers)
 from .embed_assets import hud_assets_build, hud_configure_inputs
 from .ninja_syntax import Writer
 
@@ -504,6 +504,9 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     for source in sorted(Path(config["game_sources"]).glob("*.c")):
         objects.append(guest_object(source, game_cflags))
     objects.append(guest_object(STB_VORBIS_SOURCE, game_cflags))
+    recast_cflags = recast_compile_flags(" ".join([guest_abi, guest_code]), " ".join(libc_includes))
+    for source in recast_sources():
+        objects.append(guest_object(source, recast_cflags))
 
     # the platform layer shared with Linux, and the guest runtime
     platform_cflags = " ".join([

@@ -39,6 +39,45 @@ def game_sources(config: Dict[str, Any]) -> List[Path]:
     )
 
 
+# Recast and Detour, vendored under port/third_party/recastnavigation. The
+# game's C flags (gnu89, the prefix header) do not apply to these.
+RECAST_ROOT = Path("port/third_party/recastnavigation")
+
+
+def recast_sources() -> List[Path]:
+    """bot_nav.cpp plus Recast and Detour. bot_nav_geom.c is an ordinary game source."""
+    sources = [Path("source/game/bot_nav.cpp")]
+    sources.extend(sorted((RECAST_ROOT / "Recast" / "Source").glob("*.cpp")))
+    sources.extend(sorted((RECAST_ROOT / "Detour" / "Source").glob("*.cpp")))
+    return sources
+
+
+def recast_compile_flags(abi: str, system_includes: str = "") -> str:
+    """C++ flags for the navmesh. No exceptions, no RTTI, and no C++ library."""
+    includes = " ".join([
+        f"-I{RECAST_ROOT / 'Recast' / 'Include'}",
+        f"-I{RECAST_ROOT / 'Detour' / 'Include'}",
+        f"-I{RECAST_ROOT / 'compat'}",
+        "-Isource",
+    ])
+    parts = [
+        abi,
+        "-std=c++17",
+        "-fno-exceptions",
+        "-fno-rtti",
+        "-fno-use-cxa-atexit",
+        "-fno-threadsafe-statics",
+        "-fno-unwind-tables",
+        "-fno-asynchronous-unwind-tables",
+        "-DRC_DISABLE_ASSERTS",
+        "-w",
+        includes,
+    ]
+    if system_includes:
+        parts.append(system_includes)
+    return " ".join(parts)
+
+
 def game_defines_and_includes(config: Dict[str, Any]) -> str:
     """the game sources' defines and include directories (port.json "game")"""
     game = config["game"]
@@ -561,6 +600,9 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
         for source in sorted(Path(config["game_sources"]).glob("*.c")):
             add_object(source, game_cflags)
         add_object(STB_VORBIS_SOURCE, game_cflags)
+        recast_flags = recast_compile_flags(abi)
+        for source in recast_sources():
+            add_object(source, recast_flags)
 
         platform_dir = Path(config["platform_sources"])
         platform_cflags = " ".join([
