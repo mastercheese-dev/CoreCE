@@ -104,6 +104,7 @@ their handlers open opens.
 #include "text/draw_string.h"
 /* (internet play's server browser: the platform layer's) */
 #include "../src/p2p.h"
+#include "../src/matchmaking.h"
 #include "text_filter.h"
 
 #include <stdio.h>
@@ -3857,6 +3858,8 @@ void network_game_server_port_set_cooperative_friendly_fire(short friendly_fire)
 void network_game_server_port_set_cooperative_player_collisions(boolean player_collisions);
 void *global_network_game_client_get(void);
 void *global_network_game_server_get(void);
+void dispose_global_network_game_client(void);
+void dispose_global_network_game_server(void);
 struct network_game *network_game_server_get_game(void *server);
 void game_set_game_variant(struct game_variant *variant);
 boolean network_game_is_splitscreen_local(void);
@@ -4085,6 +4088,8 @@ static void multiplayer_mode_set(struct widget_instance *widget)
 	multiplayer.hardcore = FALSE;
 	hardcore_rules_clear_session();
 	hardcore_variant_drop();
+	/* a matchmaking game keeps its own port until a normal one is chosen */
+	matchmaking_set_game_port(0);
 	multiplayer.mode =
 		strstr(name, "create_inter") ? _multiplayer_mode_host_internet :
 		strstr(name, "create_lan") ? _multiplayer_mode_host_lan :
@@ -8890,6 +8895,637 @@ static boolean list_copy_back(struct widget_instance *widget, boolean *widget_de
 	return TRUE;
 }
 
+/* ---------- Matchmaking (above Server Browser). The service names the map,
+the rules, and the port. This machine publishes while it waits, and stops
+when the menu goes. Hosting stays in the game it opened. Joining uses the
+offer's port, never the ordinary game port. */
+
+enum
+{
+	MM_MENU_CHOOSE,
+	MM_MENU_SEARCHING,
+	MM_MENU_LAUNCHING,
+	MM_MENU_JOINING,
+	MM_MENU_DONE,
+	MM_MENU_ERROR
+};
+
+static struct
+{
+	int state;
+	int invited;
+	int waiting;
+	int launch_frames;
+	int detail;
+	struct matchmaking_offer offer;
+	wchar_t status[ROW_TEXT_LENGTH];
+} mm_menu;
+
+static void mm_status(const wchar_t *text)
+{
+	ustrncpy(mm_menu.status, text ? text : L"", ROW_TEXT_LENGTH - 1);
+	mm_menu.status[ROW_TEXT_LENGTH - 1] = 0;
+}
+
+static void mm_ascii(wchar_t *text, int size, const char *ascii);
+
+static int mm_slot(const char *name)
+{
+	if (name && strstr(name, "mm_objective"))
+		return 0;
+	if (name && strstr(name, "mm_ffa"))
+		return 1;
+	if (name && strstr(name, "mm_hardcore"))
+		return 2;
+	return -1;
+}
+
+static const char *mm_mode_label(const char *mode)
+{
+	if (!strcmp(mode, "oddball"))
+		return "Oddball";
+	if (!strcmp(mode, "king"))
+		return "King";
+	if (!strcmp(mode, "ctf"))
+		return "CTF";
+	if (!strcmp(mode, "slayer"))
+		return "Slayer";
+	return mode;
+}
+
+static void mm_blurb(wchar_t *text, int size, const struct matchmaking_playlist *row)
+{
+	char line[ROW_TEXT_LENGTH];
+	int used;
+	int index;
+
+	if (row->teams && row->team_size > 1)
+		snprintf(line, sizeof(line), "%d players\nTeams of %d\n", row->players, row->team_size);
+	else if (row->teams)
+		snprintf(line, sizeof(line), "%d players\nTeams\n", row->players);
+	else
+		snprintf(line, sizeof(line), "%d players\nFree for all\n", row->players);
+	used = (int)strlen(line);
+	for (index = 0; index < row->mode_count && used < (int)sizeof(line) - 1; index++)
+	{
+		const char *label = mm_mode_label(row->modes[index]);
+		int length = (int)strlen(label);
+
+		if (index && used < (int)sizeof(line) - 1)
+		{
+			line[used++] = ',';
+			if (used < (int)sizeof(line) - 1)
+				line[used++] = ' ';
+		}
+		if (used + length >= (int)sizeof(line))
+			break;
+		memcpy(line + used, label, (size_t)length);
+		used += length;
+	}
+	line[used] = 0;
+	mm_ascii(text, size, line);
+}
+
+/* the three rows are the catalog, in its order. a missing row stays out of the list. */
+static void mm_rows(struct widget_instance *list, const struct matchmaking_catalog *catalog, int ready)
+{
+	static const char *const names[3] = { "mm_objective", "mm_ffa", "mm_hardcore" };
+	int index;
+
+	for (index = 0; index < 3; index++)
+	{
+		struct widget_instance *row = named(list, names[index], 0);
+		int show = ready > 0 && catalog && index < catalog->count;
+		wchar_t text[ROW_TEXT_LENGTH];
+
+		if (!row)
+			continue;
+		row->visible = show ? TRUE : FALSE;
+		row->disabled = show ? FALSE : TRUE;
+		if (show)
+		{
+			mm_ascii(text, NUMBEROF(text), catalog->playlist[index].name);
+			label_set(row, text);
+		}
+	}
+}
+
+/* the panel beside the rows, the same one the multiplayer menu uses. while
+choosing, it describes the playlist. while searching, it says what is happening. */
+static void mm_show(struct widget_instance *list)
+{
+	struct widget_instance *panel = list ? list->parameters.list.extended_description : NULL;
+	struct widget_instance *detail = named(panel, "mm_detail", 0);
+	struct widget_instance *picture = named(panel, "mm_pic", 0);
+	struct widget_instance *focus = list ? list->focused_child : NULL;
+	struct matchmaking_catalog catalog;
+	int ready = matchmaking_catalog(&catalog);
+	int slot = mm_slot(focus && focus->name ? focus->name : "");
+
+	if (picture)
+		picture->animation.current_frame_index = 0;
+	mm_rows(list, &catalog, ready);
+	if (list && mm_menu.state == MM_MENU_CHOOSE &&
+		(!focus || focus->disabled || (mm_slot(focus->name) < 0 && !strstr(focus->name, "mm_button"))))
+	{
+		struct widget_instance *child;
+
+		for (child = list->child; child; child = child->next)
+		{
+			if (mm_slot(child->name) >= 0 && child->visible && !child->disabled)
+			{
+				list->focused_child = child;
+				break;
+			}
+		}
+	}
+	focus = list ? list->focused_child : NULL;
+	slot = mm_slot(focus && focus->name ? focus->name : "");
+	if (!detail)
+		return;
+	if (slot >= 0)
+		mm_menu.detail = slot;
+	if (mm_menu.state == MM_MENU_CHOOSE && ready > 0 && mm_menu.detail >= 0 && mm_menu.detail < catalog.count)
+	{
+		wchar_t text[ROW_TEXT_LENGTH];
+
+		mm_blurb(text, NUMBEROF(text), &catalog.playlist[mm_menu.detail]);
+		label_set(detail, text);
+		return;
+	}
+	if (mm_menu.state == MM_MENU_CHOOSE && ready < 0)
+	{
+		wchar_t text[ROW_TEXT_LENGTH];
+
+		usnprintf(text, ROW_TEXT_LENGTH - 1, L"Matchmaking is on network %d.", catalog.network);
+		text[ROW_TEXT_LENGTH - 1] = 0;
+		label_set(detail, text);
+		return;
+	}
+	if (mm_menu.state == MM_MENU_CHOOSE && ready == 0)
+	{
+		label_set(detail, matchmaking_link() < 0 ? L"Could not reach matchmaking." : L"Connecting...");
+		return;
+	}
+	label_set(detail, mm_menu.status);
+}
+
+static void mm_ascii(wchar_t *text, int size, const char *ascii)
+{
+	int index = 0;
+
+	if (!ascii)
+		ascii = "";
+	for (; ascii[index] && index < size - 1; index++)
+		text[index] = (wchar_t)(unsigned char)ascii[index];
+	text[index] = 0;
+}
+
+static const char *mm_playlist_of(struct widget_instance *widget, const struct matchmaking_catalog *catalog)
+{
+	int slot = mm_slot(widget && widget->name ? widget->name : "");
+
+	if (!catalog || slot < 0 || slot >= catalog->count)
+		return NULL;
+	return catalog->playlist[slot].id;
+}
+
+static void mm_gamertag(char *text, int size)
+{
+	struct player_profile profile;
+	int index = 0;
+
+	text[0] = 0;
+	if (size < 2 || player_ui_get_active_player_profile_index(0) == NONE)
+		return;
+	player_ui_get_active_player_profile(0, &profile);
+	for (; profile.player_name[index] && index < 11 && index < size - 1; index++)
+	{
+		wchar_t character = profile.player_name[index];
+
+		text[index] = character >= 32 && character < 127 ? (char)character : '?';
+	}
+	text[index] = 0;
+}
+
+static short mm_players_index(int players)
+{
+	short index;
+	short best = 0;
+
+	for (index = 0; index < (short)NUMBEROF(maximum_players); index++)
+	{
+		if (maximum_players[index] <= players)
+			best = index;
+		if (maximum_players[index] == players)
+			return index;
+	}
+	return best;
+}
+
+static const wchar_t *mm_mode_name(int mode)
+{
+	if (mode == MATCHMAKING_MODE_ODDBALL)
+		return L"Oddball";
+	if (mode == MATCHMAKING_MODE_KING)
+		return L"King";
+	if (mode == MATCHMAKING_MODE_CTF)
+		return L"CTF";
+	return L"Slayer";
+}
+
+/* the name shown in the game. eleven characters is all that fits. */
+static const wchar_t *mm_game_name(const struct matchmaking_offer *offer)
+{
+	if (!strcmp(offer->playlist, "hardcore"))
+		return L"Comp 2v2";
+	if (!strcmp(offer->playlist, "ffa"))
+		return L"FFA";
+	return mm_mode_name(offer->rules.mode);
+}
+
+/* the offer's rules, on top of the engine's variant for that mode */
+static void mm_apply_rules(const struct matchmaking_offer *offer)
+{
+	struct game_variant *variant = &gametype_edit.setup_variant;
+	struct matchmaking_rules const *rules = &offer->rules;
+	int teams = rules->teams ? 1 : 0;
+
+	gametype_edit.setup = TRUE;
+	if (rules->mode == MATCHMAKING_MODE_ODDBALL)
+		teams ? build_game_variant_team_oddball(variant) : build_game_variant_oddball(variant);
+	else if (rules->mode == MATCHMAKING_MODE_KING)
+		teams ? build_game_variant_team_king(variant) : build_game_variant_king(variant);
+	else if (rules->mode == MATCHMAKING_MODE_CTF)
+		build_game_variant_ctf(variant);
+	else
+		teams ? build_game_variant_team_slayer(variant) : build_game_variant_slayer(variant);
+	variant->universal_variant.teams = teams ? TRUE : FALSE;
+	variant->universal_variant.respawn_time = rules->respawn_ticks;
+	variant->universal_variant.respawn_time_growth = rules->respawn_growth_ticks;
+	variant->universal_variant.suicide_penalty = rules->suicide_penalty_ticks;
+	variant->universal_variant.score_to_win = rules->score;
+	variant->universal_variant.goal_radar = rules->goal_radar;
+	SET_FLAG(variant->universal_variant.flags, _game_variant_draw_object_in_motion_sensor_bit, rules->motion_sensor);
+	SET_FLAG(variant->universal_variant.flags, _game_variant_generic_starting_equipment_bit, FALSE);
+	if (rules->mode == MATCHMAKING_MODE_SLAYER)
+	{
+		variant->game_engine_variant.slayer.no_death_bonus = rules->no_death_bonus ? TRUE : FALSE;
+		variant->game_engine_variant.slayer.no_kill_penalty = rules->no_kill_penalty ? TRUE : FALSE;
+	}
+	else if (rules->mode == MATCHMAKING_MODE_KING)
+		variant->game_engine_variant.king.moving_hill = rules->moving_hill ? TRUE : FALSE;
+	else if (rules->mode == MATCHMAKING_MODE_ODDBALL)
+		variant->game_engine_variant.oddball.ball_spawn_count = rules->ball_spawn_count > 0 ? rules->ball_spawn_count : 1;
+	ustrncpy(variant->human_readable_game_description, mm_game_name(offer),
+		NUMBEROF(variant->human_readable_game_description) - 1);
+	variant->human_readable_game_description[NUMBEROF(variant->human_readable_game_description) - 1] = 0;
+	game_variant_options_default(variant, &gametype_edit.setup_options);
+	gametype_edit.setup_options.radar_players = (byte)PIN(rules->radar_players, 0, _radar_players_none);
+	gametype_edit.setup_options.time_limit = (short)(rules->time_limit_ticks <= 0 ? 0 : rules->time_limit_ticks / (30 * 60));
+	gametype_edit.setup_options.auto_team_balance = TRUE;
+	gametype_edit.setup_options.loadout = _loadout_custom;
+	gametype_edit.setup_options.primary_weapon = (byte)rules->primary;
+	gametype_edit.setup_options.secondary_weapon = (byte)rules->secondary;
+}
+
+static void mm_sync_client(void)
+{
+	void *server = global_network_game_server_get();
+	void *client = global_network_game_client_get();
+	struct network_game *hosted = server ? network_game_server_get_game(server) : NULL;
+	struct network_game *local = client ? network_game_client_get_game(client) : NULL;
+
+	if (hosted && local)
+	{
+		local->variant = hosted->variant;
+		local->variant_options = hosted->variant_options;
+	}
+}
+
+static struct advertised_game *mm_peer_game(void)
+{
+	void *client = global_network_game_client_get();
+	struct advertised_game *games = client ? network_game_client_get_available_games(client) : NULL;
+	short index;
+
+	if (!games)
+		return NULL;
+	for (index = 0; index < MAXIMUM_ADVERTISED_GAMES; index++)
+	{
+		if (network_game_client_advertised_game_is_valid(&games[index]) && games[index].open &&
+			game_from_peer(&games[index]))
+			return &games[index];
+	}
+	return NULL;
+}
+
+static void mm_arm(struct widget_instance *list)
+{
+	struct widget_instance *launch = named(list, "mm_launch", 0);
+
+	mm_menu.state = MM_MENU_LAUNCHING;
+	mm_menu.launch_frames = 0;
+	if (launch)
+		launch->disabled = FALSE;
+}
+
+/* "port mm open" */
+static boolean mm_open(struct widget_instance *screen)
+{
+	struct widget_instance *list = named(screen, "mm_list", 0);
+	struct widget_instance *launch = named(list, "mm_launch", 0);
+
+	mm_menu.state = MM_MENU_CHOOSE;
+	mm_menu.invited = 0;
+	mm_menu.waiting = 0;
+	mm_menu.launch_frames = 0;
+	mm_menu.detail = 0;
+	if (launch)
+		launch->disabled = TRUE;
+	mm_status(L"");
+	matchmaking_watch();
+	mm_show(list);
+	return TRUE;
+}
+
+/* "port mm choose": publish this playlist until this player has joined */
+static boolean mm_choose(struct widget_instance *widget)
+{
+	struct matchmaking_catalog catalog;
+	int ready = matchmaking_catalog(&catalog);
+	const char *playlist = mm_playlist_of(widget, ready > 0 ? &catalog : NULL);
+	char name[12];
+
+	if (mm_menu.state == MM_MENU_LAUNCHING || mm_menu.state == MM_MENU_JOINING ||
+		mm_menu.state == MM_MENU_DONE)
+		return FALSE;
+	if (!config_boolean("network.online"))
+	{
+		mm_menu.state = MM_MENU_ERROR;
+		mm_status(L"Internet play is off.");
+		return FALSE;
+	}
+	if (ready < 0)
+	{
+		wchar_t text[ROW_TEXT_LENGTH];
+
+		usnprintf(text, ROW_TEXT_LENGTH - 1, L"Matchmaking is on network %d.", catalog.network);
+		text[ROW_TEXT_LENGTH - 1] = 0;
+		mm_menu.state = MM_MENU_ERROR;
+		mm_status(text);
+		return FALSE;
+	}
+	if (!playlist)
+		return FALSE;
+	mm_gamertag(name, sizeof(name));
+	mm_menu.invited = 0;
+	mm_menu.waiting = 0;
+	matchmaking_queue(playlist, name);
+	mm_menu.state = MM_MENU_SEARCHING;
+	mm_status(L"Searching...");
+	return FALSE;
+}
+
+/* "port mm leave": the screen went away. a match already taken keeps its port. */
+static boolean mm_menu_leave(void)
+{
+	int joining = mm_menu.state == MM_MENU_JOINING || mm_menu.state == MM_MENU_LAUNCHING;
+
+	matchmaking_leave();
+	if (mm_menu.state != MM_MENU_DONE)
+		mm_menu.state = MM_MENU_CHOOSE;
+	if (joining)
+	{
+		dispose_global_network_game_client();
+		dispose_global_network_game_server();
+	}
+	return TRUE;
+}
+
+static boolean mm_begin_host(struct widget_instance *widget, struct event_record *event)
+{
+	char build[0x20];
+	wchar_t name[16];
+	const char *title = mm_menu.offer.name[0] ? mm_menu.offer.name : !strcmp(mm_menu.offer.playlist, "ffa") ? "FFA" :
+		!strcmp(mm_menu.offer.playlist, "hardcore") ? "Hardcore" : "Objective";
+
+	if (!mm_menu.offer.map[0] || !mm_menu.offer.port)
+	{
+		mm_status(L"The match had no port.");
+		return FALSE;
+	}
+	if (!cache_files_map_plays_multiplayer(mm_menu.offer.map, build))
+	{
+		cache_files_show_multiplayer_unavailable(mm_menu.offer.map, build);
+		mm_status(L"That map cannot be played.");
+		return FALSE;
+	}
+	if (!multiplayer_player(event_controller(widget, event)))
+		return FALSE;
+	matchmaking_set_game_port(mm_menu.offer.port);
+	if (!matchmaking_game_port())
+	{
+		mm_status(L"The match had no port.");
+		return FALSE;
+	}
+	multiplayer.mode = _multiplayer_mode_host_internet;
+	multiplayer.hardcore = FALSE;
+	multiplayer.game_private = TRUE;
+	p2p_set_hosting_allowed(1);
+	p2p_set_hosting_public(0);
+	p2p_set_hosting_password(NULL);
+	if (!ui_widget_port_host(widget, event, NULL))
+	{
+		matchmaking_set_game_port(0);
+		mm_status(L"Could not host the match.");
+		return FALSE;
+	}
+	main_set_multiplayer_map_name(mm_menu.offer.map);
+	game_engine_override_map_name(mm_menu.offer.map);
+	if (global_network_game_server_get())
+		network_game_server_change_map_name(global_network_game_server_get(), mm_menu.offer.map);
+	mm_apply_rules(&mm_menu.offer);
+	ui_widget_port_game_variant_set(&gametype_edit.setup_variant, &gametype_edit.setup_options);
+	game_engine_override_game_variant(&gametype_edit.setup_variant);
+	game_set_game_variant(&gametype_edit.setup_variant);
+	game_set_game_variant_options(&gametype_edit.setup_options);
+	mm_sync_client();
+	mm_ascii(name, NUMBEROF(name), title);
+	ustrncpy(multiplayer.game_name, name, NUMBEROF(multiplayer.game_name) - 1);
+	multiplayer.game_name[NUMBEROF(multiplayer.game_name) - 1] = 0;
+	multiplayer.maximum_players_index = mm_players_index(mm_menu.offer.players);
+	network_game_server_port_set_settings(multiplayer.game_name, mm_menu.offer.players);
+	matchmaking_commit_host(mm_menu.offer.playlist, mm_menu.offer.port);
+	return TRUE;
+}
+
+static boolean mm_begin_join(struct widget_instance *widget, struct event_record *event)
+{
+	if (!mm_menu.offer.invite[0] || !p2p_join_invite(mm_menu.offer.invite))
+	{
+		mm_status(L"The match had no invite.");
+		return FALSE;
+	}
+	if (!multiplayer_player(event_controller(widget, event)))
+		return FALSE;
+	matchmaking_set_game_port(mm_menu.offer.port);
+	if (!matchmaking_game_port())
+	{
+		mm_status(L"The match had no port.");
+		return FALSE;
+	}
+	if (!ui_widget_port_browse(widget, event, NULL))
+	{
+		matchmaking_set_game_port(0);
+		mm_status(L"Could not look for the match.");
+		return FALSE;
+	}
+	mm_menu.invited = 1;
+	return TRUE;
+}
+
+static boolean mm_finish_join(struct widget_instance *widget, boolean *widget_deleted)
+{
+	struct advertised_game *game = mm_peer_game();
+
+	if (!game)
+		return FALSE;
+	matchmaking_commit_join();
+	if (!ui_widget_port_join(widget, game, LOBBY_NAME, widget_deleted))
+	{
+		matchmaking_reset();
+		mm_status(L"Could not join the match.");
+		mm_menu.state = MM_MENU_ERROR;
+		return FALSE;
+	}
+	mm_menu.state = MM_MENU_DONE;
+	return TRUE;
+}
+
+/* "port mm launch": the search found a match. hosting opens it. joining
+waits until that game is on the wire, then enters it. */
+static boolean mm_launch(struct widget_instance *widget, struct event_record *event, boolean *widget_deleted)
+{
+	int join = mm_menu.offer.role == MATCHMAKING_ROLE_JOIN || mm_menu.offer.role == MATCHMAKING_ROLE_SERVER;
+
+	if (mm_menu.state != MM_MENU_LAUNCHING && mm_menu.state != MM_MENU_JOINING)
+		return FALSE;
+	if (!widget_deleted)
+	{
+		static boolean deleted;
+
+		deleted = FALSE;
+		widget_deleted = &deleted;
+	}
+	if (join)
+	{
+		if (!mm_menu.invited)
+		{
+			if (!mm_begin_join(widget, event))
+			{
+				mm_menu.state = MM_MENU_ERROR;
+				matchmaking_leave();
+				return FALSE;
+			}
+			mm_menu.state = MM_MENU_JOINING;
+			mm_status(L"Joining...");
+			return FALSE;
+		}
+		return mm_finish_join(widget, widget_deleted);
+	}
+	if (!mm_begin_host(widget, event))
+	{
+		mm_menu.state = MM_MENU_ERROR;
+		matchmaking_leave();
+		return FALSE;
+	}
+	if (!ui_widget_port_open(widget, LOBBY_NAME, widget_deleted))
+	{
+		mm_menu.state = MM_MENU_ERROR;
+		mm_status(L"Could not open the lobby.");
+		matchmaking_reset();
+		dispose_global_network_game_client();
+		dispose_global_network_game_server();
+		return FALSE;
+	}
+	mm_menu.state = MM_MENU_DONE;
+	return TRUE;
+}
+
+static void mm_offer(const struct matchmaking_offer *offer)
+{
+	/* wait, or a join that is not ready yet: the seat stays reserved while we publish */
+	if (offer->role == MATCHMAKING_ROLE_WAIT ||
+		((offer->role == MATCHMAKING_ROLE_JOIN || offer->role == MATCHMAKING_ROLE_SERVER) &&
+			(!offer->invite[0] || !offer->port)))
+	{
+		mm_menu.waiting = 1;
+		mm_status(L"Waiting for players...");
+		return;
+	}
+	mm_menu.waiting = 0;
+	if (offer->role == MATCHMAKING_ROLE_ERROR)
+	{
+		wchar_t text[ROW_TEXT_LENGTH];
+
+		if (offer->network > 0)
+			usnprintf(text, ROW_TEXT_LENGTH - 1, L"Matchmaking is on network %d.", offer->network);
+		else
+			usnprintf(text, ROW_TEXT_LENGTH - 1, L"Matchmaking refused this game.");
+		text[ROW_TEXT_LENGTH - 1] = 0;
+		mm_status(text);
+		mm_menu.state = MM_MENU_ERROR;
+		matchmaking_leave();
+		return;
+	}
+	if (offer->role != MATCHMAKING_ROLE_HOST && offer->role != MATCHMAKING_ROLE_JOIN &&
+		offer->role != MATCHMAKING_ROLE_SERVER)
+		return;
+	if (offer->role == MATCHMAKING_ROLE_HOST && (!offer->port || !offer->map[0]))
+	{
+		mm_status(L"The match had no port.");
+		mm_menu.state = MM_MENU_ERROR;
+		matchmaking_leave();
+		return;
+	}
+	mm_menu.offer = *offer;
+	mm_menu.state = MM_MENU_LAUNCHING;
+	mm_menu.launch_frames = 0;
+	mm_status(offer->role == MATCHMAKING_ROLE_HOST ? L"Hosting..." : L"Joining...");
+}
+
+/* "port mm update" */
+static void mm_update(struct widget_instance *list)
+{
+	struct widget_instance *launch = named(list, "mm_launch", 0);
+	struct matchmaking_offer offer;
+
+	if (mm_menu.state == MM_MENU_SEARCHING)
+	{
+		if (matchmaking_link() < 0)
+			mm_status(L"Could not reach matchmaking.");
+		else if (matchmaking_take_offer(&offer))
+			mm_offer(&offer);
+		else if (!mm_menu.waiting)
+			mm_status(matchmaking_link() > 0 ? L"Searching..." : L"Connecting...");
+	}
+	if (mm_menu.state == MM_MENU_JOINING && mm_peer_game())
+	{
+		mm_menu.state = MM_MENU_LAUNCHING;
+		mm_menu.launch_frames = 0;
+	}
+	if (mm_menu.state == MM_MENU_LAUNCHING && launch)
+	{
+		launch->disabled = FALSE;
+		list->focused_child = launch;
+		mm_menu.launch_frames++;
+		if (mm_menu.launch_frames == 1 || mm_menu.launch_frames == 20)
+			event_manager_post_button(controller_of(list), BUTTON_A);
+	}
+	mm_show(list);
+}
+
 /* ---------- public code */
 
 boolean pc_menu_event_function_invoke(
@@ -9038,6 +9674,22 @@ boolean pc_menu_event_function_invoke(
 		else if (!strcmp(name, "port hardcore choose"))
 		{
 			return hardcore_choose(widget);
+		}
+		else if (!strcmp(name, "port mm open"))
+		{
+			return mm_open(widget);
+		}
+		else if (!strcmp(name, "port mm choose"))
+		{
+			return mm_choose(widget);
+		}
+		else if (!strcmp(name, "port mm leave"))
+		{
+			return mm_menu_leave();
+		}
+		else if (!strcmp(name, "port mm launch"))
+		{
+			return mm_launch(widget, event, widget_deleted);
 		}
 		else if (!strcmp(name, "port hardcore start"))
 		{
@@ -9414,4 +10066,6 @@ void pc_menu_game_data_function_invoke(
 		coop_friendly_fire_text(widget);
 	else if (!strcmp(name, "port hardcore server"))
 		hardcore_server_update(widget);
+	else if (!strcmp(name, "port mm update"))
+		mm_update(widget);
 }

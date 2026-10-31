@@ -454,6 +454,7 @@ symbols in this file:
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "../../port/linux/game/hardcore_rules.h"
+#include "../../port/linux/src/matchmaking.h"
 #include "game/performance_variant.h"
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "../../port/linux/game/performance_options.h"
@@ -521,6 +522,8 @@ enum
 	longer set) */
 	CLIENT_UPDATE_SEQUENCE_NUMBER_MASK = 0x7FFFFFFF,
 	NETWORK_GAME_COUNTDOWN_TIME = 30999,
+	/* a matchmaking lobby stays up until it is full, or about 100 seconds */
+	NETWORK_GAME_MATCHMAKING_COUNTDOWN_TIME = 100000,
 	NETWORK_GAME_SPLITSCREEN_COUNTDOWN_TIME = 10999,
 	NETWORK_GAME_COUNTDOWN_ADJUSTMENT = 5000,
 	NETWORK_GAME_MINIMUM_COUNTDOWN_TIME = 999,
@@ -1436,7 +1439,7 @@ struct network_game_server *network_game_server_create(
 	{
 		server->connection = network_connection_new(
 			FLAG(_connection_create_server_bit),
-			NETWORK_GAME_SERVER_PORT);
+			matchmaking_game_port() ? matchmaking_game_port() : (unsigned short)NETWORK_GAME_SERVER_PORT);
 
 		if (server->connection != NULL)
 		{
@@ -3593,6 +3596,13 @@ can join the game in progress. */
 boolean server_ok_to_countdown(
 	struct network_game_server *server)
 {
+	/* a matchmaking lobby counts from the host's own player. it ends early
+	once every seat is taken. an ordinary lobby can count down with the
+	only players on the host's machine, and still wants its minimum. */
+	if (matchmaking_game_port())
+	{
+		return server_has_enough_machines(server) && server->game.player_count >= 1;
+	}
 	if (server_has_enough_machines(server) &&
 		(!server_needs_more_teams(server) || server_players_on_one_machine(server)) &&
 		(server->game.player_count >= server->game.minimum_players || server_players_on_one_machine(server)))
@@ -4255,7 +4265,8 @@ void network_game_server_update_countdown(
 							countdown_timer_increment(
 								&server->countdown_state.timer,
 								NETWORK_GAME_COUNTDOWN_ADJUSTMENT,
-								NETWORK_GAME_COUNTDOWN_TIME);
+								matchmaking_game_port() ? NETWORK_GAME_MATCHMAKING_COUNTDOWN_TIME :
+									NETWORK_GAME_COUNTDOWN_TIME);
 							break;
 
 						case _network_game_server_countdown_event_player_joined:
@@ -4309,6 +4320,8 @@ void network_game_server_update_countdown(
 
 						if (network_game_is_splitscreen_local())
 							countdown = NETWORK_GAME_SPLITSCREEN_COUNTDOWN_TIME;
+						else if (matchmaking_game_port())
+							countdown = NETWORK_GAME_MATCHMAKING_COUNTDOWN_TIME;
 						else
 							countdown = NETWORK_GAME_COUNTDOWN_TIME;
 
@@ -5315,7 +5328,13 @@ static boolean network_game_server_idle_pregame_tasks(
 					sizeof(server->countdown_state));
 				send_countdown_update = TRUE;
 			}
-			else if (countdown_timer_get_time_remaining(
+			else
+			{
+				/* full means start. the wait is for seats that are still open. */
+				if (matchmaking_game_port() && server->game.maximum_players > 0 &&
+					server->game.player_count >= server->game.maximum_players)
+					countdown_timer_set_time_remaining(&server->countdown_state.timer, 0);
+			if (countdown_timer_get_time_remaining(
 				&server->countdown_state.timer) == 0 &&
 				network_game_server_have_all_machines_have_precached(server) &&
 				server->countdown_state.paused == FALSE)
@@ -5330,6 +5349,7 @@ static boolean network_game_server_idle_pregame_tasks(
 				MILLISECONDS_PER_SECOND)
 			{
 				send_countdown_update = TRUE;
+			}
 			}
 
 			if (send_countdown_update == TRUE)

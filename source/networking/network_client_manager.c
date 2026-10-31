@@ -366,6 +366,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#include "../../port/linux/src/matchmaking.h"
 #include "bungie_net/common/message_header.h"
 #include "bungie_net/network/transport.h"
 #include "bungie_net/network/transport_address_constants.h"
@@ -2930,7 +2931,8 @@ static boolean network_game_client_idle_searching(
 			struct transport_address server_address;
 
 			server_address.address.long_words[0] = IPV4_LOOPBACK_ADDRESS;
-			server_address.port = NETWORK_GAME_SERVER_PORT;
+			server_address.port = matchmaking_game_port() ? matchmaking_game_port() :
+				(unsigned short)NETWORK_GAME_SERVER_PORT;
 			server_address.address_length = IPV4_ADDRESS_LENGTH;
 			local_game.platform = network_game_get_local_platform();
 
@@ -2975,7 +2977,8 @@ static boolean network_game_client_idle_searching(
 					sizeof(broadcast_game_search.nonce));
 				broadcast_address.address_length = IPV4_ADDRESS_LENGTH;
 				broadcast_address.address.long_words[0] = BROADCAST_IPV4_ADDRESS;
-				broadcast_address.port = NETWORK_GAME_SERVER_PORT;
+				broadcast_address.port = matchmaking_game_port() ? matchmaking_game_port() :
+					(unsigned short)NETWORK_GAME_SERVER_PORT;
 
 				message = create_network_game_message(
 					_message_client_broadcast_game_search,
@@ -3467,7 +3470,9 @@ boolean network_game_client_join_first_available_game(
 
 			csmemset(&join_parameters, 0, sizeof(join_parameters));
 			transport_client_start((XNADDR const *)&game->xnaddr, (XNKEY const *)&game->key,
-				(XNKID const *)&game->key_id, NETWORK_GAME_SERVER_PORT, &address);
+				(XNKID const *)&game->key_id,
+				matchmaking_game_port() ? matchmaking_game_port() : (unsigned short)NETWORK_GAME_SERVER_PORT,
+				&address);
 			if (!address.address.long_words[0] || !address.port)
 				return FALSE;
 			network_game_generate_join_game_token(join_parameters.join_token);

@@ -34,6 +34,11 @@
 		<on event="start" run="mp type set mode" open="main_menu/multiplayer_type_select/join_game/join_game_screen"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
+	<widget name="main_menu/multiplayer_type_select/multiplayer_type_mm_item" type="text" left="51" width="226" height="32" bitmap="bitmaps/list_item_bkd" string_list="main_menu/multiplayer_type_select/multiplayer_options" string_index="8" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="5">
+		<on event="a" open="main_menu/multiplayer_type_select/matchmaking/mm_screen"/>
+		<on event="start" open="main_menu/multiplayer_type_select/matchmaking/mm_screen"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+	</widget>
 	<widget name="main_menu/multiplayer_type_select/multiplayer_type_join_internet_item" type="text" left="51" width="226" height="32" bitmap="bitmaps/list_item_bkd" string_list="main_menu/multiplayer_type_select/multiplayer_options" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="5" string_index="6">
 		<on event="a" run="mp type set mode" open="main_menu/multiplayer_type_select/join_game/join_game_screen"/>
 		<on event="start" run="mp type set mode" open="main_menu/multiplayer_type_select/join_game/join_game_screen"/>
@@ -54,20 +59,21 @@
 	<widget name="main_menu/multiplayer_type_select/multiplayer_type_select_list" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_items" description="main_menu/multiplayer_type_select/multiplayer_type_list_ext_desc">
 		<data input="multiplayer type menu update desc"/>
 		<child widget="main_menu/multiplayer_type_select/multiplayer_type_join_item" x="-32" y="73"/>
-		<child widget="main_menu/multiplayer_type_select/multiplayer_type_join_internet_item" y="103"/>
-		<child widget="main_menu/multiplayer_type_select/multiplayer_type_join_lan_item" y="133"/>
-		<child widget="main_menu/multiplayer_type_select/multiplayer_type_join_direct_item" y="163"/>
-		<child widget="main_menu/multiplayer_type_select/multiplayer_type_create_item" x="-32" y="193"/>
-		<child widget="main_menu/multiplayer_type_select/multiplayer_type_create_internet_item" y="223"/>
-		<child widget="main_menu/multiplayer_type_select/multiplayer_type_create_lan_item" y="253"/>
-		<child widget="main_menu/multiplayer_type_select/multiplayer_type_coop_item" y="283"/>
-		<child widget="main_menu/multiplayer_type_select/multiplayer_type_gametypes_item" y="350"/>
+		<child widget="main_menu/multiplayer_type_select/multiplayer_type_mm_item" y="103"/>
+		<child widget="main_menu/multiplayer_type_select/multiplayer_type_join_internet_item" y="133"/>
+		<child widget="main_menu/multiplayer_type_select/multiplayer_type_join_lan_item" y="163"/>
+		<child widget="main_menu/multiplayer_type_select/multiplayer_type_join_direct_item" y="193"/>
+		<child widget="main_menu/multiplayer_type_select/multiplayer_type_create_item" x="-32" y="223"/>
+		<child widget="main_menu/multiplayer_type_select/multiplayer_type_create_internet_item" y="253"/>
+		<child widget="main_menu/multiplayer_type_select/multiplayer_type_create_lan_item" y="283"/>
+		<child widget="main_menu/multiplayer_type_select/multiplayer_type_coop_item" y="313"/>
+		<child widget="main_menu/multiplayer_type_select/multiplayer_type_gametypes_item" y="370"/>
 		<child widget="main_menu/multiplayer_type_select/multiplayer_type_button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/multiplayer_type_select_screen" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/gradient">
 		<on event="created" run="mp type menu initialize"/>
 		<child widget="main_menu/multiplayer_type_select/header_multiplayer"/>
 		<child widget="main_menu/multiplayer_type_select/multiplayer_type_select_list"/>
-		<child widget="main_menu/blueline" x="64" y="323"/>
+		<child widget="main_menu/blueline" x="64" y="348"/>
 	</widget>
 </menus>

@@ -910,10 +910,25 @@ static void multiplayer_type_menu_update_extended_description(
 
 	if (index != NONE)
 	{
-		list_widget->parameters.list.extended_description->child->
-			animation.current_frame_index = index;
-		list_widget->parameters.list.extended_description->child->next->
-			parameters.text_box.string_list_index = index;
+		/* MATCHMAKING is the first row that takes a press, so the rows
+		under it keep the description and the picture they had. Its words
+		are the last of that list, beside the internet picture. */
+		if (list_widget->focused_child->name && strstr(list_widget->focused_child->name, "type_mm_item"))
+		{
+			list_widget->parameters.list.extended_description->child->
+				animation.current_frame_index = 0;
+			list_widget->parameters.list.extended_description->child->next->
+				parameters.text_box.string_list_index = 7;
+		}
+		else
+		{
+			if (index > 0)
+				index--;
+			list_widget->parameters.list.extended_description->child->
+				animation.current_frame_index = index;
+			list_widget->parameters.list.extended_description->child->next->
+				parameters.text_box.string_list_index = index;
+		}
 	}
 	return;
 }

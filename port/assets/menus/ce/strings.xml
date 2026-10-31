@@ -376,6 +376,20 @@
 		<string text="Host a game on your LAN\nonly." map="4"/>
 		<string text="Play the campaign with a\nfriend in split screen:\nplayer 2 on a gamepad."/>
 		<string text="Set all the attributes for your \nmultiplayer gametypes and\nkeep them for future use." map="5"/>
+		<string text="Play a match the service sets up.\nObjective, free for all, or hardcore."/>
+	</strings>
+	<strings name="main_menu/multiplayer_type_select/matchmaking/playlists">
+		<string text="OBJECTIVE"/>
+		<string text="FFA"/>
+		<string text="HARDCORE 2V2"/>
+	</strings>
+	<strings name="main_menu/multiplayer_type_select/matchmaking/header">
+		<string text="PLAYLIST"/>
+	</strings>
+	<strings name="main_menu/multiplayer_type_select/matchmaking/descriptions">
+		<string text="Team games on a rotation of\nOddball, King, and CTF.\n\n8 players"/>
+		<string text="Free for all slayer.\nFirst to 50 kills.\n\n8 players"/>
+		<string text="Team slayer, two against two.\n\n4 players"/>
 	</strings>
 	<strings name="main_menu/multiplayer_type_select/multiplayer_options" map="ui\shell\main_menu\multiplayer_type_select\multiplayer_options">
 		<string text="JOIN GAME" map="0"/>
@@ -386,6 +400,7 @@
 		<string text="EDIT GAMETYPES" map="5"/>
 		<string text="SERVER BROWSER"/>
 		<string text="CO-OP CAMPAIGN"/>
+		<string text="MATCHMAKING"/>
 	</strings>
 	<strings name="main_menu/multiplayer_type_select/server_settings/cap_server_settings_options" map="ui\shell\main_menu\multiplayer_type_select\server_settings\cap_server_settings_options">
 		<string text="Enter a name for your server." map="0"/>

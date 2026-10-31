@@ -403,6 +403,8 @@ static char const *const port_function_names[] =
 	"port mods save",
 	/* (B on a profile or gametype list: leaves the copy picker, else goes back) */
 	"port list copy back",
+	/* (Multiplayer's MATCHMAKING) */
+	"port mm open", "port mm choose", "port mm leave", "port mm launch",
 };
 
 /* the PC version's game data functions that the Xbox's have not, from
@@ -431,6 +433,8 @@ static char const *const port_game_data_input_names[] =
 	"port hardcore maps", "port hardcore setup", "port hardcore server",
 	/* (network co-op's pause menu's FRIENDLY FIRE: its text, ON or OFF) */
 	"port coop friendly fire text",
+	/* (MATCHMAKING's search) */
+	"port mm update",
 };
 
 static struct

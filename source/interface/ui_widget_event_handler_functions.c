@@ -908,6 +908,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#include "../../port/linux/src/matchmaking.h"
 #include "cache/cache_files.h"
 #include "bungie_net/network/transport.h"
 #include "bungie_net/network/transport_endpoint_winsock.h"
@@ -1935,7 +1936,8 @@ static boolean network_game_join_game_from_server_list(
 						which is the newer, and stays in the list) */
 						if (!network_game_client_advertised_game_compatible(global_network_game_client_get(), server, TRUE))
 							return FALSE;
-						transport_client_start(server + 0x18, server + 8, server, 0x141E, &address);
+						transport_client_start(server + 0x18, server + 8, server,
+							matchmaking_game_port() ? matchmaking_game_port() : 0x141E, &address);
 						if (address.address.long_words[0] != zero && address.port != zero)
 						{
 							join_descriptor.unknown02 = (short)zero;
@@ -2343,6 +2345,7 @@ static boolean main_menu_initialize(
 	player_ui_clear_multiplayer_variant();
 	dispose_global_network_game_client();
 	dispose_global_network_game_server();
+	matchmaking_reset();
 	network_game_accept_remote_connections(FALSE);
 	player_spawn_count = 1;
 	/* port: as multiplayer_type_menu_initialize */
@@ -6194,7 +6197,8 @@ boolean ui_widget_port_join(
 	{
 		return FALSE;
 	}
-	transport_client_start(server + 0x18, server + 8, server, 0x141E, &address);
+	transport_client_start(server + 0x18, server + 8, server,
+							matchmaking_game_port() ? matchmaking_game_port() : 0x141E, &address);
 	if (!address.address.long_words[0] || !address.port)
 	{
 		error(2, "attempted to join a network game with a bogus address");

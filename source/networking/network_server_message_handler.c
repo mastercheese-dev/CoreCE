@@ -248,6 +248,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#include "../../port/linux/src/matchmaking.h"
 #include "bungie_net/common/message_header.h"
 #include "bungie_net/network/transport.h"
 #include "bungie_net/network/transport_endpoint_winsock.h"
@@ -1812,7 +1813,8 @@ static boolean network_game_server_handle_message_client_broadcast_game_search(
 				advertisement.xnaddr = *transport_get_xnaddr(&xnaddr);
 			}
 
-			advertisement.port = NETWORK_GAME_SERVER_PORT;
+			advertisement.port = matchmaking_game_port() ? matchmaking_game_port() :
+				(unsigned short)NETWORK_GAME_SERVER_PORT;
 			advertisement.version = NETWORK_GAME_MESSAGE_VERSION;
 			advertisement.platform = 0;
 			ustrncpy(advertisement.game_name, game->name, NETWORK_GAME_NAME_LENGTH - 1);

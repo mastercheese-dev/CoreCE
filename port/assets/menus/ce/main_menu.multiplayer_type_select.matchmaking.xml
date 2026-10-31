@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Matchmaking: three playlists. The service names the map, the rules, and the port. -->
+<menus>
+	<widget name="main_menu/multiplayer_type_select/matchmaking/mm_header" type="text" left="51" width="226" height="32" string_list="main_menu/multiplayer_type_select/matchmaking/header" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="5">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/matchmaking/mm_objective" type="text" left="51" width="226" height="32" bitmap="bitmaps/list_item_bkd" string_list="main_menu/multiplayer_type_select/matchmaking/playlists" string_index="0" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="5">
+		<on event="a" run="port mm choose"/>
+		<on event="start" run="port mm choose"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/matchmaking/mm_ffa" type="text" left="51" width="226" height="32" bitmap="bitmaps/list_item_bkd" string_list="main_menu/multiplayer_type_select/matchmaking/playlists" string_index="1" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="5">
+		<on event="a" run="port mm choose"/>
+		<on event="start" run="port mm choose"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/matchmaking/mm_hardcore" type="text" left="51" width="226" height="32" bitmap="bitmaps/list_item_bkd" string_list="main_menu/multiplayer_type_select/matchmaking/playlists" string_index="2" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="5">
+		<on event="a" run="port mm choose"/>
+		<on event="start" run="port mm choose"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/matchmaking/mm_pic" controller="1" left="288" top="82" width="307" height="244" bitmap="main_menu/multiplayer_type_select/mp_options">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/matchmaking/mm_detail" type="text" controller="1" left="290" top="285" width="290" height="105" string_list="main_menu/multiplayer_type_select/matchmaking/descriptions" font="ui\large_ui" color="#FF2896FF">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/matchmaking/mm_desc" controller="1" left="275" top="78" width="320" height="322" bitmap="bitmaps/list_field" color="#FF0080FF">
+		<child widget="main_menu/multiplayer_type_select/matchmaking/mm_pic"/>
+		<child widget="main_menu/multiplayer_type_select/matchmaking/mm_detail" y="37"/>
+		<child widget="main_menu/current_profile_name"/>
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/matchmaking/mm_launch" type="text" width="1" height="1">
+		<on event="a" run="port mm launch"/>
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/matchmaking/mm_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
+		<data input="common button bar update"/>
+		<child widget="common_button_back" x="510" y="1"/>
+		<on event="right_trigger" run="mouse emit accept event"/>
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/matchmaking/mm_list" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_items" description="main_menu/multiplayer_type_select/matchmaking/mm_desc">
+		<data input="port mm update"/>
+		<child widget="main_menu/multiplayer_type_select/matchmaking/mm_header" x="-32" y="73"/>
+		<child widget="main_menu/multiplayer_type_select/matchmaking/mm_objective" y="103"/>
+		<child widget="main_menu/multiplayer_type_select/matchmaking/mm_ffa" y="133"/>
+		<child widget="main_menu/multiplayer_type_select/matchmaking/mm_hardcore" y="163"/>
+		<child widget="main_menu/multiplayer_type_select/matchmaking/mm_button_bar" y="414"/>
+		<child widget="main_menu/multiplayer_type_select/matchmaking/mm_launch"/>
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/matchmaking/mm_screen" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/gradient">
+		<on event="created" run="port mm open"/>
+		<on event="deleted" run="port mm leave"/>
+		<child widget="main_menu/multiplayer_type_select/header_multiplayer"/>
+		<child widget="main_menu/multiplayer_type_select/matchmaking/mm_list"/>
+		<child widget="main_menu/blueline" x="64" y="348"/>
+	</widget>
+</menus>
