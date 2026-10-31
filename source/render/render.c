@@ -82,7 +82,6 @@ symbols in this file:
 #include "../../port/linux/game/performance_options.h"
 #include "hardcore_views.h" /* port: a teammate pane is a world view */
 #include "hardcore_rules.h" /* port: the opening ring covers the first frames */
-#include "opening_film.h" /* port: a campaign load plays the film */
 #endif
 #include "interface/first_person_weapons.h"
 #include "interface/interface.h"
@@ -305,12 +304,7 @@ void render_frame_pregame(
 		if (hardcore_rules_opening_hold())
 			hardcore_rules_opening_frame();
 		else if (game_map_loading_in_progress(&progress))
-		{
-			if (!opening_film_load_frame())
-				progress_bar_display(progress);
-		}
-		else if (opening_film_load_active())
-			opening_film_load_overlay();
+			progress_bar_display(progress);
 	}
 
 	rasterizer_window_end();
@@ -672,14 +666,16 @@ void render_frame(
 
 		window = &windoze[window_index];
 		render.window_index = window_index;
-		if (hardcore_views_is_blank_window((short)window_index))
-		{
-			render_blank_window(window);
-			continue;
-		}
+		/* the console window follows the panes. with one pane left, its
+		   index is the empty force-split pane, so that check comes first */
 		if (window->console_window)
 		{
 			window_type = 0;
+		}
+		else if (hardcore_views_is_blank_window((short)window_index))
+		{
+			render_blank_window(window);
+			continue;
 		}
 		else if (hardcore_views_is_teammate_window((short)window_index) &&
 			window->local_player_index != NONE)
@@ -719,11 +715,8 @@ void render_frame(
 	halo_screen_ui_offset(TRUE);
 	progress_bar_eachframe();
 	halo_screen_ui_offset(FALSE);
-	/* port: the opening film leaves over this frame, after the world and HUD */
 	if (hardcore_rules_opening_fading())
 		hardcore_rules_opening_overlay();
-	else if (opening_film_load_active())
-		opening_film_load_overlay();
 	rasterizer_windows_end();
 	rasterizer_frame_end();
 

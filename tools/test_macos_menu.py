@@ -165,6 +165,7 @@ def native_menu_loop():
         maps.mkdir(parents=True)
         for name in ('ui', 'a10'):
             (maps / (name + '.map')).write_bytes(map_header(name))
+        (maps / 'loading.tga').write_bytes(b'\x00')
         image = directory / 'disc.iso'
         image.write_bytes(disc_image(map_header('ui'), map_header('a10')))
         environment = {k: v for k, v in os.environ.items() if not k.startswith('HALO_')}

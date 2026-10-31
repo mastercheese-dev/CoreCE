@@ -6,6 +6,7 @@
 #import "HaloMapPackages.h"
 #include <SDL3/SDL.h>
 #include "host_menu.h"
+#include "xiso.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +47,7 @@
 - (void)updateSystemChrome;
 - (BOOL)chooseFolder;
 - (BOOL)chooseImage;
+- (void)ensureLoadingPicture:(NSURL *)root;
 - (void)showSettings:(id)sender;
 - (void)closeSettings:(id)sender;
 - (void)importImage:(NSURL *)image completion:(void (^)(BOOL))completion;
@@ -587,6 +589,67 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
         });
     });
 }
+/* maps/loading.tga is the original sweep's picture. a folder imported before
+the extractor wrote it has none, so the saved disc image is read again, or
+the player is asked for one. the sweep draws that picture alone.
+declining leaves it for the next time the app opens */
+- (void)ensureLoadingPicture:(NSURL *)root {
+    NSArray<NSURL *> *children = [NSFileManager.defaultManager contentsOfDirectoryAtURL:root
+        includingPropertiesForKeys:@[NSURLIsDirectoryKey] options:0 error:nil];
+    NSURL *maps = nil;
+    for (NSURL *child in children) {
+        NSNumber *directory = nil;
+        if ([child.lastPathComponent caseInsensitiveCompare:@"maps"] != NSOrderedSame) continue;
+        if ([child getResourceValue:&directory forKey:NSURLIsDirectoryKey error:nil] && directory.boolValue) {
+            maps = child;
+            break;
+        }
+    }
+    if (!maps) return;
+    for (NSURL *file in [NSFileManager.defaultManager contentsOfDirectoryAtURL:maps includingPropertiesForKeys:nil options:0 error:nil]) {
+        if ([file.lastPathComponent caseInsensitiveCompare:@"loading.tga"] == NSOrderedSame) return;
+    }
+    if (self.preferences.isoPath.length && [NSFileManager.defaultManager fileExistsAtPath:self.preferences.isoPath]) {
+        NSURL *saved = [NSURL fileURLWithPath:self.preferences.isoPath];
+        char detail[512] = {0};
+        if (xiso_extract_loading_picture(saved.fileSystemRepresentation, maps.fileSystemRepresentation, detail, (int)sizeof(detail)))
+            return;
+        NSAlert *failed = [[NSAlert alloc] init];
+        failed.messageText = @"The loading screen picture was not extracted";
+        failed.informativeText = detail[0] ? @(detail) : @"The picture could not be read from the saved disc image.";
+        [failed addButtonWithTitle:@"Choose Another Disc Image…"];
+        [failed addButtonWithTitle:@"Continue"];
+        if ([failed runModal] != NSAlertFirstButtonReturn) return;
+    }
+    for (;;) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        NSOpenPanel *panel;
+        char detail[512] = {0};
+        NSError *error = nil;
+        alert.messageText = @"The loading screen picture is missing";
+        alert.informativeText = @"Your maps folder has no loading.tga. Choose your Xbox Halo disc image and CoreCE will read that picture from default.xbe.";
+        [alert addButtonWithTitle:@"Choose Disc Image…"];
+        [alert addButtonWithTitle:@"Continue"];
+        if ([alert runModal] != NSAlertFirstButtonReturn) return;
+        panel = NSOpenPanel.openPanel;
+        panel.title = @"Choose Your Xbox Halo Disc Image";
+        panel.message = @"CoreCE reads the loading screen picture from the disc's default.xbe.";
+        panel.canChooseDirectories = NO;
+        panel.canChooseFiles = YES;
+        panel.allowsMultipleSelection = NO;
+        if ([panel runModal] != NSModalResponseOK) return;
+        if (xiso_extract_loading_picture(panel.URL.fileSystemRepresentation, maps.fileSystemRepresentation, detail, (int)sizeof(detail))) {
+            if (![self.preferences selectDataRoot:root iso:panel.URL error:&error]) showError(error);
+            return;
+        }
+        alert = [[NSAlert alloc] init];
+        alert.messageText = @"The loading screen picture was not extracted";
+        alert.informativeText = detail[0] ? @(detail) : @"The loading screen picture could not be read.";
+        [alert addButtonWithTitle:@"Try Again"];
+        [alert addButtonWithTitle:@"Continue"];
+        if ([alert runModal] != NSAlertFirstButtonReturn) return;
+    }
+}
 - (BOOL)chooseImage {
     host_sdl_release_mouse();
     NSOpenPanel *panel = NSOpenPanel.openPanel;
@@ -982,6 +1045,7 @@ int host_menu_prepare(const char *support, const char *fallback, char *data, siz
             BOOL chosen = answer == NSAlertFirstButtonReturn ? [menu chooseImage] : [menu chooseFolder];
             if (chosen) valid = [NSURL fileURLWithPath:menu.preferences.dataPath];
         }
+        [menu ensureLoadingPicture:valid];
         /* Development overrides apply to this launch; chooser actions save the
            next launch's selection without changing the current game's files. */
         menu.launchDataPath = valid.path;

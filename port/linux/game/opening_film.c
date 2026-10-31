@@ -1,7 +1,6 @@
-/* The match opening plays a film of the original loading screen. The
-retail disc has no loading.tga, which is the only picture the sweep
-can draw. The frames ship with the game, and a copy already in
-maps/opening_frames.bin is used when it is there. */
+/* A bundled film of a loading sweep. The loading screen does not play
+it. That screen is the original sweep, and its picture is maps/loading.tga
+written from the disc's default.xbe when the maps are extracted. */
 #include "cseries.h"
 #include "cseries/cseries_windows.h"
 #include "interface/progress_bar.h"
@@ -231,7 +230,7 @@ void opening_film_load_begin(void)
 	load_last_ms = 0;
 	load_fade_ms = 0;
 	load_fade_shown = 0;
-	platform_log("opening film: a match load plays the film");
+	platform_log("opening film: a campaign load plays the film");
 }
 
 boolean opening_film_load_active(void)
@@ -264,10 +263,10 @@ boolean opening_film_load_frame(void)
 	if (load_state != 1)
 		return FALSE;
 	load_advance();
-	/* a frame that does not draw stays on this film. the original sweep
-	does not take the screen. */
-	opening_film_show(load_shown_ms, 1.f);
-	return TRUE;
+	if (opening_film_show(load_shown_ms, 1.f))
+		return TRUE;
+	opening_film_load_cancel();
+	return FALSE;
 }
 
 void opening_film_load_overlay(void)

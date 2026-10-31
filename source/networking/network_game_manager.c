@@ -94,8 +94,6 @@ symbols in this file:
 #include "units/units.h"
 #include "text/unicode.h"
 #include "game/bots.h"
-#include "opening_film.h"
-
 #include <xtl.h>
 
 /* ---------- constants */
@@ -797,10 +795,6 @@ boolean network_game_create_game_objects(
 			break;
 	}
 
-	/* a network match plays the opening film while the map loads, including
-	one joined from matchmaking or the server browser. the original sweep
-	is not the stand-in. */
-	opening_film_load_arm();
 	game_precache_new_map(options.map_name, TRUE);
 	main_menu_unload();
 

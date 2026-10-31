@@ -13,9 +13,8 @@ unsigned long opening_film_duration_ms(void);
 picture by at most this, so a hitch does not skip ahead. */
 unsigned long opening_film_step_ms(void);
 
-/* A campaign or co-op load. The next map copy plays the film instead of
-   the stand-in ring, then fades it off the level. A multiplayer match
-   keeps its own opening. */
+/* Kept with the game. The loading screen does not play it. That screen
+   is the original sweep of maps/loading.tga, from the disc's default.xbe. */
 void opening_film_load_arm(void);
 boolean opening_film_load_take_arm(void);
 void opening_film_load_begin(void);

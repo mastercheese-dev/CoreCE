@@ -3523,8 +3523,8 @@ static void distributed_match_start(
 			return;
 		if (!expired && !hardcore_rules_opening_world_ready())
 			return;
-		/* A fast world still plays the film out. The start waits for the
-		moment the film fades, unless the ready wait has run out. */
+		/* A fast world still plays the loading sweep out. The start waits
+		for that sweep to finish, unless the ready wait has run out. */
 		if (!expired && !hardcore_rules_opening_film_at_fade())
 			return;
 		message.update_number = network_game_server_get_next_update_number();
