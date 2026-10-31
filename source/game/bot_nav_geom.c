@@ -329,10 +329,43 @@ static int bot_nav_land_walled(float face_x, float face_y, float yaw,
 	return hits == 2;
 }
 
+/* the sniper lip is only a step deep, and the wall is the rest of that
+step. A deck that continues past the face is clear through here. */
+static int bot_nav_forward_wall(float face_x, float face_y, float yaw, float gz)
+{
+	struct collision_bsp *bsp;
+	real_point3d origin;
+	real_vector3d into;
+	struct collision_bsp_test_vector_result hit;
+	real_plane3d plane;
+
+	bsp = global_collision_bsp_get();
+	if (!bsp)
+		return 0;
+	origin.x = face_x + cosine(yaw) * 0.16f;
+	origin.y = face_y + sine(yaw) * 0.16f;
+	origin.z = gz + 0.55f;
+	into.i = cosine(yaw) * 0.70f;
+	into.j = sine(yaw) * 0.70f;
+	into.k = 0.0f;
+	if (!collision_bsp_test_vector(
+			FLAG(_collision_test_front_facing_surfaces_bit) |
+				FLAG(_collision_test_back_facing_surfaces_bit),
+			bsp, 0, NULL, &origin, &into, 1.0f, &hit) ||
+		hit.t > 0.95f || TEST_FLAG(hit.flags, BOT_NAV_CLIMBABLE))
+		return 0;
+	bsp3d_get_plane_from_designator(&bsp->bsp3d, hit.plane_designator, &plane);
+	/* the floor and a sloped trim are not the wall they run into. */
+	if (plane.n.k > 0.40f || plane.n.k < -0.40f)
+		return 0;
+	return 1;
+}
+
 /* a floor the climb comes out on. The exit is often beside the face or
 past it, and sometimes well below the highest vertex when one tall face
 runs past the deck. Keep a point on open floor, off the eroded lip.
-A closed side of the shaft loses to a floor the body can step onto. */
+A closed side of the shaft loses to a floor the body can step onto.
+A lip that ends in a wall loses to the platform beside that same deck. */
 static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowest, float highest,
 	float *lx, float *ly, float *lz)
 {
@@ -348,6 +381,7 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 	int best_open;
 	int best_away;
 	int best_walled;
+	int best_blocked;
 	float best_z;
 	float best_reach;
 
@@ -356,6 +390,7 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 	best_open = -1;
 	best_away = 1;
 	best_walled = 1;
+	best_blocked = 1;
 	best_z = -1.0e9f;
 	best_reach = 0.0f;
 	sample_index = 0;
@@ -382,7 +417,9 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 				int better;
 				int away;
 				int walled;
+				int blocked;
 				float forward;
+				float across_land;
 
 				heading = yaw + turn[turn_index];
 				x = face_x + cosine(heading) * reach[reach_index];
@@ -396,18 +433,31 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 					continue;
 				/* yaw looks into the face. Past that plane is the back. */
 				forward = cosine(yaw) * (gx - face_x) + sine(yaw) * (gy - face_y);
+				across_land = -sine(yaw) * (gx - face_x) + cosine(yaw) * (gy - face_y);
+				if (across_land < 0.0f)
+					across_land = -across_land;
 				away = forward > 0.35f;
 				walled = bot_nav_land_walled(face_x, face_y, yaw, gx, gy, gz);
+				/* beside the shaft is a real exit. Only the lip straight
+				off the rungs is the one that dead-ends in the wall. */
+				blocked = 0;
+				if (forward > 0.20f && across_land < 0.65f)
+					blocked = bot_nav_forward_wall(face_x, face_y, yaw, gz);
 				open = bot_nav_floor_open(gx, gy, gz);
 				tier = open >= 3 ? 1 : 0;
 				prefer = reach[reach_index] - 1.70f;
 				if (prefer < 0.0f)
 					prefer = -prefer;
 				better = 0;
+				/* the lip in front of the wall is not the platform beside
+				it. A lower floor is the walk back down around the opening,
+				and a clear deck straight off the face is left alone. */
+				if (found && blocked != best_blocked)
+					better = !blocked && best_blocked && gz >= best_z - 0.70f;
 				/* the sniper shaft is closed on one side. That floor is
 				not a step off while the same deck is open. A lower
 				floor is the walk back down around the opening. */
-				if (found && walled != best_walled)
+				else if (found && walled != best_walled)
 					better = !walled && best_walled && gz >= best_z - 0.75f;
 				/* a floor through the face is the wrong side. Keep it
 				only when the climb side has no floor up there. */
@@ -439,6 +489,7 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 					continue;
 				best_away = away;
 				best_walled = walled;
+				best_blocked = blocked;
 				best_tier = tier;
 				best_open = open;
 				best_z = gz;
