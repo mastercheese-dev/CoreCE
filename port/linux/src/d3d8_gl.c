@@ -548,6 +548,9 @@ struct framebuffer_entry
 	GLuint framebuffer;
 };
 
+/* Intel's Windows driver. Set once the renderer string is known. */
+static int clear_scissor_lower_left;
+
 static struct render_target_entry *render_targets;
 static struct framebuffer_entry *framebuffers;
 
@@ -581,6 +584,9 @@ struct gl_device
 {
 	D3DPRESENT_PARAMETERS presentation;
 	D3DSurface back_buffer;
+	/* GetBackBuffer(-1) is the frame Present last showed. The loading
+	   sweep samples it while the next frame is being drawn. */
+	D3DSurface history_buffer;
 	D3DSurface depth_buffer;
 	D3DSurface *render_target;
 	D3DSurface *depth_stencil;
@@ -1780,6 +1786,14 @@ static void gl_initialize(void)
 
 		if (every < 0)
 			every = renderer && strstr(renderer, "Mesa Intel") ? 3 : 0;
+		/* this driver's glClear reads the scissor from the lower left, while
+		draws use the upper-left origin glClipControl set. A split pane's
+		clear then lands in the other half and covers that half's picture. */
+		if (renderer && strstr(renderer, "Intel") && !strstr(renderer, "Mesa"))
+		{
+			clear_scissor_lower_left = 1;
+			platform_log("GPU: Intel clears use a lower-left scissor; split panes are matched to their draws");
+		}
 		if (every > 0)
 		{
 			device.flush_every = (unsigned long)every;
@@ -1962,13 +1976,16 @@ HRESULT WINAPI Direct3D_CreateDevice(UINT adapter, D3DDEVTYPE device_type, void 
 		height = device.presentation.BackBufferHeight ? device.presentation.BackBufferHeight : 480;
 #ifdef HALO_ANDROID
 		d3d8_surface_initialize(&device.back_buffer, D3DFMT_LIN_A8R8G8B8, width, height);
+		d3d8_surface_initialize(&device.history_buffer, D3DFMT_LIN_A8R8G8B8, width, height);
 		d3d8_surface_initialize(&device.depth_buffer, D3DFMT_LIN_D24S8, width, height);
 #else
 		/* room for the widest screen, which F11 can switch to (the screen's
 		width, above) */
 		d3d8_surface_initialize(&device.back_buffer, D3DFMT_LIN_A8R8G8B8, SCREEN_MAXIMUM_WIDTH, height);
+		d3d8_surface_initialize(&device.history_buffer, D3DFMT_LIN_A8R8G8B8, SCREEN_MAXIMUM_WIDTH, height);
 		d3d8_surface_initialize(&device.depth_buffer, D3DFMT_LIN_D24S8, SCREEN_MAXIMUM_WIDTH, height);
 		d3d8_surface_resize(&device.back_buffer, D3DFMT_LIN_A8R8G8B8, width, height);
+		d3d8_surface_resize(&device.history_buffer, D3DFMT_LIN_A8R8G8B8, width, height);
 		d3d8_surface_resize(&device.depth_buffer, D3DFMT_LIN_D24S8, width, height);
 #endif
 		device.render_target = &device.back_buffer;
@@ -2146,6 +2163,7 @@ long halo_screen_commit(void)
 		{
 			device.presentation.BackBufferWidth = (UINT)width;
 			d3d8_surface_resize(&device.back_buffer, D3DFMT_LIN_A8R8G8B8, (unsigned long)width, SCREEN_HEIGHT);
+			d3d8_surface_resize(&device.history_buffer, D3DFMT_LIN_A8R8G8B8, (unsigned long)width, SCREEN_HEIGHT);
 			d3d8_surface_resize(&device.depth_buffer, D3DFMT_LIN_D24S8, (unsigned long)width, SCREEN_HEIGHT);
 		}
 #endif
@@ -2187,11 +2205,15 @@ void WINAPI D3DDevice_GetDeviceCaps(D3DCAPS8 *caps)
 
 void WINAPI D3DDevice_GetBackBuffer(INT back_buffer, D3DBACKBUFFER_TYPE type, D3DSurface **result)
 {
-	(void)back_buffer;
+	D3DSurface *surface;
+
 	(void)type;
+	/* 0 is the frame being drawn. -1 is the one Present last showed, which
+	   the loading sweep samples for its trail. */
+	surface = back_buffer == -1 && device.history_buffer.Data ? &device.history_buffer : &device.back_buffer;
 	/* like Direct3D, the caller gets a reference it must release */
-	device.back_buffer.Common++;
-	*result = &device.back_buffer;
+	surface->Common++;
+	*result = surface;
 }
 
 HRESULT WINAPI D3DDevice_GetDepthStencilSurface(D3DSurface **result)
@@ -3637,12 +3659,17 @@ static void apply_raster_state(BOOL has_depth)
 	what keeps a split-screen window's geometry from bleeding across the divider */
 	/* (glScissor takes the corner and the size, as glViewport does) */
 	memcpy(scissor, viewport, sizeof(scissor));
+	/* Intel's Windows driver drops glScissor while the test is disabled when
+	the rectangle starts at y 0. That is the top pane of a split: the clear
+	set its scissor with the test on, so the fog color shows, and every draw
+	after the clear is clipped away. The lower pane's rectangle does not
+	start at 0, so its draws land. Enable first. */
+	state_enable(&gl_state.scissor_test, GL_SCISSOR_TEST, scissor[2] > 0 && scissor[3] > 0);
 	if (memcmp(gl_state.scissor, scissor, sizeof(scissor)))
 	{
 		memcpy(gl_state.scissor, scissor, sizeof(scissor));
 		glScissor(scissor[0], scissor[1], scissor[2], scissor[3]);
 	}
-	state_enable(&gl_state.scissor_test, GL_SCISSOR_TEST, scissor[2] > 0 && scissor[3] > 0);
 	depth_range[0] = device.viewport.MinZ;
 	depth_range[1] = device.viewport.MaxZ;
 	if (memcmp(gl_state.depth_range, depth_range, sizeof(depth_range)))
@@ -5689,6 +5716,26 @@ static void clear_state_forget(void)
 	memset(gl_state.scissor, 0xff, sizeof(gl_state.scissor));
 }
 
+/* glClear on Intel's Windows driver takes a lower-left scissor. Draws take
+the upper-left one, so a pane clear is moved onto the other pane. */
+static GLint clear_scissor_y(GLint y, GLint height)
+{
+	struct render_target_entry *target;
+	GLint framebuffer_height;
+
+	if (!clear_scissor_lower_left || height <= 0)
+		return y;
+	target = device.render_target ? render_target_get(device.render_target) : NULL;
+	if (!target && device.depth_stencil)
+		target = render_target_get(device.depth_stencil);
+	if (!target)
+		return y;
+	framebuffer_height = (GLint)target->target.gl_height;
+	if (y < 0 || y > framebuffer_height - height)
+		return y;
+	return framebuffer_height - (y + height);
+}
+
 void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags, D3DCOLOR color, float z, DWORD stencil)
 {
 	float rgba[4];
@@ -5734,10 +5781,11 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 		keeps a split-screen window's clear from wiping the other window */
 		GLint x0 = target_pixel((float)device.viewport.X, 0);
 		GLint y0 = target_pixel((float)device.viewport.Y, 1);
+		GLint width = target_pixel((float)(device.viewport.X + device.viewport.Width), 0) - x0;
+		GLint height = target_pixel((float)(device.viewport.Y + device.viewport.Height), 1) - y0;
 
 		glEnable(GL_SCISSOR_TEST);
-		glScissor(x0, y0, target_pixel((float)(device.viewport.X + device.viewport.Width), 0) - x0,
-			target_pixel((float)(device.viewport.Y + device.viewport.Height), 1) - y0);
+		glScissor(x0, clear_scissor_y(y0, height), width, height);
 		glClear(mask);
 		glDisable(GL_SCISSOR_TEST);
 		clear_state_forget();
@@ -5752,14 +5800,15 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 			rectangles[index].x2 : device.viewport.X + device.viewport.Width;
 		INT bottom = rectangles[index].y2 < device.viewport.Y + device.viewport.Height ?
 			rectangles[index].y2 : device.viewport.Y + device.viewport.Height;
-		GLint x0, y0;
+		GLint x0, y0, width, height;
 
 		if (left >= right || top >= bottom)
 			continue;
 		x0 = target_pixel((float)(left + UI_OFFSET), 0);
 		y0 = target_pixel((float)top, 1);
-		glScissor(x0, y0, target_pixel((float)(right + UI_OFFSET), 0) - x0,
-			target_pixel((float)bottom, 1) - y0);
+		width = target_pixel((float)(right + UI_OFFSET), 0) - x0;
+		height = target_pixel((float)bottom, 1) - y0;
+		glScissor(x0, clear_scissor_y(y0, height), width, height);
 		glClear(mask);
 	}
 	glDisable(GL_SCISSOR_TEST);
@@ -5969,6 +6018,32 @@ static void visibility_copy_batch(void)
 }
 
 #endif
+/* the loading sweep reads GetBackBuffer(-1) while drawing the next frame.
+   That is the frame this Present is about to show, kept in its own texture
+   so the read is not the buffer the sweep is clearing. */
+static void backbuffer_history_copy(struct render_target_entry *back)
+{
+	struct render_target_entry *history;
+	GLuint read_framebuffer, draw_framebuffer;
+
+	if (!device.history_buffer.Data || !back)
+		return;
+	history = render_target_get(&device.history_buffer);
+	if (!history || history->target.gl_width != back->target.gl_width ||
+		history->target.gl_height != back->target.gl_height)
+		return;
+	read_framebuffer = framebuffer_get(back->target.texture, 0);
+	draw_framebuffer = framebuffer_get(history->target.texture, 0);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, read_framebuffer);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw_framebuffer);
+	glDisable(GL_SCISSOR_TEST);
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	glBlitFramebuffer(0, 0, (GLint)back->target.gl_width, (GLint)back->target.gl_height,
+		0, 0, (GLint)history->target.gl_width, (GLint)history->target.gl_height,
+		GL_COLOR_BUFFER_BIT, GL_NEAREST);
+	xgpu_gl_state_invalidate();
+}
+
 void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destination_rectangle,
 	void *unused, void *unused2)
 {
@@ -5991,6 +6066,7 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 			platform_log("present back buffer %08lx texture %u", (unsigned long)device.back_buffer.Data,
 				back_buffer->target.texture);
 		render_target_resolve(&back_buffer->target);
+		backbuffer_history_copy(back_buffer);
 #ifndef HALO_GLES
 		visibility_copy_batch();
 #endif

@@ -666,14 +666,16 @@ void render_frame(
 
 		window = &windoze[window_index];
 		render.window_index = window_index;
-		if (hardcore_views_is_blank_window((short)window_index))
-		{
-			render_blank_window(window);
-			continue;
-		}
+		/* the console window follows the panes. with one pane left, its
+		   index is the empty force-split pane, so that check comes first */
 		if (window->console_window)
 		{
 			window_type = 0;
+		}
+		else if (hardcore_views_is_blank_window((short)window_index))
+		{
+			render_blank_window(window);
+			continue;
 		}
 		else if (hardcore_views_is_teammate_window((short)window_index) &&
 			window->local_player_index != NONE)

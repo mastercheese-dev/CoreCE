@@ -395,6 +395,10 @@ boolean hardcore_views_blank_split(void)
 	hardcore_views_refresh();
 	if (view_count > 1)
 		return FALSE;
+	/* the scoreboard is one full window. the empty pane's index is then
+	   the console window, and that clear replaces the carnage report */
+	if (game_engine_force_single_screen())
+		return FALSE;
 	return hardcore_views_force_wanted();
 }
 
