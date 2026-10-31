@@ -22,6 +22,12 @@ enum
 	MATCHMAKING_MODE_CTF
 };
 
+enum
+{
+	MATCHMAKING_LOBBY_NAMES = 16,
+	MATCHMAKING_LOBBY_NAME_LENGTH = 12
+};
+
 /* the offer's rules, already filled with this match's values */
 struct matchmaking_rules
 {
@@ -53,7 +59,14 @@ struct matchmaking_offer
 	char map[64];
 	char name[32];
 	char playlist[16];
+	/* how many seats this match has */
 	int players;
+	/* how many players are in the lobby now. -1 when the offer did not say */
+	int joined;
+	/* seconds until the match starts. -1 when the offer did not say */
+	int wait_seconds;
+	int name_count;
+	char names[MATCHMAKING_LOBBY_NAMES][MATCHMAKING_LOBBY_NAME_LENGTH];
 	int teams;
 	int team_size;
 	/* the network version the service accepts, when it refuses this build */

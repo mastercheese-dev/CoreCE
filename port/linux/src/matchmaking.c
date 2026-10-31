@@ -526,6 +526,52 @@ static void catalog_store(const char *payload)
 	pthread_mutex_unlock(&matchmaking_lock);
 }
 
+static void offer_name_keep(char *text)
+{
+	int read = 0;
+	int write = 0;
+
+	while (text[read] && write < MATCHMAKING_LOBBY_NAME_LENGTH - 1)
+	{
+		unsigned char character = (unsigned char)text[read++];
+
+		if (character >= 32)
+			text[write++] = (char)character;
+	}
+	text[write] = 0;
+}
+
+static void offer_names(struct matchmaking_offer *offer, const char *payload)
+{
+	const char *list;
+	const char *list_end;
+	char stored[1024];
+	int length;
+	int index;
+
+	if (!object_field(payload, "names", &list, &list_end))
+		return;
+	length = (int)(list_end - list);
+	if (length < 0 || length >= (int)sizeof(stored))
+		return;
+	memcpy(stored, list, (size_t)length);
+	stored[length] = 0;
+	for (index = 0; index < MATCHMAKING_LOBBY_NAMES; index++)
+	{
+		const char *item;
+		const char *item_end;
+
+		if (!array_item(stored, index, &item, &item_end))
+			break;
+		if (!copy_json_string(item, item_end, offer->names[offer->name_count],
+			MATCHMAKING_LOBBY_NAME_LENGTH))
+			continue;
+		offer_name_keep(offer->names[offer->name_count]);
+		if (offer->names[offer->name_count][0])
+			offer->name_count++;
+	}
+}
+
 static void offer_read(struct matchmaking_offer *offer, const char *payload, const char *playlist)
 {
 	char word[32];
@@ -533,6 +579,8 @@ static void offer_read(struct matchmaking_offer *offer, const char *payload, con
 	int teams;
 
 	memset(offer, 0, sizeof(*offer));
+	offer->joined = -1;
+	offer->wait_seconds = -1;
 	snprintf(offer->playlist, sizeof(offer->playlist), "%s", playlist);
 	if (!json_string(payload, "playlist", offer->playlist, sizeof(offer->playlist)))
 		snprintf(offer->playlist, sizeof(offer->playlist), "%s", playlist);
@@ -548,6 +596,11 @@ static void offer_read(struct matchmaking_offer *offer, const char *payload, con
 	offer->players = players_for(offer->playlist);
 	if (json_number(payload, "players", &number) && number >= 2 && number <= 128)
 		offer->players = (int)number;
+	if (json_number(payload, "joined", &number) && number >= 0 && number <= 128)
+		offer->joined = (int)number;
+	if (json_number(payload, "wait_seconds", &number) && number >= 0 && number <= 600)
+		offer->wait_seconds = (int)number;
+	offer_names(offer, payload);
 	if (json_bool(payload, "teams", &teams))
 		offer->rules.teams = teams ? 1 : 0;
 	offer->teams = offer->rules.teams;

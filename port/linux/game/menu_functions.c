@@ -69,6 +69,7 @@ their handlers open opens.
 */
 
 #include "cseries.h"
+#include <stddef.h>
 #include "input/input.h"
 #include "interface/event_manager.h"
 #include "interface/player_ui.h"
@@ -5134,6 +5135,42 @@ static short browser_chosen_row(void)
 		row < BROWSER_ROWS ? row : NONE;
 }
 
+/* a playlist's own game, named as the catalog names that playlist. the
+server browser still lists it. it is shown full, and Join does not start. */
+static int mm_browser_same(const char *left, const char *right)
+{
+	if (!left || !right)
+		return 0;
+	while (*left && *right)
+	{
+		char first = *left++;
+		char second = *right++;
+
+		if (first >= 'A' && first <= 'Z')
+			first = (char)(first - 'A' + 'a');
+		if (second >= 'A' && second <= 'Z')
+			second = (char)(second - 'A' + 'a');
+		if (first != second)
+			return 0;
+	}
+	return *left == 0 && *right == 0;
+}
+
+static int mm_browser_playlist(const struct p2p_listing *game)
+{
+	struct matchmaking_catalog catalog;
+	int index;
+
+	if (!game || matchmaking_catalog(&catalog) != 1)
+		return 0;
+	for (index = 0; index < catalog.count; index++)
+	{
+		if (mm_browser_same(catalog.playlist[index].name, game->name))
+			return 1;
+	}
+	return 0;
+}
+
 static void lobby_browser_begin(void)
 {
 	lobby_browser.count = 0;
@@ -5145,6 +5182,8 @@ static void lobby_browser_begin(void)
 	lobby_browser.ready = FALSE;
 	lobby_browser.password_joined = FALSE;
 	lobby_browser.begin_time = system_milliseconds();
+	/* the catalog names the matchmaking games, so this list can show them full */
+	matchmaking_watch();
 	p2p_lobby_browse(TRUE);
 }
 
@@ -5280,7 +5319,13 @@ static void lobby_browser_update(struct widget_instance *list)
 		map_display_name(game->map, text);
 		text_set(named(row, "server_item_map", 0), text);
 		text_set(named(row, "server_item_type", 0), game_type_name(game->engine_type));
-		usnprintf(text, ROW_TEXT_LENGTH - 1, L"%d/%d", game->player_count, game->maximum_player_count);
+		{
+			int players = game->player_count;
+
+			if (mm_browser_playlist(game) && game->maximum_player_count)
+				players = game->maximum_player_count;
+			usnprintf(text, ROW_TEXT_LENGTH - 1, L"%d/%d", players, game->maximum_player_count);
+		}
 		text_set(named(row, "server_item_players", 0), text);
 		/* (its host's ping, once probed: p2p_lobby.c) */
 		browser_row_pings[index - lobby_browser.first] = game->failed ? -1 : game->ping;
@@ -5386,10 +5431,15 @@ static void lobby_browser_update(struct widget_instance *list)
 			wchar_t gametype[P2P_LISTING_GAMETYPE_SIZE + 1];
 
 			text_to_wide(game->gametype, gametype, NUMBEROF(gametype));
-			usnprintf(text, NUMBEROF(text) - 1, L"%s: %d %s of %d%s%s", gametype, game->player_count,
-				game->player_count == 1 ? L"player" : L"players", game->maximum_player_count,
-				!game->open ? L", full or starting" : game->in_progress ? L", under way" : L"",
-				game->locked ? L", password" : L"");
+			{
+				int full = mm_browser_playlist(game);
+				int players = full && game->maximum_player_count ? game->maximum_player_count : game->player_count;
+
+				usnprintf(text, NUMBEROF(text) - 1, L"%s: %d %s of %d%s%s", gametype, players,
+					players == 1 ? L"player" : L"players", game->maximum_player_count,
+					full || !game->open ? L", full or starting" : game->in_progress ? L", under way" : L"",
+					game->locked ? L", password" : L"");
+			}
 		}
 		else
 			text[0] = 0;
@@ -5485,7 +5535,7 @@ static boolean lobby_browser_select(struct widget_instance *widget, short contro
 	if (index >= lobby_browser.count)
 		return campaign_fail();
 	game = &lobby_browser.games[index];
-	if (!game->open || !config_boolean("network.online"))
+	if (mm_browser_playlist(game) || !game->open || !config_boolean("network.online"))
 		return campaign_fail();
 	/* (a game with a password: its screen asks for it, then joins) */
 	if (game->locked)
@@ -8917,6 +8967,13 @@ static struct
 	int waiting;
 	int launch_frames;
 	int detail;
+	int lobby;
+	int joined;
+	int lobby_players;
+	int wait_seconds;
+	unsigned long wait_at;
+	int name_count;
+	char names[MATCHMAKING_LOBBY_NAMES][MATCHMAKING_LOBBY_NAME_LENGTH];
 	struct matchmaking_offer offer;
 	wchar_t status[ROW_TEXT_LENGTH];
 } mm_menu;
@@ -8925,6 +8982,51 @@ static void mm_status(const wchar_t *text)
 {
 	ustrncpy(mm_menu.status, text ? text : L"", ROW_TEXT_LENGTH - 1);
 	mm_menu.status[ROW_TEXT_LENGTH - 1] = 0;
+}
+
+static void mm_lobby_clear(void)
+{
+	mm_menu.lobby = 0;
+	mm_menu.joined = -1;
+	mm_menu.lobby_players = 0;
+	mm_menu.wait_seconds = -1;
+	mm_menu.wait_at = 0;
+	mm_menu.name_count = 0;
+}
+
+static void mm_lobby_store(const struct matchmaking_offer *offer)
+{
+	int index;
+
+	if (!offer)
+		return;
+	if (offer->role != MATCHMAKING_ROLE_WAIT && offer->role != MATCHMAKING_ROLE_SERVER &&
+		offer->role != MATCHMAKING_ROLE_HOST && offer->role != MATCHMAKING_ROLE_JOIN)
+		return;
+	if (offer->joined < 0 && offer->wait_seconds < 0 && offer->name_count <= 0)
+		return;
+	mm_menu.lobby = 1;
+	mm_menu.joined = offer->joined;
+	mm_menu.lobby_players = offer->players;
+	mm_menu.wait_seconds = offer->wait_seconds;
+	if (offer->wait_seconds >= 0)
+		mm_menu.wait_at = system_milliseconds();
+	mm_menu.name_count = offer->name_count;
+	if (mm_menu.name_count > MATCHMAKING_LOBBY_NAMES)
+		mm_menu.name_count = MATCHMAKING_LOBBY_NAMES;
+	if (mm_menu.name_count < 0)
+		mm_menu.name_count = 0;
+	for (index = 0; index < mm_menu.name_count; index++)
+	{
+		int length = 0;
+
+		while (offer->names[index][length] && length < MATCHMAKING_LOBBY_NAME_LENGTH - 1)
+		{
+			mm_menu.names[index][length] = offer->names[index][length];
+			length++;
+		}
+		mm_menu.names[index][length] = 0;
+	}
 }
 
 static void mm_ascii(wchar_t *text, int size, const char *ascii);
@@ -9010,8 +9112,140 @@ static void mm_rows(struct widget_instance *list, const struct matchmaking_catal
 	}
 }
 
+static int mm_wait_left(void)
+{
+	unsigned long elapsed;
+	int left;
+
+	if (mm_menu.wait_seconds < 0)
+		return -1;
+	elapsed = system_milliseconds() - mm_menu.wait_at;
+	left = mm_menu.wait_seconds - (int)(elapsed / 1000);
+	if (left < 0)
+		left = 0;
+	return left;
+}
+
+static void mm_text_add(wchar_t *text, int size, int *used, const wchar_t *add)
+{
+	int index = 0;
+
+	if (*used < 0)
+		*used = 0;
+	while (add && add[index] && *used < size - 1)
+		text[(*used)++] = add[index++];
+	text[*used] = 0;
+}
+
+static void mm_lobby_text(wchar_t *text, int size)
+{
+	wchar_t line[64];
+	int used = 0;
+	int left = mm_wait_left();
+	int index;
+
+	text[0] = 0;
+	if (mm_menu.joined >= 0 && mm_menu.lobby_players > 0)
+	{
+		usnprintf(line, NUMBEROF(line) - 1, L"%d/%d\n", mm_menu.joined, mm_menu.lobby_players);
+		line[NUMBEROF(line) - 1] = 0;
+		mm_text_add(text, size, &used, line);
+	}
+	if (left == 0)
+		mm_text_add(text, size, &used, L"Starting\n");
+	else if (left == 1)
+		mm_text_add(text, size, &used, L"Starts in 1 second\n");
+	else if (left > 1)
+	{
+		usnprintf(line, NUMBEROF(line) - 1, L"Starts in %d seconds\n", left);
+		line[NUMBEROF(line) - 1] = 0;
+		mm_text_add(text, size, &used, line);
+	}
+	for (index = 0; index < mm_menu.name_count; index++)
+	{
+		wchar_t name[MATCHMAKING_LOBBY_NAME_LENGTH];
+
+		if (index)
+			mm_text_add(text, size, &used, L"\n");
+		mm_ascii(name, NUMBEROF(name), mm_menu.names[index]);
+		mm_text_add(text, size, &used, name);
+	}
+}
+
+/* text_font.index. ui_widget.c keeps that reference at 0xFC. */
+static long *mm_font_index(struct ui_widget_definition *definition)
+{
+	return (long *)((unsigned char *)definition + 0xFC + offsetof(struct tag_reference, index));
+}
+
+/* the description box is three lines. a lobby list needs the picture's space,
+and the smaller font so eight names fit. */
+static void mm_panel_place(struct widget_instance *detail, struct widget_instance *picture, int lobby)
+{
+	struct ui_widget_definition *definition;
+	static short top = -1;
+	static int font_ready = 0;
+	static long font_saved = NONE;
+
+	if (picture)
+		picture->visible = lobby ? FALSE : TRUE;
+	if (!detail)
+		return;
+	definition = ui_widget_definition_get(detail->definition_tag_index);
+	if (!definition)
+		return;
+	if (top < 0)
+		top = definition->bounds.y0;
+	if (!font_ready)
+	{
+		font_saved = *mm_font_index(definition);
+		font_ready = 1;
+	}
+	if (!lobby)
+	{
+		definition->bounds.y0 = top;
+		*mm_font_index(definition) = font_saved;
+	}
+	else
+	{
+		long small_font = tag_loaded('font', "ui\\small_ui");
+		short raised = (short)(top - 232);
+
+		if (raised < 40)
+			raised = 40;
+		definition->bounds.y0 = raised;
+		if (small_font != NONE)
+			*mm_font_index(definition) = small_font;
+	}
+}
+
+enum
+{
+	MM_PANEL_CHARS = 320
+};
+
+static void mm_panel_set(struct widget_instance *label, const wchar_t *text)
+{
+	int length = 0;
+
+	if (!label || !text)
+		return;
+	while (text[length])
+		length++;
+	if (length > MM_PANEL_CHARS - 1)
+		length = MM_PANEL_CHARS - 1;
+	label->parameters.text_box.string_list_index = HALO_CUSTOM_MAP_TEXT;
+	label->parameters.text_box.text = ui_widget_realloc(label->parameters.text_box.text,
+		(word)(MM_PANEL_CHARS * sizeof(wchar_t)), __FILE__, __LINE__);
+	if (!label->parameters.text_box.text)
+		return;
+	ustrncpy(label->parameters.text_box.text, text, MM_PANEL_CHARS - 1);
+	label->parameters.text_box.text[length] = 0;
+}
+
 /* the panel beside the rows, the same one the multiplayer menu uses. while
-choosing, it describes the playlist. while searching, it says what is happening. */
+choosing, it describes the playlist. while searching or joining, it shows who
+is in the lobby and how long until the match starts. */
 static void mm_show(struct widget_instance *list)
 {
 	struct widget_instance *panel = list ? list->parameters.list.extended_description : NULL;
@@ -9045,6 +9279,9 @@ static void mm_show(struct widget_instance *list)
 		return;
 	if (slot >= 0)
 		mm_menu.detail = slot;
+	if (mm_menu.state != MM_MENU_SEARCHING && mm_menu.state != MM_MENU_LAUNCHING &&
+		mm_menu.state != MM_MENU_JOINING)
+		mm_panel_place(detail, picture, 0);
 	if (mm_menu.state == MM_MENU_CHOOSE && ready > 0 && mm_menu.detail >= 0 && mm_menu.detail < catalog.count)
 	{
 		wchar_t text[ROW_TEXT_LENGTH];
@@ -9067,6 +9304,19 @@ static void mm_show(struct widget_instance *list)
 		label_set(detail, matchmaking_link() < 0 ? L"Could not reach matchmaking." : L"Connecting...");
 		return;
 	}
+	if (mm_menu.lobby &&
+		(mm_menu.state == MM_MENU_SEARCHING || mm_menu.state == MM_MENU_LAUNCHING ||
+			mm_menu.state == MM_MENU_JOINING) &&
+		!(mm_menu.state == MM_MENU_SEARCHING && matchmaking_link() < 0))
+	{
+		wchar_t text[MM_PANEL_CHARS];
+
+		mm_lobby_text(text, (int)NUMBEROF(text));
+		mm_panel_place(detail, picture, 1);
+		mm_panel_set(detail, text);
+		return;
+	}
+	mm_panel_place(detail, picture, 0);
 	label_set(detail, mm_menu.status);
 }
 
@@ -9241,6 +9491,7 @@ static boolean mm_open(struct widget_instance *screen)
 	mm_menu.waiting = 0;
 	mm_menu.launch_frames = 0;
 	mm_menu.detail = 0;
+	mm_lobby_clear();
 	if (launch)
 		launch->disabled = TRUE;
 	mm_status(L"");
@@ -9281,6 +9532,7 @@ static boolean mm_choose(struct widget_instance *widget)
 	mm_gamertag(name, sizeof(name));
 	mm_menu.invited = 0;
 	mm_menu.waiting = 0;
+	mm_lobby_clear();
 	matchmaking_queue(playlist, name);
 	mm_menu.state = MM_MENU_SEARCHING;
 	mm_status(L"Searching...");
@@ -9295,6 +9547,7 @@ static boolean mm_menu_leave(void)
 	matchmaking_leave();
 	if (mm_menu.state != MM_MENU_DONE)
 		mm_menu.state = MM_MENU_CHOOSE;
+	mm_lobby_clear();
 	if (joining)
 	{
 		dispose_global_network_game_client();
@@ -9455,16 +9708,9 @@ static boolean mm_launch(struct widget_instance *widget, struct event_record *ev
 
 static void mm_offer(const struct matchmaking_offer *offer)
 {
-	/* wait, or a join that is not ready yet: the seat stays reserved while we publish */
-	if (offer->role == MATCHMAKING_ROLE_WAIT ||
-		((offer->role == MATCHMAKING_ROLE_JOIN || offer->role == MATCHMAKING_ROLE_SERVER) &&
-			(!offer->invite[0] || !offer->port)))
-	{
-		mm_menu.waiting = 1;
-		mm_status(L"Waiting for players...");
-		return;
-	}
-	mm_menu.waiting = 0;
+	int live = mm_menu.state == MM_MENU_LAUNCHING || mm_menu.state == MM_MENU_JOINING ||
+		mm_menu.state == MM_MENU_DONE;
+
 	if (offer->role == MATCHMAKING_ROLE_ERROR)
 	{
 		wchar_t text[ROW_TEXT_LENGTH];
@@ -9476,9 +9722,31 @@ static void mm_offer(const struct matchmaking_offer *offer)
 		text[ROW_TEXT_LENGTH - 1] = 0;
 		mm_status(text);
 		mm_menu.state = MM_MENU_ERROR;
+		mm_lobby_clear();
 		matchmaking_leave();
 		return;
 	}
+	mm_lobby_store(offer);
+	/* a later offer refreshes the lobby. it must not start the join again. */
+	if (live)
+	{
+		if (!mm_menu.invited && offer->role == mm_menu.offer.role &&
+			(offer->role == MATCHMAKING_ROLE_HOST || offer->role == MATCHMAKING_ROLE_JOIN ||
+				offer->role == MATCHMAKING_ROLE_SERVER))
+			mm_menu.offer = *offer;
+		return;
+	}
+	/* wait, or a join that is not ready yet: the seat stays reserved while we publish */
+	if (offer->role == MATCHMAKING_ROLE_WAIT ||
+		((offer->role == MATCHMAKING_ROLE_JOIN || offer->role == MATCHMAKING_ROLE_SERVER) &&
+			(!offer->invite[0] || !offer->port)))
+	{
+		mm_menu.waiting = 1;
+		if (!mm_menu.lobby)
+			mm_status(L"Waiting for players...");
+		return;
+	}
+	mm_menu.waiting = 0;
 	if (offer->role != MATCHMAKING_ROLE_HOST && offer->role != MATCHMAKING_ROLE_JOIN &&
 		offer->role != MATCHMAKING_ROLE_SERVER)
 		return;
@@ -9501,13 +9769,14 @@ static void mm_update(struct widget_instance *list)
 	struct widget_instance *launch = named(list, "mm_launch", 0);
 	struct matchmaking_offer offer;
 
-	if (mm_menu.state == MM_MENU_SEARCHING)
+	if (mm_menu.state == MM_MENU_SEARCHING || mm_menu.state == MM_MENU_LAUNCHING ||
+		mm_menu.state == MM_MENU_JOINING)
 	{
-		if (matchmaking_link() < 0)
+		if (mm_menu.state == MM_MENU_SEARCHING && matchmaking_link() < 0)
 			mm_status(L"Could not reach matchmaking.");
 		else if (matchmaking_take_offer(&offer))
 			mm_offer(&offer);
-		else if (!mm_menu.waiting)
+		else if (mm_menu.state == MM_MENU_SEARCHING && !mm_menu.waiting && !mm_menu.lobby)
 			mm_status(matchmaking_link() > 0 ? L"Searching..." : L"Connecting...");
 	}
 	if (mm_menu.state == MM_MENU_JOINING && mm_peer_game())
@@ -9517,11 +9786,34 @@ static void mm_update(struct widget_instance *list)
 	}
 	if (mm_menu.state == MM_MENU_LAUNCHING && launch)
 	{
+		int join = mm_menu.offer.role == MATCHMAKING_ROLE_JOIN ||
+			mm_menu.offer.role == MATCHMAKING_ROLE_SERVER;
+
 		launch->disabled = FALSE;
 		list->focused_child = launch;
-		mm_menu.launch_frames++;
-		if (mm_menu.launch_frames == 1 || mm_menu.launch_frames == 20)
-			event_manager_post_button(controller_of(list), BUTTON_A);
+		/* server and join use the offer's invite. its tunnel is what reaches
+		the host. the offer's port is the game port inside that tunnel, and
+		the search has to be underway before a press can enter the lobby.
+		a press queued from this draw is dropped by the next frame. */
+		if (join && !mm_menu.invited)
+		{
+			if (!mm_begin_join(list, NULL))
+			{
+				mm_menu.state = MM_MENU_ERROR;
+				matchmaking_leave();
+			}
+			else
+			{
+				mm_menu.state = MM_MENU_JOINING;
+				mm_status(L"Joining...");
+			}
+		}
+		else
+		{
+			mm_menu.launch_frames++;
+			if (mm_menu.launch_frames == 1 || mm_menu.launch_frames == 20)
+				ui_widget_port_post_button(controller_of(list), BUTTON_A);
+		}
 	}
 	mm_show(list);
 }
