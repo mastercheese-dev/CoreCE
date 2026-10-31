@@ -29,7 +29,6 @@ a data message an older build ignores. */
 #include "halo_port_limits.h"
 #include "performance_options.h"
 #include "hardcore_rules.h"
-#include "opening_film.h"
 #include "networking/network_game_globals.h"
 #include "networking/network_game_manager.h"
 #include "networking/network_client_manager.h"
@@ -719,28 +718,12 @@ boolean hardcore_rules_opening_waiting(void)
 
 boolean hardcore_rules_opening_film_at_fade(void)
 {
-	unsigned long duration = opening_film_duration_ms();
-	unsigned long hold_ms;
 	unsigned long elapsed;
 
-	/* No frame has been shown yet. That is the start of the film, not
-	its end: the ticks before the first picture must not start the match.
-	A host that never draws one waits out the film, then starts. */
-	if (opening_last_present_ms == 0)
-	{
-		elapsed = opening_started_ms != 0 ? system_milliseconds() - opening_started_ms : 0;
-		return elapsed >= (duration > 0 ? duration : OPENING_RING_MS);
-	}
-	if (duration > OPENING_FADE_MS)
-		hold_ms = duration - OPENING_FADE_MS;
-	else if (duration > 0)
-		hold_ms = 0;
-	else
-		hold_ms = OPENING_RING_MS;
-	if (duration > 0)
-		return opening_played_ms >= hold_ms;
-	return opening_started_ms != 0 &&
-		system_milliseconds() - opening_started_ms >= hold_ms;
+	/* the original sweep. the ticks before its first picture must not
+	start the match. a host that never draws one waits the sweep out. */
+	elapsed = opening_started_ms != 0 ? system_milliseconds() - opening_started_ms : 0;
+	return elapsed >= OPENING_RING_MS;
 }
 
 boolean hardcore_rules_opening_expired(void)
@@ -791,12 +774,11 @@ void hardcore_rules_opening_defer_sound(long sound_index)
 	opening_deferred_sound = sound_index;
 }
 
-/* A presented frame moves the film by at most one of its frames. */
+/* A presented frame moves the sweep by the time since the last one. */
 static unsigned long opening_advance(void)
 {
 	unsigned long now = system_milliseconds();
 	unsigned long step;
-	unsigned long cap;
 
 	if (opening_last_present_ms == 0)
 	{
@@ -805,9 +787,6 @@ static unsigned long opening_advance(void)
 	}
 	step = now - opening_last_present_ms;
 	opening_last_present_ms = now;
-	cap = opening_film_step_ms();
-	if (step > cap)
-		step = cap;
 	opening_played_ms += step;
 	return opening_played_ms;
 }
@@ -839,9 +818,6 @@ void hardcore_rules_opening_before_tick(void)
 
 void hardcore_rules_opening_frame(void)
 {
-	unsigned long played;
-	unsigned long film_ms;
-	unsigned long hold_ms;
 	unsigned long ring_ms;
 	real progress;
 
@@ -852,73 +828,32 @@ void hardcore_rules_opening_frame(void)
 		opening_finish();
 		return;
 	}
-	played = opening_advance();
-	/* The film is the original loading animation. Its last frame holds
-	while a network world is still arriving. Without the film, the sweep
-	is the stand-in ring. */
-	film_ms = opening_film_duration_ms();
-	if (!opening_film_show(played, 1.f))
-	{
-		ring_ms = opening_started_ms != 0 ? system_milliseconds() - opening_started_ms : 0;
-		progress = (real)ring_ms / (real)OPENING_RING_MS;
-		if (progress < 0.02f)
-			progress = 0.02f;
-		if (progress > 1.f)
-			progress = 0.72f;
-		progress_bar_show_ring(progress);
-		film_ms = 0;
-	}
+	opening_advance();
+	/* the disc's loading.tga, on the original sweep */
+	ring_ms = opening_started_ms != 0 ? system_milliseconds() - opening_started_ms : 0;
+	progress = (real)ring_ms / (real)OPENING_RING_MS;
+	if (progress < 0.02f)
+		progress = 0.02f;
+	if (progress > 1.f)
+		progress = 0.72f;
+	progress_bar_show_ring(progress);
 	/* The host names the tick. This machine does not fade because it
 	happens to look ready. */
 	if (opening_network())
 		return;
 	if (!hardcore_rules_opening_world_ready())
 		return;
-	if (film_ms > OPENING_FADE_MS)
-		hold_ms = film_ms - OPENING_FADE_MS;
-	else if (film_ms > 0)
-		hold_ms = 0;
-	else
-		hold_ms = OPENING_RING_MS;
-	if (film_ms > 0)
-	{
-		if (played < hold_ms)
-			return;
-	}
-	else if (opening_started_ms == 0 ||
-		system_milliseconds() - opening_started_ms < hold_ms)
+	if (opening_started_ms == 0 ||
+		system_milliseconds() - opening_started_ms < OPENING_RING_MS)
 		return;
 	opening_begin_fade(OPENING_FADE_TICKS);
 }
 
 void hardcore_rules_opening_overlay(void)
 {
-	unsigned long film_ms;
-	unsigned long left;
-	unsigned long shown;
-	real alpha;
-	real done;
-
+	/* the sweep has finished. it is not drawn over the match. */
 	if (!opening_hold || !opening_fading)
 		return;
-	alpha = opening_fade_ticks > 0 ?
-		(real)opening_fade_ticks / (real)OPENING_FADE_TICKS : 0.f;
-	/* Stay under a full replace so this draws over the match. */
-	if (alpha > 0.998f)
-		alpha = 0.998f;
-	film_ms = opening_film_duration_ms();
-	if (film_ms == 0)
-	{
-		opening_film_show(opening_fade_from_ms, alpha);
-		return;
-	}
-	/* Whatever of the film is left plays out as the fade does. */
-	left = opening_fade_from_ms < film_ms ? film_ms - opening_fade_from_ms : 0;
-	done = 1.f - alpha;
-	shown = opening_fade_from_ms + (unsigned long)((real)left * done);
-	if (shown > film_ms)
-		shown = film_ms;
-	opening_film_show(shown, alpha);
 }
 
 void hardcore_rules_tick(void)

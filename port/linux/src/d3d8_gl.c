@@ -3517,8 +3517,11 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 				gl_target = GL_TEXTURE_2D;
 				if (description.linear)
 				{
-					texture_scale[stage][0] = 1.0f / (float)target->width;
-					texture_scale[stage][1] = 1.0f / (float)target->height;
+					/* Texel coordinates belong to the header the game bound.
+					   The loading screen's header is 640 by 480 over a wider
+					   back buffer, and 0..1 of this texture is the whole frame. */
+					texture_scale[stage][0] = 1.0f / (float)description.width;
+					texture_scale[stage][1] = 1.0f / (float)description.height;
 				}
 				if (!description.linear && !description.cube_map && description.levels > 1 &&
 					target->width == description.width && target->height == description.height)

@@ -2083,12 +2083,18 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
     }
     /* A linear Xbox bitmap uses pixel coordinates in its original dimensions.
      * The replacement's real dimensions validate its native mip chain, while
-     * this normalization preserves the game's original atlas/layout UVs. */
-    for (unsigned stage=0;stage<4;stage++) if (bound[stage] && bound[stage]->description.hires && input.textures[stage].linear) {
+     * this normalization preserves the game's original atlas/layout UVs.
+     * The loading screen's back-buffer sample is the same case: its header is
+     * 640 by 480, and those texels cover the whole frame even when the
+     * surface behind that header is wider. */
+    for (unsigned stage=0;stage<4;stage++) if (bound[stage] && input.textures[stage].linear) {
         struct xgpu_texture_description original;
         xgpu_texture_describe(device.textures[stage]->Format,device.textures[stage]->Size,&original);
-        output.pixel.texture_scale[stage][0]=1.0f/(float)original.width;
-        output.pixel.texture_scale[stage][1]=1.0f/(float)original.height;
+        if (bound[stage]->description.hires || original.width!=bound[stage]->description.width ||
+            original.height!=bound[stage]->description.height) {
+            output.pixel.texture_scale[stage][0]=1.0f/(float)original.width;
+            output.pixel.texture_scale[stage][1]=1.0f/(float)original.height;
+        }
     }
     /* Original constants and texture normalization stay logical. Only the
        raster viewport/scissor describe the larger Metal attachment. */

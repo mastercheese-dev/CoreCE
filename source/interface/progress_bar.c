@@ -1481,6 +1481,8 @@ static real blur_offset= 0.1f;
 static boolean progress_bar_restart= TRUE;
 /* port: the match-opening ring outlives the one second texture drop */
 static boolean progress_bar_pinned= FALSE;
+/* The frame before a sweep is the lobby. One black frame, then the trail is the sweep. */
+static boolean progress_bar_blank_start= FALSE;
 static struct progress_bar_globals progress_bar_globals= {0};
 struct progress_bar_mode progress_bar_mode= {0};
 real last_t= 0.f;
@@ -1590,6 +1592,7 @@ void progress_bar_begin(
 	/* port: a match opening plays the sweep from the start, not from
 	   wherever the last map load left it */
 	last_t= 0.f;
+	progress_bar_blank_start= TRUE;
 	SetThreadPriority((void *)-2, 2);
 
 	return;
@@ -1913,19 +1916,18 @@ static void draw_layer_int(
 	IDirect3DDevice8_SetVertexData4f(global_d3d_device, D3DVSDE_DIFFUSE,
 		color->red, color->green, color->blue, alpha);
 	mask_position= progress*768.f - 64.f - 64.f;
-	/* port: the picture's first row is its top. these vertices had that row
-	at the bottom of the screen, so a match's loading picture was upside down */
+	/* The picture's first row is its top. y0 is the bottom of this projection. */
 	IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD1, 0.f - mask_position, 0.f);
-	IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, 0.f, 0.f);
+	IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, 0.f, half_height);
 	IDirect3DDevice8_SetVertexData4f(global_d3d_device, D3DVSDE_VERTEX, rect.x0, rect.y0, 0.5f, 1.f);
 	IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD1, 640.f - mask_position, 0.f);
-	IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, half_width, 0.f);
+	IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, half_width, half_height);
 	IDirect3DDevice8_SetVertexData4f(global_d3d_device, D3DVSDE_VERTEX, rect.x1, rect.y0, 0.5f, 1.f);
 	IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD1, 640.f - mask_position, 16.f);
-	IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, half_width, half_height);
+	IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, half_width, 0.f);
 	IDirect3DDevice8_SetVertexData4f(global_d3d_device, D3DVSDE_VERTEX, rect.x1, rect.y1, 0.5f, 1.f);
 	IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD1, 0.f - mask_position, 16.f);
-	IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, 0.f, half_height);
+	IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, 0.f, 0.f);
 	IDirect3DDevice8_SetVertexData4f(global_d3d_device, D3DVSDE_VERTEX, rect.x0, rect.y1, 0.5f, 1.f);
 	IDirect3DDevice8_End(global_d3d_device);
 
@@ -2144,17 +2146,16 @@ void progress_bar_show_picture(
 		real v_top= -pad/span_y*(real)height;
 		real v_bottom= (span_y + pad)/span_y*(real)height;
 
-		/* the first row is the top of the film. y0 is the same screen edge
-		the sweep's picture uses for its first row */
+		/* The first row is the top of the film. y0 is the bottom of this projection. */
 		IDirect3DDevice8_Begin(global_d3d_device, D3DPT_TRIANGLEFAN);
 		IDirect3DDevice8_SetVertexData4f(global_d3d_device, D3DVSDE_DIFFUSE, 1.f, 1.f, 1.f, opacity);
-		IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, u0, v_top);
-		IDirect3DDevice8_SetVertexData4f(global_d3d_device, D3DVSDE_VERTEX, x0, y0, 0.5f, 1.f);
-		IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, u1, v_top);
-		IDirect3DDevice8_SetVertexData4f(global_d3d_device, D3DVSDE_VERTEX, x1, y0, 0.5f, 1.f);
-		IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, u1, v_bottom);
-		IDirect3DDevice8_SetVertexData4f(global_d3d_device, D3DVSDE_VERTEX, x1, y1, 0.5f, 1.f);
 		IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, u0, v_bottom);
+		IDirect3DDevice8_SetVertexData4f(global_d3d_device, D3DVSDE_VERTEX, x0, y0, 0.5f, 1.f);
+		IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, u1, v_bottom);
+		IDirect3DDevice8_SetVertexData4f(global_d3d_device, D3DVSDE_VERTEX, x1, y0, 0.5f, 1.f);
+		IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, u1, v_top);
+		IDirect3DDevice8_SetVertexData4f(global_d3d_device, D3DVSDE_VERTEX, x1, y1, 0.5f, 1.f);
+		IDirect3DDevice8_SetVertexData2f(global_d3d_device, D3DVSDE_TEXCOORD0, u0, v_top);
 		IDirect3DDevice8_SetVertexData4f(global_d3d_device, D3DVSDE_VERTEX, x0, y1, 0.5f, 1.f);
 		IDirect3DDevice8_End(global_d3d_device);
 	}
@@ -2245,28 +2246,38 @@ static void progress_bar_render(
 	IDirect3DDevice8_SetTexture(global_d3d_device, 0, (D3DBaseTexture *)progress_bar_mode.texture0);
 	IDirect3DDevice8_Clear(global_d3d_device, 0, NULL, 0xf0, 0, 1.f, 0);
 	IDirect3DDevice8_SetVertexShader(global_d3d_device, 0);
-	IDirect3DDevice8_SetPixelShaderProgram(global_d3d_device, (D3DPIXELSHADERDEF *)&blur_shader);
-	IDirect3DDevice8_GetBackBuffer(global_d3d_device, -1, 0, &back_buffer);
-	this_is_awful(&back_buffer_texture, back_buffer);
-	for (stage= 0; stage<4; stage++)
-	{
-		IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
-		IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
-		IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_MIPFILTER, D3DTEXF_POINT);
-		IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
-		IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
-		IDirect3DDevice8_SetTexture(global_d3d_device, stage, &back_buffer_texture);
-	}
-	/* (back_buffer_texture has what it needs of the surface; the
-	reference IDirect3DDevice8_GetBackBuffer gave is given back) */
-	IDirect3DSurface8_Release(back_buffer);
-
-	if (progress<0.9f)
-		draw_fade_layer(0.f, 0.f, 0.9f);
+	/* The lobby is still in the previous frame. Sampling it stretches that
+	   picture over the clear and the ring fades in on top. Leave the first
+	   frame black. After that the trail is the sweep. */
+	if (progress_bar_blank_start)
+		progress_bar_blank_start= FALSE;
 	else
-		draw_fade_layer(0.f, 0.f, 0.9f - (progress - 0.9f)*9.f);
+	{
+		IDirect3DDevice8_SetPixelShaderProgram(global_d3d_device, (D3DPIXELSHADERDEF *)&blur_shader);
+		IDirect3DDevice8_GetBackBuffer(global_d3d_device, -1, 0, &back_buffer);
+		this_is_awful(&back_buffer_texture, back_buffer);
+		for (stage= 0; stage<4; stage++)
+		{
+			IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
+			IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+			IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_MIPFILTER, D3DTEXF_POINT);
+			IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
+			IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
+			IDirect3DDevice8_SetTexture(global_d3d_device, stage, &back_buffer_texture);
+		}
+		/* (back_buffer_texture has what it needs of the surface; the
+		reference IDirect3DDevice8_GetBackBuffer gave is given back) */
+		IDirect3DSurface8_Release(back_buffer);
+
+		if (progress<0.9f)
+			draw_fade_layer(0.f, 0.f, 0.9f);
+		else
+			draw_fade_layer(0.f, 0.f, 0.9f - (progress - 0.9f)*9.f);
+	}
 	IDirect3DDevice8_SetTexture(global_d3d_device, 0, (D3DBaseTexture *)progress_bar_mode.texture0);
 	IDirect3DDevice8_SetTexture(global_d3d_device, 1, (D3DBaseTexture *)progress_bar_mode.texture1);
+	/* 640 texels across a 128-wide mask. Outside that window the border is the
+	   dim floor, so the glow crosses the picture once. */
 	IDirect3DDevice8_SetTextureStageState(global_d3d_device, 1, D3DTSS_BORDERCOLOR, 0x05050505);
 	IDirect3DDevice8_SetTextureStageState(global_d3d_device, 1, D3DTSS_ADDRESSU, D3DTADDRESS_BORDER);
 	IDirect3DDevice8_SetTextureStageState(global_d3d_device, 1, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
@@ -2295,15 +2306,14 @@ static void progress_bar_create_mask_texture(
 	void)
 {
 	D3DLOCKED_RECT locked_rect;
-	unsigned long *pixel;
 	long x, y;
 
 	IDirect3DDevice8_CreateTexture(global_d3d_device, 128, 16, 1, 0, D3DFMT_LIN_A8B8G8R8, 0,
 		&progress_bar_mode.texture1);
 	IDirect3DTexture8_LockRect(progress_bar_mode.texture1, 0, &locked_rect, NULL, 0);
-	pixel= locked_rect.pBits;
 	for (y= 0; y<16; y++)
 	{
+		unsigned long *row= (unsigned long *)((byte *)locked_rect.pBits + y*locked_rect.Pitch);
 		double glow= pow(sin(3.1415f*(y*(1.f/15.f))), 0.75);
 
 		for (x= 0; x<128; x++)
@@ -2311,8 +2321,7 @@ static void progress_bar_create_mask_texture(
 			byte intensity= (byte)(((real)(sin(3.1415f*(x*(1.f/127.f)))*
 				glow)*(250.f/255.f) + 5.f/255.f)*255.f);
 
-			*pixel= (intensity<<24) | (intensity<<16) | (intensity<<8) | intensity;
-			pixel++;
+			row[x]= (intensity<<24) | (intensity<<16) | (intensity<<8) | intensity;
 		}
 	}
 	IDirect3DTexture8_UnlockRect(progress_bar_mode.texture1, 0);
@@ -2425,102 +2434,8 @@ static void progress_bar_make_stuff_ready(
 	return;
 }
 
-/* The retail maps folder does not ship loading.tga. With nothing in the
-texture the sweep above is a black clear. This is the same blue channel
-the tga reader stores: full intensity is the bright core of the ring. */
-static unsigned long loading_blue_pixel(
-	int intensity)
-{
-	unsigned long value;
-
-	if (intensity<0)
-		intensity= 0;
-	if (intensity>255)
-		intensity= 255;
-	value= (unsigned long)intensity;
-	return ((value<<9) | (value & ~1UL))<<7 | value>>2 | 0xff000000UL;
-}
-
-static int loading_letter_pixel(
-	int x,
-	int y)
-{
-	static unsigned char const letters[7][7]=
-	{
-		{0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f},
-		{0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e},
-		{0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11},
-		{0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e},
-		{0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x1f},
-		{0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11},
-		{0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0e}
-	};
-	int scale= 3;
-	int cell= 5*scale + 4;
-	int origin_x= (320 - (7*cell - 4))/2;
-	int origin_y= 240/2 - (7*scale)/2;
-	int letter;
-	int column;
-	int row;
-
-	if (y<origin_y || y>=origin_y + 7*scale)
-		return 0;
-	row= (y - origin_y)/scale;
-	for (letter= 0; letter<7; letter++)
-	{
-		int left= origin_x + letter*cell;
-
-		if (x<left || x>=left + 5*scale)
-			continue;
-		column= (x - left)/scale;
-		if (letters[letter][row] & (0x10>>column))
-			return 255;
-		return 0;
-	}
-
-	return 0;
-}
-
-static void progress_bar_paint_ring(
-	void *bits,
-	int pitch)
-{
-	int x;
-	int y;
-
-	csmemset(bits, 0, (size_t)pitch*240);
-	for (y= 0; y<240; y++)
-	{
-		unsigned long *row= (unsigned long *)((byte *)bits + y*pitch);
-		float dy= (float)y - 119.5f;
-
-		for (x= 0; x<320; x++)
-		{
-			float dx= (float)x - 159.5f;
-			float nx= dx/36.f;
-			float ny= dy/108.f;
-			float radius= (float)sqrt(nx*nx + ny*ny);
-			float band= radius - 1.f;
-			float ring= (float)exp(-(band*band)*36.0);
-			float glow= (float)exp(-(nx*nx)*0.55 - (ny*ny)*0.045);
-			float streak= (float)exp(-(dy*dy)/220.0) * (float)exp(-(dx*dx)/5200.0);
-			float value= ring*0.9f + glow*0.28f + streak*0.62f;
-			int intensity;
-			int letter;
-
-			if (value>1.f)
-				value= 1.f;
-			intensity= (int)(value*255.f);
-			letter= loading_letter_pixel(x, y);
-			if (letter>intensity)
-				intensity= letter;
-			row[x]= loading_blue_pixel(intensity);
-		}
-	}
-
-	return;
-}
-
+/* The loading picture is maps/loading.tga, written from the disc's
+default.xbe. No other picture is drawn in its place. */
 static void progress_bar_load_loading_texture(
 	IDirect3DTexture8 **texture)
 {
@@ -2536,6 +2451,7 @@ static void progress_bar_load_loading_texture(
 	IDirect3DTexture8_LockRect(*texture, 0, &locked_rect, NULL, 0);
 	IDirect3DTexture8_GetLevelDesc(*texture, 0, &surface_description);
 	pixels= locked_rect.pBits;
+	csmemset(pixels, 0, (size_t)locked_rect.Pitch*240);
 	csstrcpy(map_directory, cache_files_map_directory());
 	sprintf(source_path, "z%sloading.tga", map_directory + 1);
 	file= fopen(source_path, "rb");
@@ -2546,19 +2462,15 @@ static void progress_bar_load_loading_texture(
 		image.image_type= 0;
 		image.pixel_depth= 0;
 		tgaLoadHeader(file, &image);
-		/* port: the file is a map pack's: only an uncompressed 24-bit
-		picture the texture's size is read into it */
+		/* only the picture extracted from default.xbe: uncompressed
+		24-bit, the texture's size */
 		if (image.image_type==2 && image.pixel_depth==24 && image.width==320 && image.height==240)
 		{
 			image.pixels= pixels;
 			tgaLoadImageData(file, &image);
 		}
-		else
-			progress_bar_paint_ring(pixels, locked_rect.Pitch);
 		fclose(file);
 	}
-	else
-		progress_bar_paint_ring(pixels, locked_rect.Pitch);
 	IDirect3DTexture8_UnlockRect(*texture, 0);
 
 	return;

@@ -94,8 +94,6 @@ symbols in this file:
 #include "units/units.h"
 #include "text/unicode.h"
 #include "game/bots.h"
-#include "opening_film.h"
-
 #include <xtl.h>
 
 /* ---------- constants */
@@ -797,8 +795,6 @@ boolean network_game_create_game_objects(
 			break;
 	}
 
-	if (!game->variant.game_engine_index)
-		opening_film_load_arm();
 	game_precache_new_map(options.map_name, TRUE);
 	main_menu_unload();
 

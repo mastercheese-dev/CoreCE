@@ -120,6 +120,11 @@ extern const unsigned long platform_window_icon_size;
 #endif
 
 #if !defined(HALO_ANDROID) && !defined(HALO_WEB)
+#if !defined(HALO_MACOS)
+/* asks for the disc when maps/loading.tga is missing and writes it from
+default.xbe (defined with the other extraction code below) */
+static void platform_offer_loading_picture(void);
+#endif
 /* the maps folder checked to hold the Xbox maps (platform_maps_folder_check).
 When it holds Halo PC's instead, or no ui.map, the player is told where each
 kind goes and the game quits, rather than failing to load Halo PC's ui.map
@@ -141,6 +146,9 @@ static void data_check_maps(void)
 	switch (maps.state)
 	{
 	case _maps_folder_xbox:
+#if !defined(HALO_MACOS)
+		platform_offer_loading_picture();
+#endif
 		if (!maps.stray_pc_maps)
 			return;
 		snprintf(message, sizeof(message),
@@ -381,6 +389,75 @@ static BOOL data_choose_image(char *path, int size)
 	snprintf(path, (size_t)size, "%s", choice.path);
 	return TRUE;
 }
+
+#if !defined(HALO_WEB) && !defined(HALO_MACOS)
+/* maps/loading.tga is the original sweep's picture. a maps folder copied
+before the extractor wrote it has none, so the player is asked for the disc
+and the picture is read from default.xbe. the sweep draws that picture
+alone. declining leaves it for the next time the game starts */
+static void platform_offer_loading_picture(void)
+{
+	static const SDL_MessageBoxButtonData buttons[] =
+	{
+		{ SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Yes" },
+		{ SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Not now" },
+	};
+	char file_path[1024];
+	char maps_directory[1024];
+	char *slash;
+	FILE *file;
+	BOOL quiet;
+
+	platform_translate_path("d:\\maps\\loading.tga", file_path, sizeof(file_path));
+	file = fopen(file_path, "rb");
+	if (file)
+	{
+		fclose(file);
+		return;
+	}
+	slash = strrchr(file_path, '/');
+	if (!slash || slash == file_path)
+		return;
+	snprintf(maps_directory, sizeof(maps_directory), "%.*s", (int)(slash - file_path), file_path);
+	quiet = config_boolean("debug.hidden_window") || config_real("debug.exit_after") > 0.0 ||
+		config_string("debug.network_test")[0];
+	if (quiet)
+	{
+		platform_log("loading screen: %s is not there", file_path);
+		return;
+	}
+	for (;;)
+	{
+		SDL_MessageBoxData question = { SDL_MESSAGEBOX_INFORMATION, NULL, "CoreCE", "", 2, buttons, NULL };
+		char message[1400];
+		char image[1024];
+		char error[512];
+		int answer = 0;
+
+		snprintf(message, sizeof(message),
+			"The loading screen's picture is not in the maps folder.\n\n"
+			"Extract it from your Xbox disc image of Halo: Combat Evolved? "
+			"It is read from the disc's default.xbe and written as %s.",
+			file_path);
+		question.message = message;
+		if (!SDL_ShowMessageBox(&question, &answer) || answer != 1)
+		{
+			platform_log("loading screen: %s was not extracted", file_path);
+			return;
+		}
+		if (!data_choose_image(image, sizeof(image)))
+			continue;
+		platform_log("extracting the loading screen picture from %s", image);
+		if (xiso_extract_loading_picture(image, maps_directory, error, sizeof(error)))
+		{
+			platform_log("extracted the loading screen picture");
+			return;
+		}
+		platform_log("loading screen extraction failed: %s", error);
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "CoreCE", error[0] ? error : "The loading screen picture could not be read.", NULL);
+	}
+}
+#endif
 
 BOOL platform_offer_game_data(const char *destination)
 {

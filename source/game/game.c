@@ -123,7 +123,6 @@ struct game_options;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "../../port/linux/game/performance_options.h"
 #include "hardcore_rules.h" /* port: hardcore rules for this map */
-#include "opening_film.h" /* port: the campaign loading film */
 #endif
 #include "hardcore_timer.h" /* port: port/linux/game/hardcore_timer.c */
 #include "ai/ai.h"
@@ -830,17 +829,6 @@ void game_precache_new_map(
 	boolean blocking)
 {
 	long map_status;
-	boolean film;
-
-	film = opening_film_load_take_arm() ||
-		(game_connection() == _game_connection_local && map_name &&
-			strcmp(map_name, "levels\\ui\\ui") != 0);
-	if (!film)
-	{
-		if (opening_film_load_active())
-			progress_bar_end();
-		opening_film_load_cancel();
-	}
 
 	if (!cache_files_precache_map_loaded(map_name))
 	{
@@ -889,8 +877,6 @@ void game_precache_new_map(
 					cache_files_precache_is_copying_map(map_name));
 			ui_widget_load_progress_widget();
 			progress_bar_begin(global_scenario_index != NONE);
-			if (film)
-				opening_film_load_begin();
 			do
 			{
 				map_status = cache_files_precache_map_status(
@@ -901,8 +887,7 @@ void game_precache_new_map(
 			}
 			while (!map_status);
 
-			if (!opening_film_load_active())
-				progress_bar_end();
+			progress_bar_end();
 			ui_widgets_close_all();
 			if (map_status == _cached_map_file_failed)
 				display_error_damaged_media();

@@ -1,7 +1,6 @@
-/* The match opening plays a film of the original loading screen. The
-retail disc has no loading.tga, which is the only picture the sweep
-can draw. The frames ship with the game, and a copy already in
-maps/opening_frames.bin is used when it is there. */
+/* A bundled film of a loading sweep. The loading screen does not play
+it. That screen is the original sweep, and its picture is maps/loading.tga
+written from the disc's default.xbe when the maps are extracted. */
 #include "cseries.h"
 #include "cseries/cseries_windows.h"
 #include "interface/progress_bar.h"
