@@ -3859,24 +3859,6 @@ static boolean bot_probe_floor(real x, real y, real feet_z, real limit, real *gr
 	return TRUE;
 }
 
-/* the side they would step off on. A wall within the step is closed.
-The floor has to be this deck, not the drop beside the shaft. */
-static boolean bot_ladder_side_open(real_point3d const *feet, real yaw, long unit_index)
-{
-	real floor_z;
-
-	if (!bot_ray_clear_z(feet, yaw, 0.70f, 0.55f, unit_index))
-		return FALSE;
-	if (!bot_probe_floor(
-			feet->x + cosine(yaw) * 0.75f,
-			feet->y + sine(yaw) * 0.75f,
-			feet->z, 0.55f, &floor_z))
-		return FALSE;
-	if (floor_z < feet->z - 0.40f || floor_z > feet->z + 0.40f)
-		return FALSE;
-	return TRUE;
-}
-
 static boolean bot_drop_ahead(real_point3d const *feet, real yaw)
 {
 	static real const reach[3] = { 0.45f, 0.95f, 1.40f };
@@ -8842,39 +8824,6 @@ static void update_server_generate_bot_actions(
 								slide = (-sine(state->climb_yaw) * edx +
 									cosine(state->climb_yaw) * edy) > 0.0f ?
 									0.85f : -0.85f;
-								{
-									real slide_yaw;
-									real other_yaw;
-
-									slide_yaw = state->climb_yaw +
-										(slide > 0.0f ? _pi * 0.5f : -(_pi * 0.5f));
-									other_yaw = state->climb_yaw +
-										(slide > 0.0f ? -(_pi * 0.5f) : _pi * 0.5f);
-									/* the sniper shaft has no opening on the
-									side this exit was given. The other side
-									is the step off, and a lip in front is the
-									step when that side is closed too. An open
-									slide is unchanged. */
-									if (!bot_ray_clear_z(&feet, slide_yaw, 0.42f, 0.55f,
-											player->unit_index))
-									{
-										real front_z;
-
-										if (bot_ladder_side_open(&feet, other_yaw,
-												player->unit_index))
-											slide = -slide;
-										else if (bot_probe_floor(
-												feet.x + cosine(state->climb_yaw) * 0.65f,
-												feet.y + sine(state->climb_yaw) * 0.65f,
-												feet.z, 0.60f, &front_z) &&
-											front_z >= feet.z - 0.40f &&
-											front_z <= feet.z + 0.35f)
-										{
-											slide = 0.0f;
-											push = 1.0f;
-										}
-									}
-								}
 							}
 							else
 							{

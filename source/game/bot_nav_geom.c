@@ -312,7 +312,9 @@ static int bot_nav_land_walled(float face_x, float face_y, float yaw,
 			return 0;
 		origin.x = face_x - cosine(yaw) * back + dx * begin;
 		origin.y = face_y - sine(yaw) * back + dy * begin;
-		origin.z = gz + 0.62f;
+		/* above a lip or a rail. A wall beside the shaft still stands here.
+		the rim of the opening does not, and that rim is not a closed side. */
+		origin.z = gz + 1.15f;
 		into.i = dx * travel;
 		into.j = dy * travel;
 		into.k = 0.0f;
@@ -403,9 +405,10 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 					prefer = -prefer;
 				better = 0;
 				/* the sniper shaft is closed on one side. That floor is
-				not a step off while another side of the face is open. */
+				not a step off while the same deck is open. A lower
+				floor is the walk back down around the opening. */
 				if (found && walled != best_walled)
-					better = best_walled && !walled;
+					better = !walled && best_walled && gz >= best_z - 0.75f;
 				/* a floor through the face is the wrong side. Keep it
 				only when the climb side has no floor up there. */
 				else if (away && found && best_away == 0)
