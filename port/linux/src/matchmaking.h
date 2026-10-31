@@ -28,6 +28,13 @@ enum
 	MATCHMAKING_LOBBY_NAME_LENGTH = 12
 };
 
+enum
+{
+	MATCHMAKING_PHASE_NONE = 0,
+	MATCHMAKING_PHASE_PARTY,
+	MATCHMAKING_PHASE_SEARCH
+};
+
 /* the offer's rules, already filled with this match's values */
 struct matchmaking_rules
 {
@@ -63,8 +70,13 @@ struct matchmaking_offer
 	int players;
 	/* how many players are in the lobby now. -1 when the offer did not say */
 	int joined;
-	/* seconds until the match starts. -1 when the offer did not say */
+	/* seconds the server will still look for parties. 0 means the roster is
+	full or bots are filling it. -1 means there is no countdown. */
 	int wait_seconds;
+	/* party is the private lobby. search is after Find Game. */
+	int phase;
+	/* local players this machine may add, before the other seats are counted */
+	int local_max;
 	int name_count;
 	char names[MATCHMAKING_LOBBY_NAMES][MATCHMAKING_LOBBY_NAME_LENGTH];
 	int teams;
@@ -82,6 +94,7 @@ struct matchmaking_playlist
 	int players;
 	int teams;
 	int team_size;
+	int local_max;
 	unsigned short port;
 	char modes[4][16];
 	int mode_count;
@@ -100,16 +113,32 @@ void matchmaking_watch(void);
 -1 when the service is on another network (catalog is still filled in). */
 int matchmaking_catalog(struct matchmaking_catalog *catalog);
 /* start publishing this playlist. name is the gamertag, 11 characters at most.
-publishing continues until the player has joined, or leaves. */
+ready is false and locals is 1 until the lobby changes them. publishing
+continues through the private lobby until the match starts or the player leaves. */
 void matchmaking_queue(const char *playlist, const char *name);
-/* the player left the menu. a match already taken keeps its port. */
+/* how many local players are in this party, 1 to 4. ignored once Find Game is pressed. */
+void matchmaking_set_locals(int locals);
+/* Find Game: ready becomes true and publishing continues. */
+void matchmaking_find_game(void);
+/* 1 while this machine is publishing a queue */
+int matchmaking_queue_active(void);
+/* 1 after Find Game */
+int matchmaking_is_ready(void);
+/* the latest offer, including ones already taken. 1 when there is one. */
+int matchmaking_offer_copy(struct matchmaking_offer *offer);
+/* the player left the menu. a party already in its lobby keeps publishing. */
 void matchmaking_leave(void);
-/* back at the main menu: the queue and the port are done */
+/* back at the main menu, or out of the lobby: the queue and the port are done */
 void matchmaking_reset(void);
+/* the match has started. stop publishing and clear the retained queue. the port stays. */
+void matchmaking_stop(void);
 /* this machine is the fallback host. publish the invite once it exists. */
 void matchmaking_commit_host(const char *playlist, unsigned short port);
-/* the invite has been joined. stop the queue and keep the port. */
+/* the private lobby has been joined. keep publishing and keep the port. */
 void matchmaking_commit_join(void);
+/* a join link that is not this party's. a machine already publishing stops,
+so a friend on someone else's link does not keep a queue. */
+void matchmaking_yield_to_invite(const char *text);
 /* 1 when a new offer is waiting */
 int matchmaking_take_offer(struct matchmaking_offer *offer);
 /* 1 connected, 0 still trying, -1 the service could not be reached */

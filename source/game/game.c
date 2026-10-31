@@ -123,6 +123,7 @@ struct game_options;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "../../port/linux/game/performance_options.h"
 #include "hardcore_rules.h" /* port: hardcore rules for this map */
+#include "../../port/linux/src/matchmaking.h" /* port: stop the queue when the map load starts */
 #endif
 #include "hardcore_timer.h" /* port: port/linux/game/hardcore_timer.c */
 #include "ai/ai.h"
@@ -876,6 +877,8 @@ void game_precache_new_map(
 				cache_files_precache_in_progress() &&
 					cache_files_precache_is_copying_map(map_name));
 			ui_widget_load_progress_widget();
+			/* the loading screen is the match starting. a party stops publishing here. */
+			matchmaking_stop();
 			progress_bar_begin(global_scenario_index != NONE);
 			do
 			{

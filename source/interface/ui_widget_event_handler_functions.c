@@ -909,6 +909,8 @@ symbols in this file:
 
 #include "cseries.h"
 #include "../../port/linux/src/matchmaking.h"
+/* a search that moved this party (port/linux/game/menu_functions.c) */
+int menu_matchmaking_rejoin(struct widget_instance *widget, boolean *widget_deleted);
 #include "cache/cache_files.h"
 #include "bungie_net/network/transport.h"
 #include "bungie_net/network/transport_endpoint_winsock.h"
@@ -2864,6 +2866,12 @@ static boolean multiplayer_game_swap_teams(
 	long player_index;
 
 	match_assert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1572, event);
+	/* a party combined with another joins that invite from this press */
+	if (menu_matchmaking_rejoin(widget, widget_deleted))
+		return TRUE;
+	/* matchmaking assigns the teams. a switch from this lobby is not sent. */
+	if (matchmaking_queue_active())
+		return TRUE;
 	game = network_game_get_game();
 	if (game && game->variant.universal_variant.teams == TRUE)
 	{
@@ -2901,6 +2909,16 @@ static boolean network_game_start_faster(
 	short machine_index;
 	long player_index;
 
+	/* a party combined with another joins that invite from this press */
+	if (menu_matchmaking_rejoin(widget, widget_deleted))
+		return TRUE;
+	/* Find Game takes the place of Start. the server fills the match. */
+	if (matchmaking_queue_active())
+	{
+		if (!matchmaking_is_ready())
+			matchmaking_find_game();
+		return TRUE;
+	}
 	if (client)
 	{
 		struct network_game *game = network_game_client_get_game(client);

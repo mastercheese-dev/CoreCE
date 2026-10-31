@@ -1599,7 +1599,7 @@ def _lobby() -> list:
                       '<child widget="main_menu/new_select/sel_list_desc_bkd"/>',
                       f'<child widget="{base}/player_profile_list"/>',
                       f'<child widget="{base}/header_add_player"/>',
-                      f'<child widget="{base}/player_profile_help" x="20" y="416"/>'])
+                      f'<child widget="{base}/player_profile_help" x="20" y="360"/>'])
     lines += _header(f"{base}/header_add_player", f"{base}/header_add_player")
     lines += _widget(f"{base}/player_profile_list",
                      [("type", "column_list"), ("width", 640), ("height", 480),
@@ -1612,7 +1612,7 @@ def _lobby() -> list:
                       *[f'<child widget="{MT}/coop/list_item_{index}" x="20" y="{73 + 30 * index}"/>'
                         for index in range(11)],
                       f'<child widget="{MT}/coop/player_2_button_bar" y="414"/>'])
-    lines += _widget(f"{base}/player_profile_help", [("type", "text"), ("width", 350), ("height", 24),
+    lines += _widget(f"{base}/player_profile_help", [("type", "text"), ("width", 600), ("height", 100),
                                                      ("text", "The new player's profile."),
                                                      ("font", "ui\\small_ui"), ("color", "#FF2896FF"), ("text_y", 5),
                                                      ("text_flags", "no_focus_test")], [])

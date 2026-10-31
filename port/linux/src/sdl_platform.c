@@ -17,6 +17,7 @@ and the debug keyboard that the game's console reads.
 #include "port_config.h"
 #include "input_bindings.h"
 #include "p2p.h"
+#include "matchmaking.h"
 #include "port_mods.h"
 #include "xiso.h"
 #include "native_video.h"
@@ -1442,17 +1443,21 @@ int platform_clipboard_get(char *text, int size)
 	return got;
 }
 
+/* the last clipboard text the invite watcher looked at, so a link this game
+just copied is not joined as if a friend had pasted it */
+static char clipboard_seen[256];
+
 void platform_clipboard_set(const char *text)
 {
 	SDL_SetClipboardText(text);
+	if (text)
+		snprintf(clipboard_seen, sizeof(clipboard_seen), "%s", text);
 }
 
 /* puts a new invite on the clipboard, and joins one found there when the
 game comes to the front */
 static void platform_invite_clipboard(BOOL look)
 {
-	/* the last clipboard text looked at, so each invite is joined once */
-	static char seen[256];
 	const char *invite = p2p_take_clipboard_text();
 
 	/* Automated sessions use isolated saves and logs; leave the player's
@@ -1465,7 +1470,7 @@ static void platform_invite_clipboard(BOOL look)
 		web_js_post(2, invite);
 #else
 		SDL_SetClipboardText(invite);
-		snprintf(seen, sizeof(seen), "%s", invite);
+		snprintf(clipboard_seen, sizeof(clipboard_seen), "%s", invite);
 		platform_log("Internet play: the invite link is on the clipboard");
 #endif
 #ifdef HALO_ANDROID
@@ -1476,11 +1481,13 @@ static void platform_invite_clipboard(BOOL look)
 	{
 		char *text = SDL_GetClipboardText();
 
-		if (text && strcmp(text, seen) && strlen(text) < sizeof(seen))
+		if (text && strcmp(text, clipboard_seen) && strlen(text) < sizeof(clipboard_seen))
 		{
-			snprintf(seen, sizeof(seen), "%s", text);
+			snprintf(clipboard_seen, sizeof(clipboard_seen), "%s", text);
 			/* (a link, not a bare code: 64 hex digits alone are as often a
 			checksum copied for something else) */
+			if (platform_text_has_invite_link(text))
+				matchmaking_yield_to_invite(text);
 			if (platform_text_has_invite_link(text) && p2p_join_invite(text))
 			{
 #ifdef HALO_ANDROID

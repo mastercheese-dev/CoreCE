@@ -2811,6 +2811,39 @@ static void profile_list_finish_copy(struct widget_instance *list)
 	focus_row(list, (short)(profile_list.chosen - profile_list.first));
 }
 
+/* the matchmaking party's join link, on the add-player line. the box is one
+short line in the tags, so the link is broken up to fit. */
+static void mm_fill_party_link(struct widget_instance *help, char const *invite)
+{
+	wchar_t line[192];
+	int used = 0;
+	int index = 0;
+	int column = 0;
+	char const *prefix = "Join with this link:\r\n";
+
+	if (!help || !invite)
+		return;
+	while (prefix[index] && used < (int)NUMBEROF(line) - 1)
+		line[used++] = (wchar_t)(unsigned char)prefix[index++];
+	for (index = 0; invite[index] && used < (int)NUMBEROF(line) - 1; index++)
+	{
+		if (column >= 36)
+		{
+			line[used++] = L'\r';
+			if (used < (int)NUMBEROF(line) - 1)
+				line[used++] = L'\n';
+			column = 0;
+		}
+		if (used >= (int)NUMBEROF(line) - 1)
+			break;
+		line[used++] = (wchar_t)(unsigned char)invite[index];
+		column++;
+	}
+	line[used] = 0;
+	help->parameters.text_box.string_list_index = HALO_CUSTOM_MAP_TEXT;
+	text_set_length(help, line, (short)NUMBEROF(line));
+}
+
 /* "3wide player profile list update": the rows, and the profile chosen:
 its name, colour, current level, best difficulty and controls */
 static void profile_list_update(struct widget_instance *list)
@@ -2839,14 +2872,28 @@ static void profile_list_update(struct widget_instance *list)
 	{
 		struct widget_instance *screen = screen_of(list);
 		struct widget_instance *help = named(screen, "player_profile_help", 0);
+		int party_link = FALSE;
 
+		/* matchmaking's Add Player shows the server's join link. a friend
+		who uses it is in this party and does not publish a queue. */
+		if (screen && screen->name && !strcmp(screen->name, "player_profile_screen") &&
+			matchmaking_queue_active())
+		{
+			struct matchmaking_offer offer;
+
+			if (matchmaking_offer_copy(&offer) && offer.invite[0])
+			{
+				mm_fill_party_link(help, offer.invite);
+				party_link = TRUE;
+			}
+		}
 		/* the LAN add-player screen has no side card, so the line under the
 		list names who A will add, or that BOT opens its own screen */
-		if (profile_list.picking)
+		if (!party_link && profile_list.picking)
 			label_set(help, L"Choose a profile to copy.");
-		else if (profile_list_is_duplicate(profile_list.chosen))
+		else if (!party_link && profile_list_is_duplicate(profile_list.chosen))
 			label_set(help, L"A copy of a profile, saved under a new name.");
-		else if (screen->name && !strcmp(screen->name, "lan_add_player_screen"))
+		else if (!party_link && screen->name && !strcmp(screen->name, "lan_add_player_screen"))
 		{
 			/* label_set keeps this line. A plain text_set is replaced on the
 			next draw by the caption baked into the widget. */
@@ -2866,7 +2913,7 @@ static void profile_list_update(struct widget_instance *list)
 			else
 				label_set(help, L"Choose a profile, or BOT to set one up.");
 		}
-		else if (profile_list_bot_row)
+		else if (!party_link && profile_list_bot_row)
 		{
 			text_set(help, bot ? L"An AI player. Set its name and difficulty." : L"The new player's profile.");
 		}
@@ -5758,6 +5805,9 @@ static boolean direct_link_from_clipboard(void)
 	for (length = strlen(link); length && (link[length - 1] == ' ' || link[length - 1] == '\t' ||
 		link[length - 1] == '\r' || link[length - 1] == '\n'); length--)
 		link[length - 1] = 0;
+	/* a friend on this link is in that party, and must not keep a queue */
+	if (*link)
+		matchmaking_yield_to_invite(link);
 	if (!*link || !p2p_join_invite(link))
 	{
 		platform_log("menus: the clipboard has no invite link");
@@ -6008,6 +6058,43 @@ static boolean lobby_join_reset(void)
 	return TRUE;
 }
 
+/* the party lobby leaves the playlist screen, and a search can move this
+party onto another invite. defined with the matchmaking menu. */
+static void mm_lobby_abandoned(void);
+static int mm_lobby_switch(struct widget_instance *list);
+static void mm_ascii(wchar_t *text, int size, char const *ascii);
+
+/* local players this matchmaking party may still seat. locals only reserves
+the seats, so the cap is the offer's local_max and whatever seats are not
+already taken by other people. */
+static int mm_local_cap(struct matchmaking_offer const *offer)
+{
+	int cap = offer && offer->local_max > 0 ? offer->local_max : 4;
+	int locals = lobby_view_player_count();
+	int listed;
+	int other;
+	int room;
+
+	if (cap > 4)
+		cap = 4;
+	if (cap < 1)
+		cap = 1;
+	if (!offer || offer->players < 2)
+		return cap;
+	if (locals < 1)
+		locals = 1;
+	listed = offer->joined >= 0 ? offer->joined : offer->name_count;
+	other = listed - locals;
+	if (other < 0)
+		other = 0;
+	room = offer->players - other;
+	if (room < 1)
+		room = 1;
+	if (room < cap)
+		cap = room;
+	return cap;
+}
+
 /* room for another player on this machine, and in the game (the lobby's, or
 the preview's advertisement when that is what is open) */
 static boolean lobby_seat_available(void)
@@ -6017,6 +6104,19 @@ static boolean lobby_seat_available(void)
 	struct advertised_game *preview;
 	short state_data;
 
+	if (matchmaking_queue_active())
+	{
+		struct matchmaking_offer offer;
+		int cap = 4;
+
+		if (matchmaking_offer_copy(&offer))
+			cap = mm_local_cap(&offer);
+		if (lobby_view_player_count() >= cap)
+		{
+			display_error_text_deferred(L"This party is full.", NONE);
+			return campaign_fail();
+		}
+	}
 	if (lobby_local_player_count() >= MAXIMUM_LOCAL_PLAYERS)
 		return campaign_fail();
 	if (game && network_game_client_get_state(client, &state_data) == _client_state_pregame)
@@ -6116,6 +6216,13 @@ static boolean lobby_add_player(struct widget_instance *widget, boolean *widget_
 	boolean lan_lobby = root && root->name && !strcmp(root->name, "lobby_screen") &&
 		(multiplayer.mode == _multiplayer_mode_host_lan || multiplayer.mode == _multiplayer_mode_lan);
 
+	if (matchmaking_queue_active())
+	{
+		struct matchmaking_offer offer;
+
+		if (matchmaking_offer_copy(&offer) && offer.invite[0])
+			platform_clipboard_set(offer.invite);
+	}
 	if (!lobby_seat_available())
 		return FALSE;
 	lobby_join.adding = TRUE;
@@ -6160,7 +6267,10 @@ static boolean lobby_leave(struct widget_instance *widget, struct event_record *
 	profile still being chosen would keep this gamepad on its own port, and
 	the screen we return to only reads the first one */
 	if (left)
+	{
 		lobby_join_reset();
+		mm_lobby_abandoned();
+	}
 	return left;
 }
 
@@ -6730,13 +6840,21 @@ void menu_functions_text_box_drawn(struct widget_instance *widget, rectangle2d c
 static void lobby_update(struct widget_instance *list)
 {
 	struct widget_instance *description = list->parameters.list.extended_description;
-	void *client = global_network_game_client_get();
-	struct network_game *game = client ? network_game_client_get_game(client) : NULL;
-	short state_data, state = client ? network_game_client_get_state(client, &state_data) : NONE;
+	void *client;
+	struct network_game *game;
+	short state_data, state;
 	wchar_t text[LOBBY_TEXT_LENGTH];
 	short index;
 	short rows = LOBBY_ROWS;
+	int party = matchmaking_queue_active();
 
+	/* a search that combined this party with another leaves this lobby and
+	joins the new invite. the screen goes away with that join. */
+	if (mm_lobby_switch(list))
+		return;
+	client = global_network_game_client_get();
+	game = client ? network_game_client_get_game(client) : NULL;
+	state = client ? network_game_client_get_state(client, &state_data) : NONE;
 	lobby_player_count = 0;
 	for (index = 0; game && state >= _client_state_pregame && index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
 	{
@@ -6763,7 +6881,24 @@ static void lobby_update(struct widget_instance *list)
 		lobby_icons.updated_at = system_milliseconds();
 	}
 	lobby_join_help(list);
-	visible_set(named(list, "lobby_button_team", 0), game && game->variant.universal_variant.teams);
+	/* the server assigns teams. this lobby does not send a team change. */
+	visible_set(named(list, "lobby_button_team", 0),
+		game && game->variant.universal_variant.teams && !party);
+	{
+		struct widget_instance *start = named(list, "lobby_button_start", 0);
+
+		if (party)
+		{
+			label_set(start, matchmaking_is_ready() ? L"FINDING" : L"FIND GAME");
+			if (start)
+				start->disabled = FALSE;
+		}
+		else if (start && start->parameters.text_box.string_list_index == HALO_CUSTOM_MAP_TEXT)
+		{
+			start->parameters.text_box.string_list_index = 0;
+			start->disabled = FALSE;
+		}
+	}
 	/* (the buttons' focus, off Switch Team when it is hidden) */
 	focus_off_hidden(named(list, "lobby_button_bar", 0));
 	visible_set(named(description, "lobby_right_item", 0), game != NULL && state >= _client_state_pregame);
@@ -6777,24 +6912,71 @@ static void lobby_update(struct widget_instance *list)
 		short seconds = network_game_client_get_seconds_to_game_start(client);
 		char link[TEXT_FIELD_LENGTH];
 		wchar_t gametype[NUMBEROF(game->variant.human_readable_game_description) + 1];
+		struct matchmaking_offer offer;
+		int have_offer = party && matchmaking_offer_copy(&offer);
 
 		ustrncpy(gametype, game->variant.human_readable_game_description, NUMBEROF(gametype) - 1);
 		gametype[NUMBEROF(gametype) - 1] = 0;
-		usnprintf(text, NUMBEROF(text) - 1, L"%s\r\n%s\r\n%d of %d players\r\n\r\n%s", gametype,
-			engine_names[PIN(game->variant.game_engine_index, 0, 5)], lobby_player_count, game->maximum_players,
-			seconds > 0 ? L"Starting in:" : game->machine_count < 2 ? L"Waiting for players" : L"");
-		text[NUMBEROF(text) - 1] = 0;
-		if (seconds > 0)
+		if (party && !matchmaking_is_ready() && have_offer)
 		{
-			size_t length = ustrlen(text);
+			int count = lobby_view_player_count();
+			int cap = mm_local_cap(&offer);
 
-			usnprintf(text + length, NUMBEROF(text) - 1 - length, L" %d", seconds);
+			if (count < 1)
+				count = 1;
+			if (count > cap)
+				count = cap;
+			matchmaking_set_locals(count);
 		}
-		if (global_network_game_server_get() && p2p_invite_link(link, sizeof(link)))
+		if (have_offer)
 		{
-			size_t length = ustrlen(text);
+			wchar_t status[64];
+			int joined = offer.joined >= 0 ? offer.joined : offer.name_count;
+			int name;
+			size_t length;
 
-			usnprintf(text + length, NUMBEROF(text) - 1 - length, L"\r\n\r\nInvite link copied:\r\npaste it to friends");
+			if (!matchmaking_is_ready() || offer.phase == MATCHMAKING_PHASE_PARTY)
+				usnprintf(status, NUMBEROF(status) - 1, L"Find Game when ready");
+			else if (offer.wait_seconds > 0)
+				usnprintf(status, NUMBEROF(status) - 1, L"Looking: %d", offer.wait_seconds);
+			else if (offer.wait_seconds == 0)
+				usnprintf(status, NUMBEROF(status) - 1, L"Starting");
+			else
+				usnprintf(status, NUMBEROF(status) - 1, L"Waiting for players");
+			status[NUMBEROF(status) - 1] = 0;
+			usnprintf(text, NUMBEROF(text) - 1, L"%s\r\n%d of %d players\r\n%s", gametype, joined,
+				offer.players > 0 ? offer.players : game->maximum_players, status);
+			text[NUMBEROF(text) - 1] = 0;
+			for (name = 0; name < offer.name_count; name++)
+			{
+				wchar_t who[MATCHMAKING_LOBBY_NAME_LENGTH];
+
+				length = ustrlen(text);
+				if (length + 4 >= NUMBEROF(text))
+					break;
+				mm_ascii(who, NUMBEROF(who), offer.names[name]);
+				usnprintf(text + length, NUMBEROF(text) - 1 - length, L"\r\n%s", who);
+				text[NUMBEROF(text) - 1] = 0;
+			}
+		}
+		else
+		{
+			usnprintf(text, NUMBEROF(text) - 1, L"%s\r\n%s\r\n%d of %d players\r\n\r\n%s", gametype,
+				engine_names[PIN(game->variant.game_engine_index, 0, 5)], lobby_player_count, game->maximum_players,
+				seconds > 0 ? L"Starting in:" : game->machine_count < 2 ? L"Waiting for players" : L"");
+			text[NUMBEROF(text) - 1] = 0;
+			if (seconds > 0)
+			{
+				size_t length = ustrlen(text);
+
+				usnprintf(text + length, NUMBEROF(text) - 1 - length, L" %d", seconds);
+			}
+			if (global_network_game_server_get() && p2p_invite_link(link, sizeof(link)))
+			{
+				size_t length = ustrlen(text);
+
+				usnprintf(text + length, NUMBEROF(text) - 1 - length, L"\r\n\r\nInvite link copied:\r\npaste it to friends");
+			}
 		}
 		text_set_length(named(description, "lobby_game_data", 0), text, LOBBY_TEXT_LENGTH);
 	}
@@ -8974,12 +9156,20 @@ static struct
 	int joined;
 	int lobby_players;
 	int wait_seconds;
-	unsigned long wait_at;
+	int phase;
 	int name_count;
 	char names[MATCHMAKING_LOBBY_NAMES][MATCHMAKING_LOBBY_NAME_LENGTH];
 	struct matchmaking_offer offer;
 	wchar_t status[ROW_TEXT_LENGTH];
 } mm_menu;
+
+/* the invite this party is in. a search that names a different one moves us. */
+static char mm_joined_invite[256];
+static unsigned short mm_switch_port;
+static int mm_switching;
+static int mm_switch_started;
+static int mm_switch_join;
+static int mm_switch_posts;
 
 /* searching, joining, or already in the match: the offer's port stays */
 static int mm_holds_port(void)
@@ -9000,7 +9190,7 @@ static void mm_lobby_clear(void)
 	mm_menu.joined = -1;
 	mm_menu.lobby_players = 0;
 	mm_menu.wait_seconds = -1;
-	mm_menu.wait_at = 0;
+	mm_menu.phase = MATCHMAKING_PHASE_NONE;
 	mm_menu.name_count = 0;
 }
 
@@ -9019,8 +9209,7 @@ static void mm_lobby_store(const struct matchmaking_offer *offer)
 	mm_menu.joined = offer->joined;
 	mm_menu.lobby_players = offer->players;
 	mm_menu.wait_seconds = offer->wait_seconds;
-	if (offer->wait_seconds >= 0)
-		mm_menu.wait_at = system_milliseconds();
+	mm_menu.phase = offer->phase;
 	mm_menu.name_count = offer->name_count;
 	if (mm_menu.name_count > MATCHMAKING_LOBBY_NAMES)
 		mm_menu.name_count = MATCHMAKING_LOBBY_NAMES;
@@ -9122,20 +9311,6 @@ static void mm_rows(struct widget_instance *list, const struct matchmaking_catal
 	}
 }
 
-static int mm_wait_left(void)
-{
-	unsigned long elapsed;
-	int left;
-
-	if (mm_menu.wait_seconds < 0)
-		return -1;
-	elapsed = system_milliseconds() - mm_menu.wait_at;
-	left = mm_menu.wait_seconds - (int)(elapsed / 1000);
-	if (left < 0)
-		left = 0;
-	return left;
-}
-
 static void mm_text_add(wchar_t *text, int size, int *used, const wchar_t *add)
 {
 	int index = 0;
@@ -9151,7 +9326,8 @@ static void mm_lobby_text(wchar_t *text, int size)
 {
 	wchar_t line[64];
 	int used = 0;
-	int left = mm_wait_left();
+	/* the server's wait, as the offer last said it. a party has none. */
+	int left = mm_menu.phase == MATCHMAKING_PHASE_PARTY ? -1 : mm_menu.wait_seconds;
 	int index;
 
 	text[0] = 0;
@@ -9480,6 +9656,104 @@ static struct advertised_game *mm_peer_game(void)
 	return NULL;
 }
 
+/* the machine's last player left the lobby before the match. the queue ends. */
+static void mm_lobby_abandoned(void)
+{
+	mm_switching = 0;
+	mm_switch_started = 0;
+	mm_switch_join = 0;
+	mm_switch_posts = 0;
+	mm_joined_invite[0] = 0;
+	if (!matchmaking_queue_active())
+		return;
+	mm_menu.state = MM_MENU_CHOOSE;
+	matchmaking_reset();
+}
+
+/* 1 when this frame is a move onto another party's invite. the current lobby
+must not be used after a successful join: that call deletes it. */
+static int mm_lobby_switch(struct widget_instance *list)
+{
+	struct matchmaking_offer offer;
+	struct advertised_game *game;
+
+	if (!matchmaking_queue_active() || !matchmaking_is_ready())
+	{
+		mm_switching = 0;
+		mm_switch_started = 0;
+		mm_switch_join = 0;
+		mm_switch_posts = 0;
+		return 0;
+	}
+	if (!matchmaking_offer_copy(&offer))
+		return mm_switching;
+	if (mm_switching)
+	{
+		struct widget_instance *bar = named(list, "lobby_button_bar", 0);
+		struct widget_instance *start = named(list, "lobby_button_start", 0);
+
+		matchmaking_set_game_port(mm_switch_port);
+		game = mm_peer_game();
+		if (!game)
+			return 1;
+		/* the join replaces this screen. it has to run from a button, not
+		from this draw, which is still using the screen. */
+		mm_switch_join = 1;
+		mm_switch_posts++;
+		if (mm_switch_posts == 1 || mm_switch_posts % 20 == 0)
+		{
+			if (bar && start)
+			{
+				bar->focused_child = start;
+				start->disabled = FALSE;
+				list->focused_child = bar;
+			}
+			ui_widget_port_post_button(controller_of(list), BUTTON_A);
+		}
+		return 1;
+	}
+	/* a party stays on its own link. a search can be combined with another. */
+	if (offer.phase == MATCHMAKING_PHASE_PARTY || !offer.invite[0] || !offer.port ||
+		!mm_joined_invite[0] || !strcmp(offer.invite, mm_joined_invite))
+		return 0;
+	mm_switch_port = offer.port;
+	matchmaking_set_game_port(offer.port);
+	if (!mm_switch_started)
+	{
+		dispose_global_network_game_client();
+		mm_switch_started = 1;
+	}
+	if (!p2p_join_invite(offer.invite) || !ui_widget_port_browse(list, NULL, NULL))
+		return 1;
+	snprintf(mm_joined_invite, sizeof(mm_joined_invite), "%s", offer.invite);
+	mm_switching = 1;
+	mm_switch_posts = 0;
+	return 1;
+}
+
+/* a posted Find Game press, once the combined party's game is on the wire.
+1 when that join has been started. the screen is replaced. */
+int menu_matchmaking_rejoin(struct widget_instance *widget, boolean *widget_deleted)
+{
+	struct advertised_game *game;
+	boolean deleted = FALSE;
+
+	if (!mm_switch_join || !widget)
+		return 0;
+	game = mm_peer_game();
+	if (!game)
+		return 0;
+	mm_switch_join = 0;
+	mm_switching = 0;
+	mm_switch_started = 0;
+	mm_switch_posts = 0;
+	matchmaking_set_game_port(mm_switch_port);
+	if (!widget_deleted)
+		widget_deleted = &deleted;
+	ui_widget_port_join(widget, game, LOBBY_NAME, widget_deleted);
+	return 1;
+}
+
 static void mm_arm(struct widget_instance *list)
 {
 	struct widget_instance *launch = named(list, "mm_launch", 0);
@@ -9546,7 +9820,7 @@ static boolean mm_choose(struct widget_instance *widget)
 	mm_lobby_clear();
 	matchmaking_queue(playlist, name);
 	mm_menu.state = MM_MENU_SEARCHING;
-	mm_status(L"Searching...");
+	mm_status(L"Waiting for the lobby.");
 	return FALSE;
 }
 
@@ -9651,6 +9925,7 @@ static boolean mm_begin_join(struct widget_instance *widget, struct event_record
 	}
 	matchmaking_set_game_port(mm_menu.offer.port);
 	mm_menu.invited = 1;
+	snprintf(mm_joined_invite, sizeof(mm_joined_invite), "%s", mm_menu.offer.invite);
 	return TRUE;
 }
 
@@ -9709,7 +9984,7 @@ static boolean mm_launch(struct widget_instance *widget, struct event_record *ev
 				return FALSE;
 			}
 			mm_menu.state = MM_MENU_JOINING;
-			mm_status(L"Joining...");
+			mm_status(L"Waiting for the lobby.");
 			return FALSE;
 		}
 		return mm_finish_join(widget, widget_deleted);
@@ -9771,7 +10046,7 @@ static void mm_offer(const struct matchmaking_offer *offer)
 	{
 		mm_menu.waiting = 1;
 		if (!mm_menu.lobby)
-			mm_status(L"Waiting for players...");
+			mm_status(L"Waiting for the lobby.");
 		return;
 	}
 	mm_menu.waiting = 0;
@@ -9788,7 +10063,7 @@ static void mm_offer(const struct matchmaking_offer *offer)
 	mm_menu.offer = *offer;
 	mm_menu.state = MM_MENU_LAUNCHING;
 	mm_menu.launch_frames = 0;
-	mm_status(offer->role == MATCHMAKING_ROLE_HOST ? L"Hosting..." : L"Joining...");
+	mm_status(offer->role == MATCHMAKING_ROLE_HOST ? L"Hosting..." : L"Waiting for the lobby.");
 }
 
 /* "port mm update" */
@@ -9809,7 +10084,7 @@ static void mm_update(struct widget_instance *list)
 		else if (matchmaking_take_offer(&offer))
 			mm_offer(&offer);
 		else if (mm_menu.state == MM_MENU_SEARCHING && !mm_menu.waiting && !mm_menu.lobby)
-			mm_status(matchmaking_link() > 0 ? L"Searching..." : L"Connecting...");
+			mm_status(matchmaking_link() > 0 ? L"Waiting for the lobby." : L"Connecting...");
 	}
 	if (mm_menu.state == MM_MENU_JOINING && mm_peer_game())
 	{
@@ -9837,7 +10112,7 @@ static void mm_update(struct widget_instance *list)
 			else
 			{
 				mm_menu.state = MM_MENU_JOINING;
-				mm_status(L"Joining...");
+				mm_status(L"Waiting for the lobby.");
 			}
 		}
 		else
