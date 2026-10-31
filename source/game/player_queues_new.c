@@ -8935,9 +8935,16 @@ static void update_server_generate_bot_actions(
 							if (edz < 0.0f)
 								edz = -edz;
 							done = FALSE;
-							if (state->climb_up && dismount && grounded_floor &&
+							/* a side opening is finished on the deck, not
+							on the rim. Height alone is the hole, and the
+							next step then walks around it and they fall.
+							a deck straight off the face still ends as before. */
+							if (state->climb_up && dismount && grounded_floor && !side_exit &&
 								(edx * edx + edy * edy < 1.8f * 1.8f ||
 									feet.z >= state->climb_top - 0.25f))
+								done = TRUE;
+							else if (state->climb_up && dismount && grounded_floor && side_exit &&
+								edz < 0.55f && edx * edx + edy * edy < 0.90f * 0.90f)
 								done = TRUE;
 							else if (!state->climb_up && grounded_floor &&
 								edx * edx + edy * edy < 1.8f * 1.8f && edz < 1.1f)

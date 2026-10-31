@@ -1587,8 +1587,8 @@ void progress_bar_begin(
 {
 	progress_bar_mode.capture_frame= !skip_frame_capture;
 	progress_bar_mode.active= TRUE;
-	/* port: a match opening plays the sweep from the start, not from
-	   wherever the last map load left it */
+	/* port: a later screen starts from the beginning, not from wherever
+	   the last map load left the sweep */
 	last_t= 0.f;
 	SetThreadPriority((void *)-2, 2);
 

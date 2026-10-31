@@ -389,7 +389,7 @@ void interface_draw_fullscreen_overlays(
 	cinematic_render();
 	interface_splitscreen_render();
 	hud_render_timer();
-	/* port: a newer Mac release, in the same place in a game and in the menus */
+	/* port: a newer release, in the same place in a game and in the menus */
 	fork_update_notice_render();
 	/* port: a map's download (port/linux/game/map_share.c) */
 	map_share_render();

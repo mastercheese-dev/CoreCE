@@ -797,8 +797,10 @@ boolean network_game_create_game_objects(
 			break;
 	}
 
-	if (!game->variant.game_engine_index)
-		opening_film_load_arm();
+	/* a network match plays the opening film while the map loads, including
+	one joined from matchmaking or the server browser. the original sweep
+	is not the stand-in. */
+	opening_film_load_arm();
 	game_precache_new_map(options.map_name, TRUE);
 	main_menu_unload();
 

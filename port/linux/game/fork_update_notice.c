@@ -15,13 +15,13 @@ or pause the game.
 #include "text/draw_string.h"
 #include "fork_update_notice.h"
 
-#if defined(HALO_MACOS_NATIVE_METAL)
+#if !defined(HALO_ANDROID) || defined(HALO_MACOS_NATIVE_METAL)
 int halo_fork_update_notice(char *out, unsigned long capacity);
 #endif
 
 void fork_update_notice_render(void)
 {
-#if defined(HALO_MACOS_NATIVE_METAL)
+#if !defined(HALO_ANDROID) || defined(HALO_MACOS_NATIVE_METAL)
 	char text[160];
 	long font_tag_index;
 	real_argb_color color = { 1.0f, 1.0f, 1.0f, 1.0f };

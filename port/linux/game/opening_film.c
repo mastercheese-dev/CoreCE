@@ -231,7 +231,7 @@ void opening_film_load_begin(void)
 	load_last_ms = 0;
 	load_fade_ms = 0;
 	load_fade_shown = 0;
-	platform_log("opening film: a campaign load plays the film");
+	platform_log("opening film: a match load plays the film");
 }
 
 boolean opening_film_load_active(void)
@@ -264,10 +264,10 @@ boolean opening_film_load_frame(void)
 	if (load_state != 1)
 		return FALSE;
 	load_advance();
-	if (opening_film_show(load_shown_ms, 1.f))
-		return TRUE;
-	opening_film_load_cancel();
-	return FALSE;
+	/* a frame that does not draw stays on this film. the original sweep
+	does not take the screen. */
+	opening_film_show(load_shown_ms, 1.f);
+	return TRUE;
 }
 
 void opening_film_load_overlay(void)

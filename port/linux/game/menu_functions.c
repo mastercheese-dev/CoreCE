@@ -4078,6 +4078,7 @@ static void text_field_show(struct widget_instance *value, char const *text, boo
 /* ---- the menu */
 
 static void hardcore_variant_drop(void);
+static int mm_holds_port(void);
 
 /* "mp type set mode": the item's (by its name) */
 static void multiplayer_mode_set(struct widget_instance *widget)
@@ -4089,8 +4090,10 @@ static void multiplayer_mode_set(struct widget_instance *widget)
 	multiplayer.hardcore = FALSE;
 	hardcore_rules_clear_session();
 	hardcore_variant_drop();
-	/* a matchmaking game keeps its own port until a normal one is chosen */
-	matchmaking_set_game_port(0);
+	/* a matchmaking search already has the offer's port. choosing a normal
+	game is what gives it up. */
+	if (!mm_holds_port())
+		matchmaking_set_game_port(0);
 	multiplayer.mode =
 		strstr(name, "create_inter") ? _multiplayer_mode_host_internet :
 		strstr(name, "create_lan") ? _multiplayer_mode_host_lan :
@@ -8978,6 +8981,13 @@ static struct
 	wchar_t status[ROW_TEXT_LENGTH];
 } mm_menu;
 
+/* searching, joining, or already in the match: the offer's port stays */
+static int mm_holds_port(void)
+{
+	return mm_menu.state == MM_MENU_SEARCHING || mm_menu.state == MM_MENU_LAUNCHING ||
+		mm_menu.state == MM_MENU_JOINING || mm_menu.state == MM_MENU_DONE;
+}
+
 static void mm_status(const wchar_t *text)
 {
 	ustrncpy(mm_menu.status, text ? text : L"", ROW_TEXT_LENGTH - 1);
@@ -9532,6 +9542,7 @@ static boolean mm_choose(struct widget_instance *widget)
 	mm_gamertag(name, sizeof(name));
 	mm_menu.invited = 0;
 	mm_menu.waiting = 0;
+	mm_menu.offer.port = 0;
 	mm_lobby_clear();
 	matchmaking_queue(playlist, name);
 	mm_menu.state = MM_MENU_SEARCHING;
@@ -9615,8 +9626,12 @@ static boolean mm_begin_host(struct widget_instance *widget, struct event_record
 
 static boolean mm_begin_join(struct widget_instance *widget, struct event_record *event)
 {
+	/* the offer's port is the game port inside the invite tunnel. 5150 is an
+	ordinary lobby, and this host drops it. */
+	matchmaking_set_game_port(mm_menu.offer.port);
 	if (!mm_menu.offer.invite[0] || !p2p_join_invite(mm_menu.offer.invite))
 	{
+		matchmaking_set_game_port(0);
 		mm_status(L"The match had no invite.");
 		return FALSE;
 	}
@@ -9634,6 +9649,7 @@ static boolean mm_begin_join(struct widget_instance *widget, struct event_record
 		mm_status(L"Could not look for the match.");
 		return FALSE;
 	}
+	matchmaking_set_game_port(mm_menu.offer.port);
 	mm_menu.invited = 1;
 	return TRUE;
 }
@@ -9644,7 +9660,19 @@ static boolean mm_finish_join(struct widget_instance *widget, boolean *widget_de
 
 	if (!game)
 		return FALSE;
+	/* the lobby screen deletes this one. that must not drop the connection,
+	and the join itself has to use the offer's port, not 5150. */
+	matchmaking_set_game_port(mm_menu.offer.port);
+	if (!matchmaking_game_port())
+	{
+		mm_status(L"The match had no port.");
+		mm_menu.state = MM_MENU_ERROR;
+		matchmaking_leave();
+		dispose_global_network_game_client();
+		return FALSE;
+	}
 	matchmaking_commit_join();
+	mm_menu.state = MM_MENU_DONE;
 	if (!ui_widget_port_join(widget, game, LOBBY_NAME, widget_deleted))
 	{
 		matchmaking_reset();
@@ -9652,7 +9680,6 @@ static boolean mm_finish_join(struct widget_instance *widget, boolean *widget_de
 		mm_menu.state = MM_MENU_ERROR;
 		return FALSE;
 	}
-	mm_menu.state = MM_MENU_DONE;
 	return TRUE;
 }
 
@@ -9693,6 +9720,8 @@ static boolean mm_launch(struct widget_instance *widget, struct event_record *ev
 		matchmaking_leave();
 		return FALSE;
 	}
+	/* opening the lobby deletes this screen. the server has to stay. */
+	mm_menu.state = MM_MENU_DONE;
 	if (!ui_widget_port_open(widget, LOBBY_NAME, widget_deleted))
 	{
 		mm_menu.state = MM_MENU_ERROR;
@@ -9702,7 +9731,6 @@ static boolean mm_launch(struct widget_instance *widget, struct event_record *ev
 		dispose_global_network_game_server();
 		return FALSE;
 	}
-	mm_menu.state = MM_MENU_DONE;
 	return TRUE;
 }
 
@@ -9769,6 +9797,10 @@ static void mm_update(struct widget_instance *list)
 	struct widget_instance *launch = named(list, "mm_launch", 0);
 	struct matchmaking_offer offer;
 
+	/* a later menu event can clear the port. the search and the join both
+	read it, and 5150 never reaches this host. */
+	if (mm_holds_port() && mm_menu.offer.port)
+		matchmaking_set_game_port(mm_menu.offer.port);
 	if (mm_menu.state == MM_MENU_SEARCHING || mm_menu.state == MM_MENU_LAUNCHING ||
 		mm_menu.state == MM_MENU_JOINING)
 	{

@@ -10,7 +10,8 @@ build-<number>); other builds have none and never look for updates. When
 update.auto in config.toml is true (the default), the game asks GitHub for
 the latest release when it starts, on a thread of its own: the game starts
 meanwhile, and nothing happens if the release is not newer or cannot be
-reached. If it is newer, the game asks whether to update:
+reached. If it is newer, a line at the top of the screen names that
+release, and the game asks whether to update:
 
 - Yes: the release's build for this platform and configuration
   (halo-<platform>-<release|debug>.zip) is downloaded next to the executable
@@ -20,6 +21,9 @@ reached. If it is newer, the game asks whether to update:
 - No: nothing, until the next start.
 - Do not ask again: after the player confirms it, update.auto = false is
   written to config.toml.
+
+While the game is open, the check runs again about every fifteen minutes
+and only refreshes that line.
 
 The system side (the HTTPS download, the files, starting the new game) is
 update.h's: posix_update.c on Linux, win32_update.c on Windows.
@@ -77,6 +81,10 @@ static SDL_AtomicInt updater_state;
 static long updater_latest_build;
 static char updater_latest_tag[64];
 static int updater_switching;
+static int updater_announce;
+static Uint64 updater_checked_ms;
+static SDL_Mutex *updater_notice_lock;
+static char updater_notice[160];
 static char updater_directory[1024];
 static char updater_executable[1024];
 
@@ -320,6 +328,49 @@ static int updater_on_testing(void)
 	return strcmp(HALO_BUILD_CHANNEL, "testing") == 0;
 }
 
+static void updater_notice_store(const char *text)
+{
+	if (!updater_notice_lock)
+		updater_notice_lock = SDL_CreateMutex();
+	if (!updater_notice_lock)
+		return;
+	SDL_LockMutex(updater_notice_lock);
+	if (!text || !text[0])
+		updater_notice[0] = 0;
+	else
+		snprintf(updater_notice, sizeof(updater_notice), "%s", text);
+	SDL_UnlockMutex(updater_notice_lock);
+}
+
+int halo_fork_update_notice(char *out, unsigned long capacity)
+{
+	if (!out || capacity < 2)
+		return 0;
+	out[0] = 0;
+	if (!updater_notice_lock)
+		return 0;
+	SDL_LockMutex(updater_notice_lock);
+	if (updater_notice[0])
+		snprintf(out, (size_t)capacity, "%s", updater_notice);
+	SDL_UnlockMutex(updater_notice_lock);
+	return out[0] != 0;
+}
+
+static void updater_notice_for(int to_testing, long build)
+{
+	char notice[160];
+
+	if (to_testing)
+		snprintf(notice, sizeof(notice), "Testing " UPDATE_PLATFORM " %ld is available.", build);
+	else if (updater_on_testing())
+		snprintf(notice, sizeof(notice), "Main " UPDATE_PLATFORM " %ld is available.", build);
+	else if (!strcmp(UPDATE_PLATFORM, "windows"))
+		snprintf(notice, sizeof(notice), "Windows %ld is available.", build);
+	else
+		snprintf(notice, sizeof(notice), "Linux %ld is available.", build);
+	updater_notice_store(notice);
+}
+
 /* the file at url, or null. A missing latest release is not an error. */
 static char *updater_fetch(const char *url, const char *file_name, int required)
 {
@@ -355,7 +406,7 @@ static int updater_find_release(struct update_choice *choice)
 	list_json = updater_fetch(list_url, "update-check.json", 1);
 	latest_json = updater_fetch(latest_url, "update-latest.json", 0);
 	if (!list_json && !latest_json)
-		return 0;
+		return -1;
 	found = update_choice_select(list_json, latest_json, UPDATE_ASSET, want_testing, updater_on_testing(),
 		HALO_BUILD_NUMBER, choice);
 	SDL_free(list_json);
@@ -366,10 +417,13 @@ static int updater_find_release(struct update_choice *choice)
 static int SDLCALL updater_check_thread(void *context)
 {
 	struct update_choice choice;
+	int announce = updater_announce;
+	int result;
 
 	(void)context;
 	memset(&choice, 0, sizeof(choice));
-	if (updater_find_release(&choice))
+	result = updater_find_release(&choice);
+	if (result > 0)
 	{
 		int on_testing = updater_on_testing();
 		int to_testing = strncmp(choice.tag, "testing-", 8) == 0;
@@ -379,12 +433,20 @@ static int SDLCALL updater_check_thread(void *context)
 		updater_latest_build = choice.number;
 		snprintf(updater_latest_tag, sizeof(updater_latest_tag), "%s", choice.tag);
 		updater_switching = to_testing != on_testing;
-		SDL_SetAtomicInt(&updater_state, _updater_available);
+		updater_notice_for(to_testing, choice.number);
+		if (announce)
+			SDL_SetAtomicInt(&updater_state, _updater_available);
+		else
+			SDL_SetAtomicInt(&updater_state, _updater_handled);
 	}
 	else
 	{
-		platform_log("update: no newer release for this %s build (%d)",
-			updater_on_testing() ? "testing" : "main", HALO_BUILD_NUMBER);
+		if (result == 0)
+		{
+			updater_notice_store(NULL);
+			platform_log("update: no newer release for this %s build (%d)",
+				updater_on_testing() ? "testing" : "main", HALO_BUILD_NUMBER);
+		}
 		SDL_SetAtomicInt(&updater_state, _updater_handled);
 	}
 	return 0;
@@ -578,6 +640,42 @@ static void updater_clean_up(void)
 
 /* ---------- the game's */
 
+static int updater_may_check(void)
+{
+	int leaving_testing;
+	int watched;
+
+	/* A testing build with the setting off still looks, so it can offer the
+	main release after ordinary checks were turned off. Builds without a
+	number never look. A hidden or scripted run is not asked. */
+	leaving_testing = updater_on_testing() && !config_boolean("update.testing");
+	watched = config_string("debug.update_answer")[0] ||
+		(!config_boolean("debug.hidden_window") && config_real("debug.exit_after") <= 0.0 &&
+			!config_string("debug.network_test")[0]);
+	if (HALO_BUILD_NUMBER <= 0 || !updater_directory[0] || !watched)
+		return 0;
+	if (!leaving_testing && !config_boolean("update.auto"))
+		return 0;
+	return 1;
+}
+
+static void updater_start_check(int announce)
+{
+	SDL_Thread *thread;
+
+	if (!updater_may_check())
+		return;
+	if (SDL_GetAtomicInt(&updater_state) == _updater_checking)
+		return;
+	updater_announce = announce;
+	SDL_SetAtomicInt(&updater_state, _updater_checking);
+	thread = SDL_CreateThread(updater_check_thread, "update check", NULL);
+	if (thread)
+		SDL_DetachThread(thread);
+	else
+		SDL_SetAtomicInt(&updater_state, _updater_handled);
+}
+
 /* at start-up (sdl_platform.c): looks for a new version, in the background */
 void updater_start(void)
 {
@@ -591,30 +689,8 @@ void updater_start(void)
 		return;
 	*slash = 0;
 	updater_clean_up();
-	/* A testing build with the setting off still looks, so it can offer the
-	main release after ordinary checks were turned off. Builds without a
-	number never look. A hidden or scripted run is not asked. */
-	{
-		int leaving_testing = updater_on_testing() && !config_boolean("update.testing");
-		int watched = config_string("debug.update_answer")[0] ||
-			(!config_boolean("debug.hidden_window") && config_real("debug.exit_after") <= 0.0 &&
-				!config_string("debug.network_test")[0]);
-
-		if (HALO_BUILD_NUMBER <= 0 || !watched ||
-			(!leaving_testing && !config_boolean("update.auto")))
-		{
-			return;
-		}
-	}
-	SDL_SetAtomicInt(&updater_state, _updater_checking);
-	{
-		SDL_Thread *thread = SDL_CreateThread(updater_check_thread, "update check", NULL);
-
-		if (thread)
-			SDL_DetachThread(thread);
-		else
-			SDL_SetAtomicInt(&updater_state, _updater_handled);
-	}
+	updater_checked_ms = SDL_GetTicks();
+	updater_start_check(1);
 }
 
 /* every frame, on the game's thread (sdl_platform.c): asks the player once a
@@ -637,6 +713,18 @@ void updater_poll(SDL_Window *window)
 	int fullscreen;
 	const char *test_answer = config_string("debug.update_answer");
 
+	/* later checks leave the line. a dialog would take the screen. */
+	{
+		Uint64 now = SDL_GetTicks();
+		int state = SDL_GetAtomicInt(&updater_state);
+
+		if (updater_checked_ms != 0 && now - updater_checked_ms >= 15UL * 60UL * 1000UL &&
+			state != _updater_checking && state != _updater_available)
+		{
+			updater_checked_ms = now;
+			updater_start_check(0);
+		}
+	}
 	if (SDL_GetAtomicInt(&updater_state) != _updater_available)
 		return;
 	SDL_SetAtomicInt(&updater_state, _updater_handled);

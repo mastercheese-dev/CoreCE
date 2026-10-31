@@ -361,11 +361,83 @@ static int bot_nav_forward_wall(float face_x, float face_y, float yaw, float gz)
 	return 1;
 }
 
+/* floor at this deck. A miss, or the story below, is the hole. */
+static int bot_nav_deck_at(float x, float y, float z)
+{
+	float gx;
+	float gy;
+	float gz;
+
+	if (!bot_nav_ground(x, y, z + 0.40f, 0.95f, &gx, &gy, &gz))
+		return 0;
+	if (gz < z - 0.40f || gz > z + 0.40f)
+		return 0;
+	return 1;
+}
+
+/* the step off the rungs, the walk to the point, and a step further on.
+air on any of those is the shaft, so that point is the rim. */
+static int bot_nav_land_deck(float face_x, float face_y, float yaw,
+	float gx, float gy, float gz)
+{
+	float dx;
+	float dy;
+	float span;
+	float along;
+	float across;
+	float shift;
+	float fwd;
+	float sx;
+	float sy;
+	float mx;
+	float my;
+	float ox;
+	float oy;
+
+	dx = gx - face_x;
+	dy = gy - face_y;
+	span = dx * dx + dy * dy;
+	if (span < 0.45f * 0.45f)
+		return 0;
+	span = square_root(span);
+	along = cosine(yaw) * dx + sine(yaw) * dy;
+	across = -sine(yaw) * dx + cosine(yaw) * dy;
+	if (across < 0.65f && across > -0.65f)
+	{
+		sx = face_x + cosine(yaw) * 0.50f;
+		sy = face_y + sine(yaw) * 0.50f;
+	}
+	else
+	{
+		/* level with the opening, not already across the hole. */
+		shift = across;
+		if (shift > 1.15f)
+			shift = 1.15f;
+		if (shift < -1.15f)
+			shift = -1.15f;
+		fwd = along;
+		if (fwd > 0.45f)
+			fwd = 0.45f;
+		if (fwd < 0.0f)
+			fwd = 0.0f;
+		sx = face_x + cosine(yaw) * fwd - sine(yaw) * shift;
+		sy = face_y + sine(yaw) * fwd + cosine(yaw) * shift;
+	}
+	mx = (sx + gx) * 0.5f;
+	my = (sy + gy) * 0.5f;
+	ox = gx + dx / span * 0.55f;
+	oy = gy + dy / span * 0.55f;
+	if (!bot_nav_deck_at(sx, sy, gz) || !bot_nav_deck_at(mx, my, gz) ||
+		!bot_nav_deck_at(ox, oy, gz))
+		return 0;
+	return 1;
+}
+
 /* a floor the climb comes out on. The exit is often beside the face or
 past it, and sometimes well below the highest vertex when one tall face
 runs past the deck. Keep a point on open floor, off the eroded lip.
-A closed side of the shaft loses to a floor the body can step onto.
-A lip that ends in a wall loses to the platform beside that same deck. */
+A lip into a wall, or a side the body cannot step onto, loses to another
+floor of that same deck. A lower floor is the walk back down the hole. */
 static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowest, float highest,
 	float *lx, float *ly, float *lz)
 {
@@ -380,8 +452,6 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 	int best_tier;
 	int best_open;
 	int best_away;
-	int best_walled;
-	int best_blocked;
 	float best_z;
 	float best_reach;
 
@@ -389,8 +459,6 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 	best_tier = -1;
 	best_open = -1;
 	best_away = 1;
-	best_walled = 1;
-	best_blocked = 1;
 	best_z = -1.0e9f;
 	best_reach = 0.0f;
 	sample_index = 0;
@@ -416,10 +484,7 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 				int tier;
 				int better;
 				int away;
-				int walled;
-				int blocked;
 				float forward;
-				float across_land;
 
 				heading = yaw + turn[turn_index];
 				x = face_x + cosine(heading) * reach[reach_index];
@@ -433,35 +498,16 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 					continue;
 				/* yaw looks into the face. Past that plane is the back. */
 				forward = cosine(yaw) * (gx - face_x) + sine(yaw) * (gy - face_y);
-				across_land = -sine(yaw) * (gx - face_x) + cosine(yaw) * (gy - face_y);
-				if (across_land < 0.0f)
-					across_land = -across_land;
 				away = forward > 0.35f;
-				walled = bot_nav_land_walled(face_x, face_y, yaw, gx, gy, gz);
-				/* beside the shaft is a real exit. Only the lip straight
-				off the rungs is the one that dead-ends in the wall. */
-				blocked = 0;
-				if (forward > 0.20f && across_land < 0.65f)
-					blocked = bot_nav_forward_wall(face_x, face_y, yaw, gz);
 				open = bot_nav_floor_open(gx, gy, gz);
 				tier = open >= 3 ? 1 : 0;
 				prefer = reach[reach_index] - 1.70f;
 				if (prefer < 0.0f)
 					prefer = -prefer;
 				better = 0;
-				/* the lip in front of the wall is not the platform beside
-				it. A lower floor is the walk back down around the opening,
-				and a clear deck straight off the face is left alone. */
-				if (found && blocked != best_blocked)
-					better = !blocked && best_blocked && gz >= best_z - 0.70f;
-				/* the sniper shaft is closed on one side. That floor is
-				not a step off while the same deck is open. A lower
-				floor is the walk back down around the opening. */
-				else if (found && walled != best_walled)
-					better = !walled && best_walled && gz >= best_z - 0.75f;
 				/* a floor through the face is the wrong side. Keep it
 				only when the climb side has no floor up there. */
-				else if (away && found && best_away == 0)
+				if (away && found && best_away == 0)
 					better = 0;
 				else if (!away && best_away == 1)
 					better = 1;
@@ -488,8 +534,6 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 				if (!better)
 					continue;
 				best_away = away;
-				best_walled = walled;
-				best_blocked = blocked;
 				best_tier = tier;
 				best_open = open;
 				best_z = gz;
@@ -501,7 +545,128 @@ static int bot_nav_ladder_land(float face_x, float face_y, float yaw, float lowe
 			}
 		}
 	}
-	return found;
+	if (!found)
+		return 0;
+	{
+		float forward;
+		float across;
+		float deck_z;
+		int lip;
+		int closed;
+
+		forward = cosine(yaw) * (*lx - face_x) + sine(yaw) * (*ly - face_y);
+		across = -sine(yaw) * (*lx - face_x) + cosine(yaw) * (*ly - face_y);
+		if (across < 0.0f)
+			across = -across;
+		deck_z = *lz;
+		/* a deck they can already step onto stays. The sniper lip and
+		the closed side cannot, and the floor below is the hole. */
+		lip = forward > 0.20f && across < 0.65f &&
+			bot_nav_forward_wall(face_x, face_y, yaw, deck_z);
+		closed = bot_nav_land_walled(face_x, face_y, yaw, *lx, *ly, deck_z);
+		if ((lip || closed) &&
+			!bot_nav_land_deck(face_x, face_y, yaw, *lx, *ly, deck_z))
+		{
+			int repair;
+			int repair_open;
+			float repair_reach;
+			float repair_x;
+			float repair_y;
+			float repair_z;
+
+			repair = 0;
+			repair_open = -1;
+			repair_reach = 0.0f;
+			repair_x = *lx;
+			repair_y = *ly;
+			repair_z = deck_z;
+			sample_index = 0;
+			for (sample = highest; sample >= lowest + 1.05f && sample_index < 24;
+				sample -= 0.65f, sample_index++)
+			{
+				int reach_index;
+
+				for (reach_index = 0; reach_index < (int)(sizeof(reach) / sizeof(reach[0]));
+					reach_index++)
+				{
+					int turn_index;
+
+					for (turn_index = 0; turn_index < (int)(sizeof(turn) / sizeof(turn[0]));
+						turn_index++)
+					{
+						float heading;
+						float x;
+						float y;
+						float gx;
+						float gy;
+						float gz;
+						float fall;
+						float along;
+						float side;
+						int open;
+						int better;
+						float prefer;
+
+						heading = yaw + turn[turn_index];
+						x = face_x + cosine(heading) * reach[reach_index];
+						y = face_y + sine(heading) * reach[reach_index];
+						if (!bot_nav_ground(x, y, sample + 0.30f, 1.8f, &gx, &gy, &gz))
+							continue;
+						if (gz < deck_z - 0.50f || gz > deck_z + 0.30f)
+							continue;
+						fall = sample + 0.30f - gz;
+						if (fall > 1.15f)
+							continue;
+						along = cosine(yaw) * (gx - face_x) + sine(yaw) * (gy - face_y);
+						side = -sine(yaw) * (gx - face_x) + cosine(yaw) * (gy - face_y);
+						if (side < 0.0f)
+							side = -side;
+						if (along > 0.20f && side < 0.65f &&
+							bot_nav_forward_wall(face_x, face_y, yaw, gz))
+							continue;
+						if (bot_nav_land_walled(face_x, face_y, yaw, gx, gy, gz))
+							continue;
+						if (!bot_nav_land_deck(face_x, face_y, yaw, gx, gy, gz))
+							continue;
+						open = bot_nav_floor_open(gx, gy, gz);
+						prefer = reach[reach_index] - 1.70f;
+						if (prefer < 0.0f)
+							prefer = -prefer;
+						better = 0;
+						if (!repair || open > repair_open)
+							better = 1;
+						else if (open == repair_open && gz > repair_z + 0.15f)
+							better = 1;
+						else if (open == repair_open && gz >= repair_z - 0.15f)
+						{
+							float had;
+
+							had = repair_reach - 1.70f;
+							if (had < 0.0f)
+								had = -had;
+							if (prefer < had)
+								better = 1;
+						}
+						if (!better)
+							continue;
+						repair_open = open;
+						repair_reach = reach[reach_index];
+						repair_x = gx;
+						repair_y = gy;
+						repair_z = gz;
+						repair = 1;
+					}
+				}
+			}
+			if (repair)
+			{
+				*lx = repair_x;
+				*ly = repair_y;
+				*lz = repair_z;
+			}
+		}
+	}
+	return 1;
 }
 
 int bot_nav_collect_ladders(struct bot_nav_ladder *out, int capacity)

@@ -632,6 +632,13 @@ static boolean opening_players_ready(void)
 
 void hardcore_rules_hold_pregame(void)
 {
+	/* the map load played this film in place of the original sweep. the
+	opening starts it again, and that load must not play on after the match. */
+	if (opening_film_load_active())
+	{
+		opening_film_load_cancel();
+		progress_bar_end();
+	}
 	opening_hold = TRUE;
 	opening_release = FALSE;
 	opening_fading = FALSE;
@@ -842,8 +849,6 @@ void hardcore_rules_opening_frame(void)
 	unsigned long played;
 	unsigned long film_ms;
 	unsigned long hold_ms;
-	unsigned long ring_ms;
-	real progress;
 
 	if (!opening_hold || opening_fading)
 		return;
@@ -853,21 +858,11 @@ void hardcore_rules_opening_frame(void)
 		return;
 	}
 	played = opening_advance();
-	/* The film is the original loading animation. Its last frame holds
-	while a network world is still arriving. Without the film, the sweep
-	is the stand-in ring. */
+	/* The film is the loading screen. Its last frame holds while a network
+	world is still arriving. A missing frame does not bring back the
+	original sweep. */
 	film_ms = opening_film_duration_ms();
-	if (!opening_film_show(played, 1.f))
-	{
-		ring_ms = opening_started_ms != 0 ? system_milliseconds() - opening_started_ms : 0;
-		progress = (real)ring_ms / (real)OPENING_RING_MS;
-		if (progress < 0.02f)
-			progress = 0.02f;
-		if (progress > 1.f)
-			progress = 0.72f;
-		progress_bar_show_ring(progress);
-		film_ms = 0;
-	}
+	opening_film_show(played, 1.f);
 	/* The host names the tick. This machine does not fade because it
 	happens to look ready. */
 	if (opening_network())
