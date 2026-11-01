@@ -1379,6 +1379,7 @@ void compute_window_bounds(
 	long vertical_index;
 	long subframe_width;
 	long subframe_height;
+	long span;
 	short safe_frame_inset;
 	boolean first_player_spans_two_columns;
 
@@ -1412,41 +1413,98 @@ void compute_window_bounds(
 		1391,
 		horizontal_index>=0 && horizontal_index<horizontal_count);
 
-	subframe_height =
-		(rasterizer_globals.reserved04.frame_bounds.y1-
-			rasterizer_globals.reserved04.frame_bounds.y0)/vertical_count;
-	subframe_width =
-		(rasterizer_globals.reserved04.frame_bounds.x1-
-			rasterizer_globals.reserved04.frame_bounds.x0)/horizontal_count;
-	subframe_width *= first_player_spans_two_columns ? 2 : 1;
+	/* one pane keeps the title-safe frame, and the view runs to the
+	screen around it */
+	if (num_players <= 1)
+	{
+		subframe_height =
+			(rasterizer_globals.reserved04.frame_bounds.y1-
+				rasterizer_globals.reserved04.frame_bounds.y0)/vertical_count;
+		subframe_width =
+			(rasterizer_globals.reserved04.frame_bounds.x1-
+				rasterizer_globals.reserved04.frame_bounds.x0)/horizontal_count;
+		subframe_width *= first_player_spans_two_columns ? 2 : 1;
 
-	safe_frame_bounds->x0 =
-		subframe_width*horizontal_index+
-		rasterizer_globals.reserved04.frame_bounds.x0;
-	safe_frame_bounds->x1 =
-		subframe_width*(horizontal_index+1)+
-		rasterizer_globals.reserved04.frame_bounds.x0;
-	safe_frame_bounds->y0 =
-		subframe_height*vertical_index+
-		rasterizer_globals.reserved04.frame_bounds.y0;
-	safe_frame_bounds->y1 =
-		subframe_height*(vertical_index+1)+
-		rasterizer_globals.reserved04.frame_bounds.y0;
-	*pixel_bounds = *safe_frame_bounds;
+		safe_frame_bounds->x0 =
+			subframe_width*horizontal_index+
+			rasterizer_globals.reserved04.frame_bounds.x0;
+		safe_frame_bounds->x1 =
+			subframe_width*(horizontal_index+1)+
+			rasterizer_globals.reserved04.frame_bounds.x0;
+		safe_frame_bounds->y0 =
+			subframe_height*vertical_index+
+			rasterizer_globals.reserved04.frame_bounds.y0;
+		safe_frame_bounds->y1 =
+			subframe_height*(vertical_index+1)+
+			rasterizer_globals.reserved04.frame_bounds.y0;
+		*pixel_bounds = *safe_frame_bounds;
 
-	safe_frame_bounds->x0 += horizontal_index*safe_frame_inset;
-	safe_frame_bounds->x1 -= (horizontal_index==0)*safe_frame_inset;
-	safe_frame_bounds->y0 += vertical_index*safe_frame_inset;
-	safe_frame_bounds->y1 -= (vertical_index==0)*safe_frame_inset;
+		safe_frame_bounds->x0 += horizontal_index*safe_frame_inset;
+		safe_frame_bounds->x1 -= (horizontal_index==0)*safe_frame_inset;
+		safe_frame_bounds->y0 += vertical_index*safe_frame_inset;
+		safe_frame_bounds->y1 -= (vertical_index==0)*safe_frame_inset;
 
-	if (!horizontal_index)
-		pixel_bounds->x0 = rasterizer_globals.reserved04.screen_bounds.x0;
-	if ((first_player_spans_two_columns!=FALSE)+horizontal_index+1==horizontal_count)
-		pixel_bounds->x1 = rasterizer_globals.reserved04.screen_bounds.x1;
-	if (!vertical_index)
-		pixel_bounds->y0 = rasterizer_globals.reserved04.screen_bounds.y0;
-	if (vertical_index+1==vertical_count)
-		pixel_bounds->y1 = rasterizer_globals.reserved04.screen_bounds.y1;
+		if (!horizontal_index)
+			pixel_bounds->x0 = rasterizer_globals.reserved04.screen_bounds.x0;
+		if ((first_player_spans_two_columns!=FALSE)+horizontal_index+1==horizontal_count)
+			pixel_bounds->x1 = rasterizer_globals.reserved04.screen_bounds.x1;
+		if (!vertical_index)
+			pixel_bounds->y0 = rasterizer_globals.reserved04.screen_bounds.y0;
+		if (vertical_index+1==vertical_count)
+			pixel_bounds->y1 = rasterizer_globals.reserved04.screen_bounds.y1;
+		return;
+	}
+
+	/* each pane is an equal piece of the screen. the safe frame sits in
+	the middle of that piece, at the same share the full screen uses.
+	hanging the spare margin on the outer edge put the bottom camera
+	off center, at another angle than the top */
+	{
+		long screen_x0 = rasterizer_globals.reserved04.screen_bounds.x0;
+		long screen_y0 = rasterizer_globals.reserved04.screen_bounds.y0;
+		long screen_x1 = rasterizer_globals.reserved04.screen_bounds.x1;
+		long screen_y1 = rasterizer_globals.reserved04.screen_bounds.y1;
+		long screen_w = screen_x1 - screen_x0;
+		long screen_h = screen_y1 - screen_y0;
+		long frame_w = rasterizer_globals.reserved04.frame_bounds.x1 -
+			rasterizer_globals.reserved04.frame_bounds.x0;
+		long frame_h = rasterizer_globals.reserved04.frame_bounds.y1 -
+			rasterizer_globals.reserved04.frame_bounds.y0;
+		long pane_w;
+		long pane_h;
+		long inset_x;
+		long inset_y;
+
+		span = first_player_spans_two_columns ? 2 : 1;
+		subframe_width = horizontal_count > 0 ? screen_w / horizontal_count : screen_w;
+		subframe_height = vertical_count > 0 ? screen_h / vertical_count : screen_h;
+		pixel_bounds->x0 = (short)(screen_x0 + subframe_width * horizontal_index);
+		pixel_bounds->y0 = (short)(screen_y0 + subframe_height * vertical_index);
+		pixel_bounds->x1 = (short)(screen_x0 + subframe_width * (horizontal_index + span));
+		pixel_bounds->y1 = (short)(screen_y0 + subframe_height * (vertical_index + 1));
+		if (horizontal_index + span >= horizontal_count)
+			pixel_bounds->x1 = (short)screen_x1;
+		if (vertical_index + 1 >= vertical_count)
+			pixel_bounds->y1 = (short)screen_y1;
+
+		pane_w = pixel_bounds->x1 - pixel_bounds->x0;
+		pane_h = pixel_bounds->y1 - pixel_bounds->y0;
+		inset_x = screen_w > 0 ? pane_w * (screen_w - frame_w) / (2 * screen_w) : 0;
+		inset_y = screen_h > 0 ? pane_h * (screen_h - frame_h) / (2 * screen_h) : 0;
+		if (inset_x < 0)
+			inset_x = 0;
+		if (inset_y < 0)
+			inset_y = 0;
+		if (inset_x * 2 >= pane_w)
+			inset_x = pane_w > 2 ? 1 : 0;
+		if (inset_y * 2 >= pane_h)
+			inset_y = pane_h > 2 ? 1 : 0;
+		*safe_frame_bounds = *pixel_bounds;
+		safe_frame_bounds->x0 = (short)(safe_frame_bounds->x0 + inset_x);
+		safe_frame_bounds->x1 = (short)(safe_frame_bounds->x1 - inset_x);
+		safe_frame_bounds->y0 = (short)(safe_frame_bounds->y0 + inset_y);
+		safe_frame_bounds->y1 = (short)(safe_frame_bounds->y1 - inset_y);
+	}
 
 	return;
 }
