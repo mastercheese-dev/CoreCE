@@ -1,12 +1,12 @@
 # Releases
 
-Mac, Windows, and Linux share one number. A client already installed only accepts a tag that is exactly `build-` or `testing-` plus a whole number, and only when its own file is attached. It moves only to a higher number on its own line. A local test build is not a release: it does not take the next number, and it does not move the README buttons.
+Mac, Windows, and Linux share one number. Each platform is built and published on its own machine, and that machine publishes only its own file. A client already installed only accepts a tag that is exactly `build-` or `testing-` plus a whole number, and only when its own file is attached. It moves only to a higher number on its own line. A local test build is not a release: it does not take the next number, and it does not move the README buttons.
 
 ## Numbers
 
-The version is `0.3.N`. N is the number on the tag. `testing-42` is `0.3.42`. `build-58` is `0.3.58`.
+The version is `0.3.N`. N is the number on the tag. `testing-42` is `0.3.42`. `build-58` is `0.3.58`. The number is read from the tag that file is going on. It is the same number on every machine. A machine pulls `testing` before it publishes, and it publishes from a checkout where the version is that tag number. Counting older titles, or keeping a local next version, writes a different number on the same tag.
 
-Testing tags are `testing-N`. The first shared testing release is `testing-39`. Testing clients still running are at Linux 38, Windows 34, and Mac 33, so a testing number of 38 or lower is ignored by at least one of them. The next testing tag is one higher than the highest `testing-` tag. Deleted testing tags stay unused.
+Testing tags are `testing-N`. The first shared testing release is `testing-39`. Testing clients still running are at Linux 38, Windows 34, and Mac 33, so a testing number of 38 or lower is ignored by at least one of them. Deleted testing tags stay unused.
 
 A main release is the testing release you decide to ship. Its tag is `build-N` with that same N, and its version is the `0.3.N` already used on that testing tag. If testing has moved through several numbers since the last main release, the main tag is the testing release you are shipping, not one higher than the old `build-` tag.
 
@@ -20,13 +20,15 @@ Each tag carries all three of these files:
 - `halo-windows-release.zip`
 - `halo-linux-release.zip`
 
-The next testing number waits until all three files are on the current testing tag. A late file is added to that same tag. A tag missing a file is invisible to that platform.
+Before a machine uploads, it looks up the highest `testing-` tag. When that tag is missing this machine's file, the file is added to that tag. The build is stamped with that same number. The next testing tag is opened only when the highest tag already has all three files, and it is one higher. A tag missing a file is invisible to that platform.
+
+Adding a file leaves the tag on its current commit. After the upload, the title is rebuilt from that tag's number and from every platform file then attached, including files another machine already added. Mac, Windows, and Linux stay in that order. A one platform upload keeps the other platforms in the title when their files are already there.
 
 A main release is a normal release and is marked Latest. A testing release is a prerelease and is not marked Latest. Android stays where it is unless `halo-android-release.zip` is attached on purpose.
 
 ## Title
 
-The title is the version, the platforms whose file is on the tag, and the tag. Mac, Windows, and Linux are named in that order, and only when that platform's file is attached. Android is named only when its zip is attached. A testing release with all three files is `0.3.42 Mac, Windows, Linux testing-42`. A Windows main release is `0.3.30 Windows build-30`. An installed client does not read the title. It reads the tag and its own file name.
+The title is the version, the platforms whose file is on the tag, and the tag. The version in the title is the same N as the tag. Mac, Windows, and Linux are named in that order, and only when that platform's file is attached. Android is named only when its zip is attached. A testing release with all three files is `0.3.42 Mac, Windows, Linux testing-42`. A Windows testing release whose tag does not yet have the other files is `0.3.45 Windows testing-45`. A Windows main release is `0.3.30 Windows build-30`. An installed client does not read the title. It reads the tag and its own file name.
 
 ## Stamp
 
