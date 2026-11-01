@@ -82,6 +82,9 @@ machine (their datum identifiers need not be).
 #include "map_share.h"
 #include "network_aim_assist.h"
 #include "profile_sections.h"
+#include "memory/data.h"
+#include "../src/matchmaking.h"
+#include "../src/port_config.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -674,6 +677,15 @@ static struct distributed_client_identity distributed_client_identities[HALO_POR
 /* a client: its Discord user as last sent this game, and whether it was */
 static struct distributed_client_identity distributed_sent_identity;
 static boolean distributed_identity_sent;
+/* Split Screen, one bit a machine. known is 0 until that machine says.
+the host's own bit is this machine's setting, not this array. */
+static unsigned char distributed_screen_share[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+static unsigned char distributed_screen_share_known[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+static unsigned char distributed_screen_share_sent;
+static unsigned char distributed_screen_party[16];
+static unsigned char distributed_screen_party_sent[16];
+static int distributed_screen_party_have;
+static long distributed_screen_share_time = NONE;
 static struct distributed_client_clock
 {
 	long latest_tick;
@@ -3388,6 +3400,13 @@ void network_distributed_new_game(
 	csmemset(distributed_client_clocks, 0, sizeof(distributed_client_clocks));
 	csmemset(distributed_client_identities, 0, sizeof(distributed_client_identities));
 	distributed_identity_sent = FALSE;
+	csmemset(distributed_screen_share, 0, sizeof(distributed_screen_share));
+	csmemset(distributed_screen_share_known, 0, sizeof(distributed_screen_share_known));
+	csmemset(distributed_screen_party, 0, sizeof(distributed_screen_party));
+	csmemset(distributed_screen_party_sent, 0, sizeof(distributed_screen_party_sent));
+	distributed_screen_share_sent = 0;
+	distributed_screen_party_have = 0;
+	distributed_screen_share_time = NONE;
 	{
 		short machine_index;
 
@@ -3835,6 +3854,127 @@ void distributed_client_send_identity(
 	distributed_identity_sent = TRUE;
 	distributed_send(&message, _distributed_message_client_identity, 1, (word)sizeof(message),
 		_distributed_to_host_reliably);
+}
+
+/* machines that sat in this lobby. recorded when they joined. a shared
+name is not enough: two searches both publish Player, and that is the
+host's name too. */
+static void distributed_screen_party_compute(unsigned char bits[16])
+{
+	matchmaking_screen_party_bits(bits);
+}
+
+static void distributed_screen_share_send_down(unsigned char machine, unsigned char share)
+{
+	struct
+	{
+		struct distributed_message_header header;
+		unsigned char machine;
+		unsigned char share;
+	} message;
+
+	csmemset(&message, 0, sizeof(message));
+	message.machine = machine;
+	message.share = share ? 1 : 0;
+	distributed_send(&message, _distributed_message_screen_share_down, 1, (word)sizeof(message),
+		_distributed_to_clients_reliably);
+}
+
+void distributed_screen_share_client_tick(void)
+{
+	struct
+	{
+		struct distributed_message_header header;
+		unsigned char share;
+	} message;
+	unsigned char share;
+
+	if (global_network_game_server_get() || !matchmaking_game_port())
+		return;
+	if (distributed_screen_share_time != NONE &&
+		game_time_get() - distributed_screen_share_time < TICKS_PER_SECOND)
+		return;
+	share = config_boolean("display.teammate_views") ? 1 : 0;
+	distributed_screen_share_time = game_time_get();
+	distributed_screen_share_sent = share;
+	csmemset(&message, 0, sizeof(message));
+	message.share = share;
+	distributed_send(&message, _distributed_message_screen_share, 1, (word)sizeof(message),
+		_distributed_to_host_reliably);
+}
+
+void distributed_screen_share_host_tick(void)
+{
+	unsigned char bits[16];
+	unsigned char share;
+	short local;
+	short machine;
+
+	if (!global_network_game_server_get() || !matchmaking_game_port())
+		return;
+	distributed_screen_party_compute(bits);
+	share = config_boolean("display.teammate_views") ? 1 : 0;
+	local = network_game_client_get_local_machine_index();
+	if (distributed_screen_share_time != NONE &&
+		game_time_get() - distributed_screen_share_time < TICKS_PER_SECOND &&
+		!csmemcmp(bits, distributed_screen_party_sent, sizeof(bits)) &&
+		share == distributed_screen_share_sent)
+		return;
+	distributed_screen_share_time = game_time_get();
+	csmemcpy(distributed_screen_party, bits, sizeof(bits));
+	csmemcpy(distributed_screen_party_sent, bits, sizeof(bits));
+	distributed_screen_party_have = 1;
+	distributed_screen_share_sent = share;
+	{
+		struct
+		{
+			struct distributed_message_header header;
+			unsigned char bits[16];
+		} message;
+
+		csmemset(&message, 0, sizeof(message));
+		csmemcpy(message.bits, bits, sizeof(message.bits));
+		distributed_send(&message, _distributed_message_screen_party, 1, (word)sizeof(message),
+			_distributed_to_clients_reliably);
+	}
+	if (local >= 0 && local < HALO_PORT_MAXIMUM_NETWORK_MACHINES)
+		distributed_screen_share_send_down((unsigned char)local, share);
+	for (machine = 0; machine < HALO_PORT_MAXIMUM_NETWORK_MACHINES; machine++)
+	{
+		if (machine == local || !distributed_screen_share_known[machine])
+			continue;
+		distributed_screen_share_send_down((unsigned char)machine, distributed_screen_share[machine]);
+	}
+}
+
+int distributed_machine_shares_screen(short machine_index)
+{
+	short local = network_game_client_get_local_machine_index();
+
+	if (machine_index == local)
+		return config_boolean("display.teammate_views") ? 1 : 0;
+	if (machine_index < 0 || machine_index >= HALO_PORT_MAXIMUM_NETWORK_MACHINES)
+		return 0;
+	if (!distributed_screen_share_known[machine_index])
+		return 0;
+	return distributed_screen_share[machine_index] ? 1 : 0;
+}
+
+void distributed_screen_party_bits(unsigned char bits[16])
+{
+	if (!bits)
+		return;
+	if (global_network_game_server_get())
+		distributed_screen_party_compute(bits);
+	else if (distributed_screen_party_have)
+		csmemcpy(bits, distributed_screen_party, 16);
+	else
+		csmemset(bits, 0, 16);
+}
+
+int distributed_screen_party_known(void)
+{
+	return global_network_game_server_get() != NULL || distributed_screen_party_have;
 }
 
 /* (the host) a client machine's address (host byte order) as it really is:
@@ -4302,6 +4442,9 @@ void network_distributed_handle_message(
 	case _distributed_message_match_ready: entry_size = 0; break;
 	case _distributed_message_match_go: entry_size = sizeof(long); break;
 	case _distributed_message_client_identity: entry_size = sizeof(struct distributed_client_identity); break;
+	case _distributed_message_screen_share: entry_size = sizeof(unsigned char); break;
+	case _distributed_message_screen_share_down: entry_size = 2 * sizeof(unsigned char); break;
+	case _distributed_message_screen_party: entry_size = 16; break;
 	case _distributed_message_damage_events:
 	case _distributed_message_hit_reports: entry_size = network_damage_entry_size(header.type); break;
 	default: entry_size = network_objects_entry_size(header.type); break;
@@ -4324,6 +4467,9 @@ void network_distributed_handle_message(
 	case _distributed_message_chat_down:
 	case _distributed_message_chat_config:
 	case _distributed_message_match_go:
+	case _distributed_message_screen_share:
+	case _distributed_message_screen_share_down:
+	case _distributed_message_screen_party:
 		if (header.count < 1)
 			return;
 		break;
@@ -4336,6 +4482,7 @@ void network_distributed_handle_message(
 	anyone can send as from it, they are not its) */
 	if ((header.type == _distributed_message_client_ready ||
 			header.type == _distributed_message_client_identity ||
+			header.type == _distributed_message_screen_share ||
 			header.type == _distributed_message_hit_reports ||
 			header.type == _distributed_message_match_ready) &&
 		!distributed_handling_stream_message)
@@ -4349,6 +4496,7 @@ void network_distributed_handle_message(
 	case _distributed_message_client_ready:
 	case _distributed_message_match_ready:
 	case _distributed_message_client_identity:
+	case _distributed_message_screen_share:
 	case _distributed_message_hit_reports:
 	case _distributed_message_vehicle_prediction:
 	case _distributed_message_player_inputs:
@@ -4500,6 +4648,34 @@ void network_distributed_handle_message(
 		break;
 	case _distributed_message_objects_synchronized:
 		network_objects_handle_synchronized();
+		break;
+	case _distributed_message_screen_share:
+	{
+		unsigned char share = *(unsigned char const *)entries ? 1 : 0;
+
+		if (machine_index >= 0 && machine_index < HALO_PORT_MAXIMUM_NETWORK_MACHINES)
+		{
+			distributed_screen_share[machine_index] = share;
+			distributed_screen_share_known[machine_index] = 1;
+			distributed_screen_share_send_down((unsigned char)machine_index, share);
+		}
+		break;
+	}
+	case _distributed_message_screen_share_down:
+	{
+		unsigned char const *bytes = (unsigned char const *)entries;
+		unsigned char machine = bytes[0];
+
+		if (machine < HALO_PORT_MAXIMUM_NETWORK_MACHINES)
+		{
+			distributed_screen_share[machine] = bytes[1] ? 1 : 0;
+			distributed_screen_share_known[machine] = 1;
+		}
+		break;
+	}
+	case _distributed_message_screen_party:
+		csmemcpy(distributed_screen_party, entries, 16);
+		distributed_screen_party_have = 1;
 		break;
 	case _distributed_message_client_identity:
 		/* (a client's Discord user, as it tells it: kept only of what is

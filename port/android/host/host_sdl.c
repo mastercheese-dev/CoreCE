@@ -112,6 +112,7 @@ static void *handle_release(uint32_t handle, int type, void **binding)
 
 int host_sdl_init(uint32_t flags)
 {
+	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 	return SDL_Init((SDL_InitFlags)flags);
 }
 

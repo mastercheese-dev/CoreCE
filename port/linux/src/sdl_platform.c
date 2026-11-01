@@ -198,6 +198,13 @@ BOOL platform_sdl_initialize(void)
 	if (p2p_hand_off_invite())
 		exit(EXIT_SUCCESS);
 	SDL_SetHint(SDL_HINT_APP_NAME, "CoreCE");
+	/* a notification or another app in front must not freeze the pad */
+	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+#ifdef _WIN32
+	/* the keyboard keeps arriving while the window is in back */
+	SDL_SetHint("SDL_WINDOWS_RAW_KEYBOARD", "1");
+	SDL_SetHint("SDL_WINDOWS_RAW_KEYBOARD_INPUTSINK", "1");
+#endif
 #ifdef HALO_ANDROID
 	/* landscape only; the back key arrives as a key event (xinput_sdl.c)
 	instead of closing the activity */
@@ -2004,17 +2011,11 @@ void platform_pump_events(void)
 			input_state.mouse_wheel += event.wheel.y;
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
-			platform_mouse_released_set(TRUE);
-#else
-			memset(input_state.keys, 0, sizeof(input_state.keys));
-			memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
-			memset(mouse_buttons_pressed, 0, sizeof(mouse_buttons_pressed));
-#endif
 			input_state.focused = FALSE;
-			/* (the scoreboard's pointer goes; the mouse is taken back for
-			the aim as the window has the focus again) */
+			/* the cursor belongs to whatever is in front. A key or button
+			already held stays held, and the grab returns with the window. */
 			scoreboard_pointer_active = FALSE;
+			platform_mouse_capture(FALSE);
 #ifdef HALO_ANDROID
 			touch_input_cancel();
 #endif

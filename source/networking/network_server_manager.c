@@ -2707,6 +2707,13 @@ boolean network_game_server_add_player_to_game(
 		success = network_game_add_player(&server->game, player);
 		if (success == TRUE)
 		{
+			int host_local = player->machine_index == network_game_client_get_local_machine_index() &&
+				player->controller_index < MAXIMUM_LOCAL_PLAYERS;
+
+			/* a controller past the local pads is a bot. the lobby mark is
+			the machine the human joined on, before Find Game. */
+			if (player->controller_index < MAXIMUM_LOCAL_PLAYERS)
+				matchmaking_screen_party_note(player->machine_index, host_local, player->name);
 			network_event(
 				"server added player from machine #%d at controller index #%d to the game",
 				player->machine_index,
@@ -4121,6 +4128,7 @@ boolean network_game_server_remove_machine_from_game(
 
 		if (machine->machine_index != NONE)
 		{
+			matchmaking_screen_party_clear_machine(machine->machine_index);
 			success = network_game_remove_machine(&server->game, machine);
 			if (!success)
 			{

@@ -88,6 +88,7 @@ int main(int argc, char **argv) {
     halo_graphics_initialize();
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
     SDL_SetHint(SDL_HINT_IOS_HIDE_HOME_INDICATOR, "2");
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
         host_fatal("Cannot initialize display: %s", SDL_GetError());
     if (!halo_graphics_metal() && !SDL_GL_LoadLibrary(NULL))

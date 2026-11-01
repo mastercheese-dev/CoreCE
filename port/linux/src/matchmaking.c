@@ -64,6 +64,8 @@ static struct
 	int epoch;
 	/* in the private lobby: closing the playlist screen must not stop the queue */
 	int in_party;
+	/* this machine followed someone else's join link. it stays through the match. */
+	int joined_link;
 	int ready;
 	int locals;
 	/* humans in this lobby, not the seats the service fills */
@@ -1681,6 +1683,91 @@ static void hosted_drop_locked(void)
 		matchmaking.want_unhost = 1;
 }
 
+/* machines that sat in this lobby before Find Game, this host's machine,
+and a later human the offer does not list. a filled seat is not here.
+two searches both publish Player, which is also this host's name, so the
+name cannot say who sat here. */
+static unsigned char screen_party_machine[16];
+
+static int offer_name_matches(const wchar_t *player_name, const char *offer_name);
+
+static void screen_party_clear(void)
+{
+	memset(screen_party_machine, 0, sizeof(screen_party_machine));
+}
+
+static void screen_party_mark(int machine)
+{
+	if (machine < 0 || machine >= 128)
+		return;
+	screen_party_machine[machine >> 3] |= (unsigned char)(1u << (machine & 7));
+}
+
+static void screen_party_unmark(int machine)
+{
+	if (machine < 0 || machine >= 128)
+		return;
+	screen_party_machine[machine >> 3] &= (unsigned char)~(1u << (machine & 7));
+}
+
+/* 1 when the offer lists this name. have_parties is 1 when the offer has
+named any party, so a missing list is not treated as an unlisted friend. */
+static int screen_offer_lists(const wchar_t *name, int *have_parties)
+{
+	struct matchmaking_offer offer;
+	int index;
+
+	if (have_parties)
+		*have_parties = 0;
+	if (!name || !name[0])
+		return 0;
+	pthread_mutex_lock(&matchmaking_lock);
+	offer = matchmaking.offer;
+	pthread_mutex_unlock(&matchmaking_lock);
+	if (have_parties)
+		*have_parties = offer.party_count > 0;
+	if (offer.party_count <= 0)
+		return 0;
+	for (index = 0; index < offer.name_count && index < MATCHMAKING_LOBBY_NAMES; index++)
+	{
+		if (offer.name_party[index] < 0)
+			continue;
+		if (offer_name_matches(name, offer.names[index]))
+			return 1;
+	}
+	return 0;
+}
+
+void matchmaking_screen_party_note(int machine, int host_local, const wchar_t *name)
+{
+	int have_parties = 0;
+
+	if (!matchmaking_game_port())
+		return;
+	/* still the private lobby: Find Game has not been pressed. once the
+	match starts, queueing is cleared and a later arrival is not the lobby. */
+	if (host_local || (matchmaking_queue_active() && !matchmaking_is_ready()))
+	{
+		screen_party_mark(machine);
+		return;
+	}
+	if (screen_offer_lists(name, &have_parties) || !have_parties)
+		return;
+	screen_party_mark(machine);
+}
+
+void matchmaking_screen_party_clear_machine(int machine)
+{
+	screen_party_unmark(machine);
+}
+
+void matchmaking_screen_party_bits(unsigned char bits[16])
+{
+	if (!bits)
+		return;
+	memcpy(bits, screen_party_machine, 16);
+}
+
 void matchmaking_queue(const char *playlist, const char *name)
 {
 	id_load();
@@ -1697,6 +1784,7 @@ void matchmaking_queue(const char *playlist, const char *name)
 	matchmaking.queueing = 1;
 	matchmaking.committed = 0;
 	matchmaking.in_party = 0;
+	matchmaking.joined_link = 0;
 	matchmaking.ready = 0;
 	matchmaking.locals = 1;
 	matchmaking.players = 1;
@@ -1709,6 +1797,7 @@ void matchmaking_queue(const char *playlist, const char *name)
 	matchmaking.accept_offers = 0;
 	matchmaking.search++;
 	pthread_mutex_unlock(&matchmaking_lock);
+	screen_party_clear();
 	matchmaking_ensure();
 }
 
@@ -1741,8 +1830,6 @@ void matchmaking_set_players(int players)
 	}
 	pthread_mutex_unlock(&matchmaking_lock);
 }
-
-static int offer_name_matches(const wchar_t *player_name, const char *offer_name);
 
 int matchmaking_name_is_filler(const wchar_t *name)
 {
@@ -1847,6 +1934,7 @@ void matchmaking_reset(void)
 	matchmaking.queueing = 0;
 	matchmaking.committed = 0;
 	matchmaking.in_party = 0;
+	matchmaking.joined_link = 0;
 	matchmaking.ready = 0;
 	matchmaking.locals = 1;
 	backstop_clear_locked();
@@ -1858,6 +1946,7 @@ void matchmaking_reset(void)
 	if (matchmaking.published_queue)
 		matchmaking.want_clear = 1;
 	pthread_mutex_unlock(&matchmaking_lock);
+	screen_party_clear();
 }
 
 void matchmaking_stop(void)
@@ -1901,10 +1990,21 @@ void matchmaking_joined_link(void)
 	matchmaking.committed = 1;
 	matchmaking.accept_offers = 0;
 	matchmaking.offer_ready = 0;
+	matchmaking.joined_link = 1;
 	hosted_drop_locked();
 	if (matchmaking.published_queue)
 		matchmaking.want_clear = 1;
 	pthread_mutex_unlock(&matchmaking_lock);
+}
+
+int matchmaking_joined_by_link(void)
+{
+	int joined;
+
+	pthread_mutex_lock(&matchmaking_lock);
+	joined = matchmaking.joined_link;
+	pthread_mutex_unlock(&matchmaking_lock);
+	return joined;
 }
 
 void matchmaking_commit_party(void)
@@ -1973,6 +2073,7 @@ void matchmaking_yield_to_invite(const char *text)
 	{
 		matchmaking.queueing = 0;
 		matchmaking.in_party = 0;
+		matchmaking.joined_link = 0;
 		matchmaking.ready = 0;
 		matchmaking.locals = 1;
 		matchmaking.accept_offers = 0;
@@ -1984,6 +2085,7 @@ void matchmaking_yield_to_invite(const char *text)
 		matchmaking.search++;
 		if (matchmaking.published_queue)
 			matchmaking.want_clear = 1;
+		screen_party_clear();
 	}
 	pthread_mutex_unlock(&matchmaking_lock);
 }

@@ -124,7 +124,7 @@ int main(void) {
     key(SDL_SCANCODE_W, 0, 0); key(SDL_SCANCODE_W, 1, 0);
     assert(snapshot().keys[SDL_SCANCODE_W]);
     SDL_Event lost = {.type = SDL_EVENT_WINDOW_FOCUS_LOST}; pump(lost);
-    assert(!captured && !snapshot().keys[SDL_SCANCODE_W]);
+    assert(!captured && snapshot().keys[SDL_SCANCODE_W]);
     pump(focus); assert(!captured);
 
     /* Escape still opens pause after F12 has already released the cursor. */

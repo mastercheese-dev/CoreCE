@@ -2099,6 +2099,7 @@ void network_objects_host_tick(
 	if (game_time_get() % INVENTORY_INTERVAL_TICKS == 0)
 		profile_scope(objects_host_tick_send_inventories_section, distributed_host_send_inventories();)
 	profile_scope(objects_host_tick_send_damage_animations_section, distributed_host_send_damage_animations();)
+	distributed_screen_share_host_tick();
 }
 
 /* ---------- a client */
@@ -3528,6 +3529,7 @@ void network_objects_client_tick(
 	it a machine the host takes messages of) */
 	if (objects_client_ready_time != NONE)
 		distributed_client_send_identity();
+	distributed_screen_share_client_tick();
 }
 
 /* ---------- the game */

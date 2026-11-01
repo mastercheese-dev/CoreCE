@@ -151,6 +151,17 @@ void matchmaking_commit_host(const char *playlist, unsigned short port);
 void matchmaking_commit_join(void);
 /* a friend joined someone else's link. their queue stays cleared. */
 void matchmaking_joined_link(void);
+/* 1 after that join, until this machine queues again or leaves matchmaking. */
+int matchmaking_joined_by_link(void);
+/* this host's lobby, for split screen. host_local is this machine's own
+player. a player added before Find Game sat in the lobby. after that, a
+human the offer does not list joined the link. a listed name is a filled
+seat. the mark is the machine, so a second player on that machine is in
+the lobby too. it is kept until this machine queues again. */
+void matchmaking_screen_party_note(int machine, int host_local, const wchar_t *name);
+void matchmaking_screen_party_clear_machine(int machine);
+/* 16 bytes, one bit a machine index. */
+void matchmaking_screen_party_bits(unsigned char bits[16]);
 /* this machine opened its own party lobby. keep publishing, and publish
 the invite once it exists. */
 void matchmaking_commit_party(void);

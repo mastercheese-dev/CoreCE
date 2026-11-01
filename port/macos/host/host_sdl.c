@@ -125,6 +125,7 @@ int host_sdl_init(uint32_t flags) {
        SDL_EVENT_QUIT while W is being used to move. */
     SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0");
 #endif
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     if (!SDL_Init((SDL_InitFlags)flags))
         return 0;
     SDL_SetEventEnabled(SDL_EVENT_DROP_FILE, true);

@@ -144,6 +144,14 @@ enum
 	update when it said so, so a client that hears it late fades only for
 	what that update still has left (reliably) */
 	_distributed_message_match_go = 92,
+	/* a client tells the host whether Split Screen is on, so a pane of
+	that machine can stay black. a build that does not know it drops it. */
+	_distributed_message_screen_share = 93,
+	/* the host tells every client each machine's answer */
+	_distributed_message_screen_share_down = 94,
+	/* the host tells which machines sat in this lobby or joined its link.
+	a filled matchmaking seat is not in the set. */
+	_distributed_message_screen_party = 95,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };
@@ -224,6 +232,18 @@ a longer message is split where a batch is full */
 unreliable ones gathered into one datagram a machine each tick */
 void distributed_send(void *message, byte type, short count, word size, short destination);
 void distributed_client_send_identity(void);
+/* matchmaking: tell the others whether this screen is shared, and which
+players joined the lobby rather than a filled seat. */
+void distributed_screen_share_client_tick(void);
+void distributed_screen_share_host_tick(void);
+/* 1 when that machine's Split Screen is on. this machine reads its own
+setting. a machine that has not said is off. */
+int distributed_machine_shares_screen(short machine_index);
+/* the host's set of lobby machines, or the last set a client was told.
+bits is 16 bytes, one bit a machine index. known is 0 until the
+host has said, and 1 on the host. */
+void distributed_screen_party_bits(unsigned char bits[16]);
+int distributed_screen_party_known(void);
 /* ... unreliably to one client (the host) */
 void distributed_send_to_machine(long machine_index, void *message, byte type, short count, word size);
 /* ... reliably to one client (the host) */

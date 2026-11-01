@@ -4,8 +4,15 @@ the death camera, with the respawn line, instead of the pane clearing.
 The extra panes are render windows only. They are not local players, so
 input, scoring and the single-player HUD stay with the one player. Add
 Player is still a second local player, and two local players do not use
-these panes. display.teammate_views is off until chosen. Which pane is
-the local player's is this machine's display.teammate_view_slot. Each
+these panes. display.teammate_views is off until chosen. Outside matchmaking,
+and in hardcore matchmaking, that setting still means this machine
+wants the panes. In other matchmaking the host and a machine that
+joined the lobby link get panes of the machines that sat in the lobby,
+and a search does not. A seat the service filled is not in those panes.
+In matchmaking a pane stays black when that player's setting is off.
+A second player on this machine is a local pane, not one of these.
+Which pane is the local player's is this machine's
+display.teammate_view_slot. Each
 teammate pane keeps a spare HUD slot, so the weapon pose continues
 between frames. The slot is a local player only while that pane is drawn. */
 #include "cseries.h"
@@ -27,6 +34,9 @@ between frames. The slot is a local player only while that pane is drawn. */
 #include "units/units.h"
 #include "hardcore_views.h"
 #include "port_config.h"
+#include "network_distributed.h"
+#include "networking/network_game_globals.h"
+#include "../src/matchmaking.h"
 #include <string.h>
 
 boolean main_menu_is_active(void);
@@ -46,6 +56,8 @@ struct hardcore_view_camera
 
 static long view_unit[HARDCORE_VIEW_MAXIMUM];
 static long view_player[HARDCORE_VIEW_MAXIMUM];
+/* a matchmaking pane whose player is not sharing this screen */
+static boolean view_blank[HARDCORE_VIEW_MAXIMUM];
 static short view_count = 1;
 static short local_slot = 0;
 static short view_rendering = 0;
@@ -108,7 +120,7 @@ static void hardcore_views_slots_assign(void)
 		used[slot] = local_player_get_player_index(slot) != NONE;
 	for (window = 0; window < HARDCORE_VIEW_MAXIMUM; window++)
 	{
-		if (window >= view_count || window == local_slot)
+		if (window >= view_count || window == local_slot || view_blank[window])
 		{
 			if (view_hud_slot[window] != NONE &&
 				local_player_get_player_index(view_hud_slot[window]) == NONE)
@@ -140,6 +152,17 @@ static void hardcore_views_slots_assign(void)
 /* Two panes are top and bottom. Three are a wide top and two bottoms.
 Four are the corners. The name is this machine's setting, so a bottom
 choice stays on a bottom pane instead of being moved to the top. */
+/* Force split stays off in matchmaking other than hardcore 2v2. A game
+that is not matchmaking keeps the setting. Teammate panes are separate. */
+static boolean hardcore_views_client_split_applies(void)
+{
+	if (!matchmaking_game_port())
+		return TRUE;
+	if (!game_engine_running())
+		return FALSE;
+	return !ustrcmp(game_engine_get_variant()->human_readable_game_description, L"Comp 2v2");
+}
+
 /* A team game has one team on this display. The other team's local player
 would be looking at this team, and this team at them. A free-for-all
 does not split. */
@@ -257,7 +280,8 @@ static void hardcore_views_roster_clear(void)
 
 /* The players already in the match, in list order. This runs until the
 clock has started, then the list is kept as it was. */
-static void hardcore_views_roster_take(long local_index, long team)
+static void hardcore_views_roster_take(long local_index, long team, int party_only,
+	unsigned char const *party_bits)
 {
 	struct data_iterator iterator;
 	struct player_datum *player;
@@ -268,9 +292,20 @@ static void hardcore_views_roster_take(long local_index, long team)
 	while (roster_count < HARDCORE_VIEW_MAXIMUM - 1 &&
 		(player = data_iterator_next(&iterator)) != NULL)
 	{
+		int machine;
+
 		if (iterator.datum_index == local_index || player->quit_out_of_game ||
 			player->team_index != team || player->local_player_index != NONE)
 			continue;
+		if (party_only)
+		{
+			machine = player->network_player_data.machine_index;
+			if (player->network_player_data.controller_index >= MAXIMUM_LOCAL_PLAYERS)
+				continue;
+			if (!party_bits || machine < 0 || machine >= 128 ||
+				(party_bits[machine >> 3] & (unsigned char)(1u << (machine & 7))) == 0)
+				continue;
+		}
 		roster_player[roster_count++] = iterator.datum_index;
 	}
 }
@@ -281,8 +316,11 @@ static void hardcore_views_refresh(void)
 	struct player_datum *local;
 	long local_index;
 	long mates[HARDCORE_VIEW_MAXIMUM - 1];
+	unsigned char party_bits[16];
 	short index;
 	short placed;
+	int party_only = 0;
+	int matchmaking = matchmaking_game_port() != 0;
 
 	/* the pane has the slot until it ends. a refresh here would forget
 	which one and clear a different player. */
@@ -291,17 +329,41 @@ static void hardcore_views_refresh(void)
 	view_count = 1;
 	local_slot = 0;
 	view_unit[0] = NONE;
+	csmemset(view_blank, 0, sizeof(view_blank));
+	csmemset(party_bits, 0, sizeof(party_bits));
 	if (!hardcore_views_team_screen())
 	{
 		hardcore_views_roster_clear();
 		hardcore_views_slots_release();
 		return;
 	}
-	if (!config_boolean("display.teammate_views") ||
-		hardcore_views_local_count() != 1 || !player_data || !player_data->valid)
+	if (hardcore_views_local_count() != 1 || !player_data || !player_data->valid)
 	{
 		hardcore_views_slots_release();
 		return;
+	}
+	/* outside matchmaking, and in hardcore matchmaking, Split Screen
+	still means this machine wants the panes. other matchmaking keeps
+	panes for the host and a lobby link, of the machines that sat here,
+	and a search does not get them. a pane in matchmaking stays black
+	when that player is not sharing. */
+	if (!matchmaking || hardcore_views_client_split_applies())
+	{
+		if (!config_boolean("display.teammate_views"))
+		{
+			hardcore_views_slots_release();
+			return;
+		}
+	}
+	else if (!global_network_game_server_get() && !matchmaking_joined_by_link())
+	{
+		hardcore_views_slots_release();
+		return;
+	}
+	else
+	{
+		party_only = 1;
+		distributed_screen_party_bits(party_bits);
 	}
 	local_index = local_player_get_player_index(local_player_get_next(NONE));
 	local = player_try_and_get(local_index);
@@ -314,8 +376,8 @@ static void hardcore_views_refresh(void)
 		hardcore_views_roster_clear();
 	if (!roster_locked)
 	{
-		hardcore_views_roster_take(local_index, local->team_index);
-		if (game_time_get() > 0)
+		hardcore_views_roster_take(local_index, local->team_index, party_only, party_bits);
+		if (game_time_get() > 0 && (!party_only || distributed_screen_party_known()))
 			roster_locked = TRUE;
 	}
 	if (!roster_count)
@@ -348,6 +410,9 @@ static void hardcore_views_refresh(void)
 			continue;
 		view_player[index] = roster_player[placed];
 		view_unit[index] = mates[placed++];
+		player = player_try_and_get(view_player[index]);
+		view_blank[index] = matchmaking && player &&
+			!distributed_machine_shares_screen(player->network_player_data.machine_index);
 	}
 	hardcore_views_slots_assign();
 }
@@ -384,7 +449,8 @@ boolean hardcore_views_split(void)
 engine, so it stays one pane unless a second player is actually local */
 static boolean hardcore_views_force_wanted(void)
 {
-	return config_boolean("display.force_split") &&
+	return hardcore_views_client_split_applies() &&
+		config_boolean("display.force_split") &&
 		game_in_progress() && game_engine_running() &&
 		!main_menu_is_active() &&
 		hardcore_views_local_count() == 1;
@@ -411,10 +477,14 @@ boolean hardcore_views_is_blank_window(short window_index)
 {
 	short slot;
 
-	if (!hardcore_views_blank_split())
+	if (window_index < 0 || window_index >= HARDCORE_VIEW_MAXIMUM)
 		return FALSE;
-	slot = hardcore_views_blank_player_slot();
-	return window_index >= 0 && window_index < 2 && window_index != slot;
+	if (hardcore_views_blank_split())
+	{
+		slot = hardcore_views_blank_player_slot();
+		return window_index < 2 && window_index != slot;
+	}
+	return view_blank[window_index];
 }
 
 short hardcore_views_hud_slot(short window_index)

@@ -1467,6 +1467,17 @@ static boolean bot_different_floor(real_point3d const *feet, real_point3d const 
 	return dz > 1.6f;
 }
 
+/* a blow reaches a body on this surface. A platform or a ramp above or
+below is out of reach, however near they are across the floor. */
+static boolean bot_melee_level(real_point3d const *feet, real_point3d const *theirs)
+{
+	real dz = feet->z - theirs->z;
+
+	if (dz < 0.0f)
+		dz = -dz;
+	return dz <= 0.45f;
+}
+
 /* a living enemy. Teammates and an empty seat are not. */
 static boolean bot_enemy_living(long self_index, long other_index, boolean teams, long team)
 {
@@ -4257,6 +4268,107 @@ static boolean bot_climbing_ramp(real_point3d const *feet, real yaw)
 			feet->z, 1.20f, &far_z))
 		return FALSE;
 	return far_z > feet->z + 0.10f;
+}
+
+/* Chill Out. The low blocks on the floor sit under the chest ray, so
+the walk reads them as open ground. */
+static boolean bot_playing_chillout(void)
+{
+	char const *name;
+
+	if (global_scenario_index == NONE)
+		return FALSE;
+	name = tag_get_name(global_scenario_index);
+	return name && strstr(name, "chillout");
+}
+
+/* a raised block the chest ray clears. hop means the top can take the
+jump. One high sample is a corner or a trim, and a turn off of that
+walks a lap around the camo. */
+static boolean bot_chillout_obstacle(real_point3d const *feet, real yaw, long unit_index,
+	real *face, boolean *hop)
+{
+	real hit;
+	real dist;
+	real start;
+	real flat_z;
+	long flats;
+
+	if (bot_climbing_ramp(feet, yaw))
+		return FALSE;
+	if (bot_drop_ahead(feet, yaw))
+		return FALSE;
+	if (bot_first_block(feet, yaw, 0.48f, 1.40f, unit_index) >= 0.0f)
+		return FALSE;
+	hit = bot_first_block(feet, yaw, 0.16f, 1.40f, unit_index);
+	if (hit < 0.0f)
+		return FALSE;
+	flats = 0;
+	flat_z = 0.0f;
+	start = hit > 0.30f ? hit - 0.25f : 0.20f;
+	for (dist = start; dist <= hit + 1.20f; dist += 0.20f)
+	{
+		real_point3d probe;
+		real_point3d ground;
+		long surface;
+		real rise;
+
+		probe.x = feet->x + cosine(yaw) * dist;
+		probe.y = feet->y + sine(yaw) * dist;
+		probe.z = feet->z;
+		if (!bot_ground_at(&probe, &ground, &surface))
+			continue;
+		rise = ground.z - feet->z;
+		if (rise >= 0.22f && rise <= 0.50f &&
+			(flats == 0 || rise > flat_z - 0.08f && rise < flat_z + 0.08f))
+		{
+			if (flats == 0)
+				flat_z = rise;
+			flats++;
+		}
+		else if (flats >= 2 && rise > -0.20f && rise < 0.20f && dist > hit + 0.25f)
+			break;
+		else if (rise > 0.70f)
+			break;
+	}
+	if (flats < 2)
+		return FALSE;
+	*face = hit;
+	/* headroom over the face. The far wall of a small room is not a miss. */
+	*hop = bot_ray_clear_z(feet, yaw, hit, 1.00f, unit_index) &&
+		bot_ray_clear_z(feet, yaw, hit + 0.40f, 1.00f, unit_index);
+	return TRUE;
+}
+
+/* the step is into a raised block. Jump when the landing is open.
+The walk stays on the path it already had. Bending that path every
+tick is the lap around the room. */
+static void bot_chillout_steer(struct bot_state *state, long unit_index,
+	real_point3d const *feet, struct player_action *action)
+{
+	real ti;
+	real tj;
+	real motion;
+	real face;
+	boolean hop;
+	boolean airborne;
+	struct biped_datum *biped;
+
+	if (!bot_playing_chillout())
+		return;
+	if (state->climb || state->gap_hold || state->gap_ticks > 0 || state->vault != 0)
+		return;
+	ti = action->throttle.i;
+	tj = action->throttle.j;
+	if (ti * ti + tj * tj < 0.04f)
+		return;
+	motion = state->facing_yaw + arctangent(-tj, ti);
+	if (!bot_chillout_obstacle(feet, motion, unit_index, &face, &hop) || !hop)
+		return;
+	biped = biped_try_and_get(unit_index);
+	airborne = biped && TEST_FLAG(biped->biped.flags, _biped_airborne_bit);
+	if (!airborne && face <= 1.05f)
+		action->control_flags |= FLAG(_unit_control_jump_bit);
 }
 
 /* side >= 0 is the left shoulder. The ramp is still under the center
@@ -9699,15 +9811,27 @@ static void update_server_generate_bot_actions(
 			}
 			shoot = FALSE;
 
-			if (visible && distance < 1.6f && state->melee_ticks <= 0 &&
-				action.desired_weapon_index == NONE)
 			{
-				/* melee is the equipment button. The action button reloads
-				when there is nothing to pick up or board. A weapon swap
-				uses the same tick, so the punch waits. */
-				action.control_flags |= FLAG(_unit_control_use_equipment_bit);
-				state->melee_ticks = 30;
-			}
+				struct player_datum *melee_player;
+				real_point3d their_feet;
+				boolean level;
+
+				level = FALSE;
+				melee_player = player_try_and_get(engage);
+				if (melee_player && melee_player->unit_index != NONE)
+				{
+					object_get_origin(melee_player->unit_index, &their_feet);
+					level = bot_melee_level(&feet, &their_feet);
+				}
+				if (visible && distance < 1.6f && state->melee_ticks <= 0 &&
+					action.desired_weapon_index == NONE && level)
+				{
+					/* melee is the equipment button. The action button reloads
+					when there is nothing to pick up or board. A weapon swap
+					uses the same tick, so the punch waits. */
+					action.control_flags |= FLAG(_unit_control_use_equipment_bit);
+					state->melee_ticks = 30;
+				}
 			else if (state->powerup_ready && unit->unit.equipment_object_index != NONE &&
 				state->reaction_ticks <= 0 && action.desired_weapon_index == NONE)
 			{
@@ -9844,6 +9968,7 @@ static void update_server_generate_bot_actions(
 				}
 				}
 			}
+			}
 			state->trigger_down = shoot;
 		}
 		else
@@ -9942,7 +10067,10 @@ static void update_server_generate_bot_actions(
 		back onto it. The wind-up of their own throw keeps its aim. */
 		if (!state->grenade_aim && !state->climb &&
 			unit->object.parent_object_index == NONE)
+		{
+			bot_chillout_steer(state, player->unit_index, &feet, &action);
 			bot_respect_grenades(state, player, player->unit_index, &feet, &action);
+		}
 
 		/* the grenade leaves along the aim from the tick it was chosen.
 		a flee or a new step during the wind-up is the turn as it releases. */
