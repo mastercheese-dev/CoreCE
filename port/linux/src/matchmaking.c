@@ -9,13 +9,16 @@ on the website. Topics are only under hceu/. The native game speaks MQTT
 The catalog is the menu. One client id is kept for the install. Choosing a
 playlist opens this machine's private lobby on that playlist's port and
 publishes hceu/3/mm/v1/queue/{clientId}, retained, every 5 seconds. Find
-Game sets ready. While this machine is hosting it also publishes
-hceu/3/mm/v1/hosted/{clientId} with the invite and the bound port. The
-queue stays until the match starts or the player leaves, and an empty
-retained publish clears it. Offers on this search are ignored until that
-queue has been published. role host updates the lobby already open. role
-wait keeps it from starting. role server or join, with an invite and phase
-search, leaves this lobby and joins that invite.
+Game sets ready. The queue also says how many humans are in this lobby.
+While this machine is hosting it publishes the invite, retained, every 5
+seconds on hceu/3/mm/v1/hosted/{clientId}. An empty publish on that topic
+is only when this machine is no longer the host. The queue stays until the
+match starts or the player leaves, and an empty retained publish clears
+it. A friend who joined this lobby's link clears their own queue. Offers
+on this search are ignored until that queue has been published. role host
+updates the lobby already open. role wait keeps it from starting. role
+server or join, with an invite and phase search, leaves this lobby and
+joins that invite.
 */
 
 #include "platform.h"
@@ -63,6 +66,8 @@ static struct
 	int in_party;
 	int ready;
 	int locals;
+	/* humans in this lobby, not the seats the service fills */
+	int players;
 	int party_mark;
 	int link;
 	int id_ready;
@@ -824,6 +829,7 @@ struct matchmaking_link
 	int search;
 	int party_mark;
 	int hosted_queued;
+	unsigned long last_hosted;
 	int host_mark;
 	int clear_queued;
 	int unhost_queued;
@@ -1164,18 +1170,26 @@ static void link_read(struct matchmaking_link *link, int epoch, const char *play
 	link_take(link, epoch, playlist, id);
 }
 
-static void queue_payload(char *payload, int size, const char *playlist, const char *name, int ready, int locals)
+static void queue_payload(char *payload, int size, const char *playlist, const char *name, int ready, int locals,
+	int players)
 {
 	char escaped[32];
+	int cap = players_for(playlist);
 
 	if (locals < 1)
 		locals = 1;
 	if (locals > 4)
 		locals = 4;
+	if (players < 1)
+		players = 1;
+	if (cap < 1)
+		cap = 8;
+	if (players > cap)
+		players = cap;
 	json_escape(escaped, sizeof(escaped), name);
 	snprintf(payload, (size_t)size,
-		"{\"playlist\":\"%s\",\"name\":\"%s\",\"network\":%d,\"ready\":%s,\"locals\":%d}",
-		playlist, escaped, HALO_PORT_NETWORK_VERSION, ready ? "true" : "false", locals);
+		"{\"playlist\":\"%s\",\"name\":\"%s\",\"network\":%d,\"ready\":%s,\"locals\":%d,\"players\":%d}",
+		playlist, escaped, HALO_PORT_NETWORK_VERSION, ready ? "true" : "false", locals, players);
 }
 
 static void *matchmaking_thread(void *unused)
@@ -1197,6 +1211,7 @@ static void *matchmaking_thread(void *unused)
 		int epoch;
 		int queue_ready;
 		int queue_locals;
+		int queue_players;
 		int party_mark;
 		unsigned short host_port;
 		char id[ID_LIMIT + 1];
@@ -1218,6 +1233,7 @@ static void *matchmaking_thread(void *unused)
 		epoch = matchmaking.epoch;
 		queue_ready = matchmaking.ready;
 		queue_locals = matchmaking.locals;
+		queue_players = matchmaking.players;
 		party_mark = matchmaking.party_mark;
 		host_port = matchmaking.host_port;
 		memcpy(id, matchmaking.id, sizeof(id));
@@ -1244,11 +1260,12 @@ static void *matchmaking_thread(void *unused)
 		{
 			link->host_mark = host_mark;
 			link->hosted_queued = 0;
+			link->last_hosted = 0;
 		}
 		if (!want_unhost)
 			link->unhost_queued = 0;
 		/* stay up for the catalog, the queue, the empty clear, or the invite */
-		if (!listening && !queueing && !want_clear && !(want_hosted && !hosted_sent) && !want_unhost)
+		if (!listening && !queueing && !want_clear && !want_hosted && !want_unhost)
 		{
 			if (link->output_size)
 				link_flush(link);
@@ -1354,12 +1371,14 @@ static void *matchmaking_thread(void *unused)
 				{
 					queue_ready = matchmaking.ready;
 					queue_locals = matchmaking.locals;
+					queue_players = matchmaking.players;
 				}
 				pthread_mutex_unlock(&matchmaking_lock);
 				if (still)
 				{
 					snprintf(topic, sizeof(topic), "hceu/3/mm/v1/queue/%s", id);
-					queue_payload(payload, sizeof(payload), playlist, name, queue_ready, queue_locals);
+					queue_payload(payload, sizeof(payload), playlist, name, queue_ready, queue_locals,
+						queue_players);
 					if (link_publish(link, topic, payload, 1))
 					{
 						link->published = 1;
@@ -1376,15 +1395,14 @@ static void *matchmaking_thread(void *unused)
 				}
 			}
 		}
-		if (want_hosted && !hosted_sent && link->subscribed && port_ok(host_port))
+		/* the same 5 seconds as the queue. one publish is not enough. an empty
+		publish is the unhost path, and only that path. */
+		if (want_hosted && link->subscribed && port_ok(host_port) &&
+			(!link->last_hosted || GetTickCount() - link->last_hosted >= QUEUE_INTERVAL))
 		{
 			char invite[256];
 
-			/* queued once, and marked sent only after those bytes leave: closing
-			on the next pass would drop an invite still in the buffer. the
-			queue keeps publishing beside it. */
-			if (!link->hosted_queued && p2p_invite_link(invite, sizeof(invite)) &&
-				!strncmp(invite, "halo://join/", 12))
+			if (p2p_invite_link(invite, sizeof(invite)) && !strncmp(invite, "halo://join/", 12))
 			{
 				char escaped[512];
 
@@ -1393,15 +1411,18 @@ static void *matchmaking_thread(void *unused)
 				snprintf(payload, sizeof(payload), "{\"playlist\":\"%s\",\"invite\":\"%s\",\"port\":%u}",
 					host_playlist, escaped, (unsigned)host_port);
 				if (link_publish(link, topic, payload, 1))
+				{
 					link->hosted_queued = 1;
+					link->last_hosted = GetTickCount();
+				}
 			}
-			if (link->hosted_queued && !link->output_size)
-			{
-				pthread_mutex_lock(&matchmaking_lock);
-				if (matchmaking.epoch == epoch && matchmaking.host_mark == host_mark)
-					matchmaking.hosted_sent = 1;
-				pthread_mutex_unlock(&matchmaking_lock);
-			}
+		}
+		if (want_hosted && link->hosted_queued && !link->output_size)
+		{
+			pthread_mutex_lock(&matchmaking_lock);
+			if (matchmaking.epoch == epoch && matchmaking.host_mark == host_mark)
+				matchmaking.hosted_sent = 1;
+			pthread_mutex_unlock(&matchmaking_lock);
 		}
 		/* this machine is no longer that host. an empty retain removes the invite. */
 		if (want_unhost && !want_hosted && link->subscribed)
@@ -1665,6 +1686,7 @@ void matchmaking_queue(const char *playlist, const char *name)
 	matchmaking.in_party = 0;
 	matchmaking.ready = 0;
 	matchmaking.locals = 1;
+	matchmaking.players = 1;
 	matchmaking.party_mark++;
 	hosted_drop_locked();
 	matchmaking.want_clear = 0;
@@ -1689,6 +1711,51 @@ void matchmaking_set_locals(int locals)
 		matchmaking.party_mark++;
 	}
 	pthread_mutex_unlock(&matchmaking_lock);
+}
+
+void matchmaking_set_players(int players)
+{
+	if (players < 1)
+		players = 1;
+	if (players > 16)
+		players = 16;
+	pthread_mutex_lock(&matchmaking_lock);
+	if (matchmaking.queueing && players != matchmaking.players)
+	{
+		matchmaking.players = players;
+		matchmaking.party_mark++;
+	}
+	pthread_mutex_unlock(&matchmaking_lock);
+}
+
+static int offer_name_matches(const wchar_t *player_name, const char *offer_name);
+
+int matchmaking_name_is_filler(const wchar_t *name)
+{
+	struct matchmaking_offer offer;
+	char host[12];
+	int index;
+	int filler = 0;
+
+	if (!name || !name[0])
+		return 0;
+	pthread_mutex_lock(&matchmaking_lock);
+	memcpy(host, matchmaking.name, sizeof(host));
+	offer = matchmaking.offer;
+	pthread_mutex_unlock(&matchmaking_lock);
+	/* this client's own name is in parties[0] and is not a filled seat */
+	if (offer_name_matches(name, host))
+		return 0;
+	if (offer.party_count <= 0)
+		return 0;
+	for (index = 0; index < offer.name_count && index < MATCHMAKING_LOBBY_NAMES; index++)
+	{
+		if (offer.name_party[index] < 0)
+			continue;
+		if (offer_name_matches(name, offer.names[index]))
+			filler = 1;
+	}
+	return filler;
 }
 
 void matchmaking_find_game(void)
@@ -1792,8 +1859,8 @@ void matchmaking_stop(void)
 	matchmaking.locals = 1;
 	matchmaking.accept_offers = 0;
 	matchmaking.offer_ready = 0;
-	hosted_drop_locked();
-	/* the game is loading. a later leave of a menu must not drop the port. */
+	/* the match started and this machine is still the host, so the invite stays.
+	the game is loading. a later leave of a menu must not drop the port. */
 	matchmaking.committed = 1;
 	matchmaking.search++;
 	if (matchmaking.published_queue)
@@ -1807,6 +1874,21 @@ void matchmaking_commit_join(void)
 	matchmaking.committed = 1;
 	matchmaking.in_party = 1;
 	hosted_drop_locked();
+	pthread_mutex_unlock(&matchmaking_lock);
+}
+
+void matchmaking_joined_link(void)
+{
+	pthread_mutex_lock(&matchmaking_lock);
+	matchmaking.queueing = 0;
+	matchmaking.ready = 0;
+	matchmaking.in_party = 1;
+	matchmaking.committed = 1;
+	matchmaking.accept_offers = 0;
+	matchmaking.offer_ready = 0;
+	hosted_drop_locked();
+	if (matchmaking.published_queue)
+		matchmaking.want_clear = 1;
 	pthread_mutex_unlock(&matchmaking_lock);
 }
 
@@ -1965,8 +2047,8 @@ static int offer_name_matches(const wchar_t *player_name, const char *offer_name
 	return 1;
 }
 
-/* party 0 is one team and party 1 is the other. a later party joins the
-team that already has fewer players. a tie stays with the first party. */
+/* parties[0] is the host's team and parties[1] is the other. a later party
+joins the team that already has fewer players. a tie stays with the first. */
 static int party_seat(const struct matchmaking_offer *offer, int party)
 {
 	int counts[2];
@@ -2017,15 +2099,15 @@ int matchmaking_join_team(const wchar_t *name)
 	{
 		if (!offer_name_matches(name, offer.names[index]))
 			continue;
-		if (offer.name_party[index] >= 0)
-			return party_seat(&offer, offer.name_party[index]);
-		return 0;
+		if (offer.name_party[index] <= 0)
+			return 0;
+		/* parties[1] is the other team. a later party still takes the smaller one. */
+		if (offer.name_party[index] == 1)
+			return 1;
+		return party_seat(&offer, offer.name_party[index]);
 	}
-	/* one listed party, and a friend who joined its link, stays on that team.
-	a name the offer did not list is a later party. */
-	if (offer.party_count < 2)
-		return 0;
-	return party_seat(&offer, offer.party_count);
+	/* not listed: this human joined the link and stays on the host's team. */
+	return 0;
 }
 
 int matchmaking_may_count(int player_count, int maximum_players)

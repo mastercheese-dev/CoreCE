@@ -7000,6 +7000,29 @@ static void lobby_update(struct widget_instance *list)
 				count = cap;
 			matchmaking_set_locals(count);
 		}
+		/* humans already here, including a friend on this link. a name the
+		service listed besides this client is a seat it is filling. */
+		if (party && global_network_game_server_get())
+		{
+			int humans = 0;
+			int seat;
+
+			for (seat = 0; seat < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; seat++)
+			{
+				struct network_player *player = &game->players[seat];
+
+				if (!network_player_is_valid(player))
+					continue;
+				if (bot_controller_is_bot(player->machine_index, player->controller_index))
+					continue;
+				if (matchmaking_name_is_filler(player->name))
+					continue;
+				humans++;
+			}
+			if (humans < 1)
+				humans = 1;
+			matchmaking_set_players(humans);
+		}
 		if (party && have_offer)
 		{
 			wchar_t status[64];
@@ -10209,7 +10232,7 @@ int menu_matchmaking_rejoin(struct widget_instance *widget, boolean *widget_dele
 		mm_paste_waiting = 0;
 		mm_paste_posts = 0;
 		matchmaking_set_game_port(port);
-		matchmaking_commit_join();
+		matchmaking_joined_link();
 		snprintf(mm_joined_invite, sizeof(mm_joined_invite), "%s", mm_paste_invite);
 		if (!widget_deleted)
 			widget_deleted = &deleted;

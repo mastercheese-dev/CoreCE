@@ -126,6 +126,11 @@ continues through the private lobby until the match starts or the player leaves.
 void matchmaking_queue(const char *playlist, const char *name);
 /* how many local players are in this party, 1 to 4. ignored once Find Game is pressed. */
 void matchmaking_set_locals(int locals);
+/* humans in this lobby right now, including a friend who joined the link.
+the seats the service fills are not included. publishing continues after Find Game. */
+void matchmaking_set_players(int players);
+/* 1 when this name is a seat the service listed besides this client's own name. */
+int matchmaking_name_is_filler(const wchar_t *name);
 /* Find Game: ready becomes true and publishing continues. */
 void matchmaking_find_game(void);
 /* 1 while this machine is publishing a queue */
@@ -142,8 +147,10 @@ void matchmaking_reset(void);
 void matchmaking_stop(void);
 /* this machine is hosting. publish the invite and keep the queue. */
 void matchmaking_commit_host(const char *playlist, unsigned short port);
-/* the private lobby has been joined. keep publishing and keep the port. */
+/* the private lobby has been joined by a search. keep publishing and keep the port. */
 void matchmaking_commit_join(void);
+/* a friend joined someone else's link. their queue stays cleared. */
+void matchmaking_joined_link(void);
 /* this machine opened its own party lobby. keep publishing, and publish
 the invite once it exists. */
 void matchmaking_commit_party(void);
@@ -162,10 +169,10 @@ int matchmaking_link(void);
 /* the port a matchmaking game is using, or 0 for an ordinary game */
 unsigned short matchmaking_game_port(void);
 void matchmaking_set_game_port(unsigned short port);
-/* 0 or 1 for a matchmaking team game, -1 otherwise. a party stays together.
-the first party is one team and the next party is the other. a later party
-joins the team with fewer players. with no parties, every human in this
-game shares team 0. */
+/* 0 or 1 for a matchmaking team game, -1 otherwise. parties[0] is the host's
+team, including a seat the service put there. parties[1] is the other team.
+a human in neither list joined the link and stays on the host's team. with
+no parties, every human in this game shares team 0. */
 int matchmaking_join_team(const wchar_t *name);
 /* 1 when this host should count the lobby down. a private party, and role
 wait, stay open. wait_seconds 0 starts now. a full lobby starts only after
