@@ -3050,6 +3050,42 @@ int p2p_invite_link(char *link, int size)
 	return hosting;
 }
 
+int p2p_invite_host(const char *text, unsigned char *host)
+{
+	unsigned char hash[P2P_KEY_HASH_SIZE];
+	unsigned char token[P2P_TOKEN_SIZE];
+	int parsed;
+
+	if (!text || !host)
+		return 0;
+	parsed = parse_invite(text, hash, token);
+	if (parsed > 0)
+		p2p_identifier_from_hash(hash, host);
+	return parsed > 0;
+}
+
+int p2p_hosting_port(unsigned short *port)
+{
+	int index;
+	int found = 0;
+
+	if (!p2p.running || !port)
+		return 0;
+	pthread_mutex_lock(&p2p_lock);
+	for (index = 0; index < MAXIMUM_GAME_PORTS; index++)
+	{
+		struct game_port const *entry = &p2p.game_ports[index];
+
+		if (!entry->stream || !entry->listening || !entry->port || entry->socket != p2p.hosting_socket)
+			continue;
+		*port = network_short(entry->port);
+		found = 1;
+		break;
+	}
+	pthread_mutex_unlock(&p2p_lock);
+	return found;
+}
+
 void p2p_set_game_player_counts(int count, int maximum)
 {
 	/* (only the game's server writes these: unchanged, it need not wait

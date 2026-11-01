@@ -3916,6 +3916,8 @@ void game_engine_end_game(void);
 int p2p_join_invite(char const *text);
 int p2p_join_listing(struct p2p_listing const *listing);
 int p2p_invite_link(char *link, int size);
+int p2p_invite_host(char const *text, unsigned char *host);
+int p2p_hosting_port(unsigned short *port);
 void p2p_set_hosting_allowed(int allowed);
 int p2p_peer_address(unsigned char const *identifier, unsigned long *address);
 int platform_clipboard_get(char *text, int size);
@@ -6068,7 +6070,7 @@ static void mm_paste_reset(void);
 static void mm_invite_with_port(char *out, int size, char const *invite, unsigned short port);
 static int mm_paste_poll(struct widget_instance *list);
 static void mm_party_focus(struct widget_instance *list, int party);
-static boolean lobby_paste_link(struct widget_instance *widget);
+static boolean lobby_paste_link(struct widget_instance *widget, boolean *widget_deleted);
 static boolean lobby_copy_link(struct widget_instance *widget);
 static void mm_ascii(wchar_t *text, int size, char const *ascii);
 
@@ -9274,11 +9276,13 @@ static int mm_switch_posts;
 /* a join link pasted on the party lobby, before Find Game */
 static int mm_paste_waiting;
 static int mm_paste_join;
+static int mm_paste_failed;
 static int mm_paste_posts;
 static int mm_paste_frames;
 static int mm_party_focus_set;
 static unsigned short mm_paste_port;
 static char mm_paste_invite[160];
+static char mm_paste_playlist[16];
 static unsigned long mm_link_copied_until;
 
 /* searching, joining, or already in the match: the offer's port stays */
@@ -9802,10 +9806,35 @@ static struct advertised_game *mm_peer_game(void)
 	return NULL;
 }
 
+/* the advertised game of the host this invite names. the port is how the
+join is carried. another lobby on that same port is not this one. */
+static struct advertised_game *mm_invited_game(char const *invite)
+{
+	void *client = global_network_game_client_get();
+	struct advertised_game *games = client ? network_game_client_get_available_games(client) : NULL;
+	unsigned char host[6];
+	short index;
+
+	if (!games || !p2p_invite_host(invite, host))
+		return NULL;
+	for (index = 0; index < MAXIMUM_ADVERTISED_GAMES; index++)
+	{
+		struct advertised_game *game = &games[index];
+
+		if (!network_game_client_advertised_game_is_valid(game) || !game->open)
+			continue;
+		if (memcmp(game->xnaddr + 2, host, sizeof(host)) != 0)
+			continue;
+		if (!game_from_peer(game))
+			continue;
+		return game;
+	}
+	return NULL;
+}
+
 /* the link this lobby hands out. a friend pastes it from their own party
-lobby. the port is this game's, after the invite, so a different gametype
-still reaches it. an older link has no port: the friend's own party port
-is used, which matches when both chose the same gametype. */
+lobby. the port is the one this host accepts the join on. the token names
+which lobby, because every game of one type can share a port. */
 static void mm_invite_with_port(char *out, int size, char const *invite, unsigned short port)
 {
 	if (!out || size <= 0)
@@ -9879,32 +9908,45 @@ static void mm_paste_reset(void)
 {
 	mm_paste_waiting = 0;
 	mm_paste_join = 0;
+	mm_paste_failed = 0;
 	mm_paste_posts = 0;
 	mm_paste_frames = 0;
 	mm_paste_port = 0;
 	mm_paste_invite[0] = 0;
+	mm_paste_playlist[0] = 0;
 	mm_party_focus_set = 0;
 }
 
-/* this party's join link, with its game port, once hosting has one */
+/* the port this host is accepting the join on. the catalog port is only
+the fallback before that socket is up. */
+static unsigned short mm_accept_port(void)
+{
+	unsigned short port = 0;
+
+	if (p2p_hosting_port(&port) && port > 0 && port < 65536 && port != 5150 && port != 5151)
+		return port;
+	return matchmaking_game_port();
+}
+
+/* this party's join link, with the port it accepts a join on, once hosting has one */
 static int mm_party_link_text(char *out, int size)
 {
 	struct matchmaking_offer offer;
 	char invite[160];
+	unsigned short port = mm_accept_port();
 
 	if (!out || size < 2)
 		return 0;
 	out[0] = 0;
 	if (matchmaking_offer_copy(&offer) && offer.invite[0])
 	{
-		mm_invite_with_port(out, size, offer.invite,
-			offer.port ? offer.port : matchmaking_game_port());
+		mm_invite_with_port(out, size, offer.invite, port);
 		return out[0] != 0;
 	}
 	invite[0] = 0;
 	if (!p2p_invite_link(invite, (int)sizeof(invite)) || !invite[0])
 		return 0;
-	mm_invite_with_port(out, size, invite, matchmaking_game_port());
+	mm_invite_with_port(out, size, invite, port);
 	return out[0] != 0;
 }
 
@@ -9986,12 +10028,87 @@ static void mm_party_focus(struct widget_instance *list, int show_paste)
 	mm_party_focus_set = 1;
 }
 
-/* 1 while this lobby is leaving for a pasted link. the join replaces the
-screen and has to run from a button, not from this draw. */
+/* the pasted join did not land. this party comes back, so the friend is
+not left without a lobby. */
+static void mm_paste_restore(struct widget_instance *widget)
+{
+	char playlist[16];
+	struct matchmaking_catalog catalog;
+	struct matchmaking_playlist row;
+	char name[12];
+	int count;
+	int index;
+	int found = 0;
+
+	snprintf(playlist, sizeof(playlist), "%s", mm_paste_playlist);
+	mm_paste_reset();
+	display_error_text_deferred(L"That lobby could not be reached.", NONE);
+	count = matchmaking_catalog(&catalog);
+	for (index = 0; index < count && index < 8; index++)
+	{
+		if (playlist[0] && !strcmp(catalog.playlist[index].id, playlist))
+		{
+			row = catalog.playlist[index];
+			found = 1;
+			break;
+		}
+	}
+	if (!found)
+		return;
+	mm_gamertag(name, (int)sizeof(name));
+	matchmaking_queue(playlist, name);
+	if (!matchmaking_queue_active())
+		return;
+	matchmaking_party_offer(&mm_menu.offer, &row);
+	if (!mm_begin_host(widget, NULL, 1))
+	{
+		matchmaking_reset();
+		dispose_global_network_game_client();
+		dispose_global_network_game_server();
+	}
+}
+
+/* the host named by the pasted link is on the wire. enter that lobby.
+the screen this runs from is replaced, so it runs from the paste button,
+not from the lobby's draw, and not from Find Game. */
+static boolean mm_paste_finish(struct widget_instance *widget, boolean *widget_deleted)
+{
+	struct advertised_game *game;
+	unsigned short port = mm_paste_port;
+	char invite[160];
+	char playlist[16];
+	boolean deleted = FALSE;
+
+	game = mm_invited_game(mm_paste_invite);
+	if (!game)
+		return TRUE;
+	snprintf(invite, sizeof(invite), "%s", mm_paste_invite);
+	snprintf(playlist, sizeof(playlist), "%s", mm_paste_playlist);
+	mm_paste_waiting = 0;
+	mm_paste_join = 0;
+	mm_paste_posts = 0;
+	mm_paste_playlist[0] = 0;
+	matchmaking_set_game_port(port);
+	matchmaking_joined_link();
+	snprintf(mm_joined_invite, sizeof(mm_joined_invite), "%s", invite);
+	if (!widget_deleted)
+		widget_deleted = &deleted;
+	if (!ui_widget_port_join(widget, game, LOBBY_NAME, widget_deleted))
+	{
+		snprintf(mm_paste_playlist, sizeof(mm_paste_playlist), "%s", playlist);
+		mm_paste_restore(widget);
+		return campaign_fail();
+	}
+	return TRUE;
+}
+
+/* 1 while this party lobby is waiting to enter the pasted host's lobby.
+the screen stays here. the search client is underneath it. */
 static int mm_paste_poll(struct widget_instance *list)
 {
 	struct advertised_game *game;
 	struct widget_instance *bar;
+	struct widget_instance *paste;
 	struct widget_instance *start;
 
 	if (!mm_paste_waiting)
@@ -10000,29 +10117,41 @@ static int mm_paste_poll(struct widget_instance *list)
 	/* a menu frame. 2700 is about 45 seconds at 60, inside the invite's own wait. */
 	if (mm_paste_frames > 2700)
 	{
-		mm_paste_reset();
-		matchmaking_set_game_port(0);
-		dispose_global_network_game_client();
-		dispose_global_network_game_server();
-		display_error_text_deferred(L"That lobby could not be reached.", NONE);
-		return 0;
+		struct widget_instance *bar = named(list, "lobby_button_bar", 0);
+		struct widget_instance *paste = named(list, "lobby_button_paste", 0);
+
+		/* the party comes back from a button, not from this draw. */
+		mm_paste_failed = 1;
+		mm_paste_posts++;
+		if (mm_paste_posts == 1 || mm_paste_posts % 20 == 0)
+		{
+			if (bar && paste)
+			{
+				bar->focused_child = paste;
+				paste->disabled = FALSE;
+				list->focused_child = bar;
+			}
+			ui_widget_port_post_button(controller_of(list), BUTTON_A);
+		}
+		return 1;
 	}
 	matchmaking_set_game_port(mm_paste_port);
-	bar = named(list, "lobby_button_bar", 0);
 	start = named(list, "lobby_button_start", 0);
 	if (start)
 		label_set(start, L"JOINING");
-	game = mm_peer_game();
+	game = mm_invited_game(mm_paste_invite);
 	if (!game)
 		return 1;
 	mm_paste_join = 1;
 	mm_paste_posts++;
 	if (mm_paste_posts == 1 || mm_paste_posts % 20 == 0)
 	{
-		if (bar && start)
+		bar = named(list, "lobby_button_bar", 0);
+		paste = named(list, "lobby_button_paste", 0);
+		if (bar && paste)
 		{
-			bar->focused_child = start;
-			start->disabled = FALSE;
+			bar->focused_child = paste;
+			paste->disabled = FALSE;
 			list->focused_child = bar;
 		}
 		ui_widget_port_post_button(controller_of(list), BUTTON_A);
@@ -10030,17 +10159,28 @@ static int mm_paste_poll(struct widget_instance *list)
 	return 1;
 }
 
-/* "port lobby paste link": leave this party and join the link on the clipboard. */
-static boolean lobby_paste_link(struct widget_instance *widget)
+/* "port lobby paste link": this press is the join. follow the invite's
+host into that lobby. the party screen stays up until that game is advertised. */
+static boolean lobby_paste_link(struct widget_instance *widget, boolean *widget_deleted)
 {
 	char raw[256];
 	char link[160];
+	char mine[160];
 	unsigned short port;
 	struct matchmaking_offer offer;
 	int have;
 
 	if (mm_paste_waiting)
+	{
+		if (mm_paste_failed)
+		{
+			mm_paste_restore(widget);
+			return campaign_fail();
+		}
+		if (mm_paste_join)
+			return mm_paste_finish(widget, widget_deleted);
 		return TRUE;
+	}
 	if (!mm_lobby_is_party())
 		return FALSE;
 	if (!platform_clipboard_get(raw, (int)sizeof(raw)) || !raw[0])
@@ -10055,14 +10195,14 @@ static boolean lobby_paste_link(struct widget_instance *widget)
 		return campaign_fail();
 	}
 	have = matchmaking_offer_copy(&offer);
-	if (have && offer.invite[0] && strstr(link, offer.invite))
+	mine[0] = 0;
+	if ((have && offer.invite[0] && strstr(link, offer.invite)) ||
+		(p2p_invite_link(mine, (int)sizeof(mine)) && mine[0] && strstr(link, mine)))
 	{
 		display_error_text_deferred(L"That is this party's link.", NONE);
 		return campaign_fail();
 	}
 	port = mm_link_port(link);
-	if (!port && have)
-		port = offer.port;
 	if (!port)
 	{
 		display_error_text_deferred(L"That link has no game port.", NONE);
@@ -10070,8 +10210,12 @@ static boolean lobby_paste_link(struct widget_instance *widget)
 	}
 	if (!multiplayer_player(controller_of(widget)))
 		return FALSE;
-	/* a friend still publishing stops. the host has already stopped, and
-	drops the lobby it was publishing. */
+	if (have && offer.playlist[0])
+		snprintf(mm_paste_playlist, sizeof(mm_paste_playlist), "%s", offer.playlist);
+	else
+		snprintf(mm_paste_playlist, sizeof(mm_paste_playlist), "%s", mm_menu.offer.playlist);
+	/* this friend leaves their own search. they are in the host's party
+	once the join lands, not in a second one. */
 	if (matchmaking_queue_active())
 		matchmaking_yield_to_invite(link);
 	else
@@ -10085,13 +10229,11 @@ static boolean lobby_paste_link(struct widget_instance *widget)
 	dispose_global_network_game_client();
 	dispose_global_network_game_server();
 	matchmaking_set_game_port(port);
+	/* the token reaches that host. the client listens here, on this screen.
+	it does not open the server browser. */
 	if (!p2p_join_invite(link) || !ui_widget_port_browse(widget, NULL, NULL))
 	{
-		mm_paste_reset();
-		matchmaking_set_game_port(0);
-		dispose_global_network_game_client();
-		dispose_global_network_game_server();
-		display_error_text_deferred(L"That lobby could not be reached.", NONE);
+		mm_paste_restore(widget);
 		return campaign_fail();
 	}
 	return TRUE;
@@ -10220,28 +10362,17 @@ int menu_matchmaking_rejoin(struct widget_instance *widget, boolean *widget_dele
 
 	if (mm_paste_waiting && widget)
 	{
-		unsigned short port = mm_paste_port;
-
-		/* the lobby is already leaving. a start press must not count down. */
+		/* Find Game does not finish a pasted join. a missed paste press
+		still brings this party back, or enters the host once that game
+		is advertised. */
+		if (mm_paste_failed)
+		{
+			mm_paste_restore(widget);
+			return 1;
+		}
 		if (!mm_paste_join)
 			return 1;
-		game = mm_peer_game();
-		if (!game)
-			return 1;
-		mm_paste_join = 0;
-		mm_paste_waiting = 0;
-		mm_paste_posts = 0;
-		matchmaking_set_game_port(port);
-		matchmaking_joined_link();
-		snprintf(mm_joined_invite, sizeof(mm_joined_invite), "%s", mm_paste_invite);
-		if (!widget_deleted)
-			widget_deleted = &deleted;
-		if (!ui_widget_port_join(widget, game, LOBBY_NAME, widget_deleted))
-		{
-			mm_paste_reset();
-			matchmaking_reset();
-			display_error_text_deferred(L"That lobby could not be reached.", NONE);
-		}
+		mm_paste_finish(widget, widget_deleted);
 		return 1;
 	}
 	if (!mm_switch_join || !widget)
@@ -11015,7 +11146,7 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port lobby paste link"))
 		{
-			return lobby_paste_link(widget);
+			return lobby_paste_link(widget, widget_deleted);
 		}
 		else if (!strcmp(name, "port lobby copy link"))
 		{
