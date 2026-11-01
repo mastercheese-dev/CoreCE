@@ -1312,6 +1312,12 @@ struct bot_state
 	real climb_top;
 	real_point3d climb_exit;
 	real_point3d climb_face;
+	/* the shaft they just left, and the deck the climb was aimed at. */
+	short shaft_ticks;
+	real shaft_yaw;
+	real shaft_top;
+	real_point3d shaft_face;
+	real_point3d shaft_land;
 };
 
 enum
@@ -1426,6 +1432,31 @@ static boolean bot_can_see(real_point3d const *from, real_point3d const *to, lon
 	return !collision_test_line(flags, from, to, ignore_object_index, &collision);
 }
 
+/* the chest and the head. A door frame can hide one of them. */
+static boolean bot_combat_visible(real_point3d const *eye, long ignore_object_index,
+	long target_unit_index)
+{
+	real_point3d chest;
+	real_point3d head;
+
+	object_get_origin(target_unit_index, &chest);
+	chest.z += 0.38f;
+	if (bot_can_see(eye, &chest, ignore_object_index))
+		return TRUE;
+	unit_get_camera_position(target_unit_index, &head);
+	return bot_can_see(eye, &head, ignore_object_index);
+}
+
+/* the line the gun actually fires. A clear head past a lintel is a look,
+not a burst into the frame. */
+static boolean bot_gun_clear(long unit_index, real_point3d const *aim)
+{
+	real_point3d camera;
+
+	unit_get_camera_position(unit_index, &camera);
+	return bot_can_see(&camera, aim, unit_index);
+}
+
 /* another storey. A step or a lip is not one: those stay a fight or a vault. */
 static boolean bot_different_floor(real_point3d const *feet, real_point3d const *point)
 {
@@ -1434,6 +1465,90 @@ static boolean bot_different_floor(real_point3d const *feet, real_point3d const 
 	if (dz < 0.0f)
 		dz = -dz;
 	return dz > 1.6f;
+}
+
+/* a living enemy. Teammates and an empty seat are not. */
+static boolean bot_enemy_living(long self_index, long other_index, boolean teams, long team)
+{
+	struct player_datum *other;
+	struct unit_datum *unit;
+
+	if (other_index == NONE || other_index == self_index)
+		return FALSE;
+	other = player_try_and_get(other_index);
+	if (!other || !network_player_is_valid(&other->network_player_data) ||
+		other->unit_index == NONE)
+		return FALSE;
+	if (teams && other->team_index == team)
+		return FALSE;
+	unit = unit_try_and_get(other->unit_index);
+	return unit != NULL && !TEST_FLAG(unit->object.damage_flags, _object_dead_bit);
+}
+
+/* who shot this bot in the last second, inside 20 units. An empty slot is
+NONE, and unsigned now-minus-NONE wraps into looking recent. */
+static boolean bot_damage_attacker(struct unit_datum const *unit, long self_index,
+	long team, boolean teams, real_point3d const *feet, long *who, real *flat_out)
+{
+	long now;
+	long index;
+	long best;
+	real best_flat;
+
+	best = NONE;
+	best_flat = 1.0e9f;
+	now = game_time_get();
+	for (index = 0; index < MAXIMUM_ATTACKERS_PER_UNIT; index++)
+	{
+		struct unit_attacker const *attacker;
+		struct player_datum *other;
+		real_point3d point;
+		real dx;
+		real dy;
+		real dz;
+		real flat;
+		long age;
+
+		attacker = &unit->unit.attackers[index];
+		if (attacker->game_time_stamp == (unsigned long)NONE)
+			continue;
+		if (attacker->player_index == NONE || attacker->player_index == self_index)
+			continue;
+		age = now - (long)attacker->game_time_stamp;
+		if (age < 0 || age > TICKS_PER_SECOND)
+			continue;
+		if (!bot_enemy_living(self_index, attacker->player_index, teams, team))
+			continue;
+		other = player_try_and_get(attacker->player_index);
+		object_get_origin(other->unit_index, &point);
+		dx = point.x - feet->x;
+		dy = point.y - feet->y;
+		dz = point.z - feet->z;
+		if (dx * dx + dy * dy + dz * dz > 20.0f * 20.0f)
+			continue;
+		flat = square_root(dx * dx + dy * dy);
+		if (flat < best_flat)
+		{
+			best_flat = flat;
+			best = attacker->player_index;
+		}
+	}
+	if (best == NONE)
+		return FALSE;
+	*who = best;
+	*flat_out = best_flat;
+	return TRUE;
+}
+
+/* the weapon trip yields inside this. Far guns notice a hallway. A sniper
+does not drop a trip across the map. */
+static real bot_fight_interrupt(real far_range)
+{
+	if (far_range < 12.0f)
+		far_range = 12.0f;
+	if (far_range > 18.0f)
+		far_range = 18.0f;
+	return far_range;
 }
 
 /* the ground the enemy is actually walking, so the route can leave this floor */
@@ -1722,6 +1837,17 @@ static real bot_slew(real current, real goal, real limit)
 	if (delta < -limit)
 		delta = -limit;
 	return current + delta;
+}
+
+/* a step behind them is a pivot. The normal look rate makes that a stand. */
+static real bot_about_face(real facing, real desired, real limit)
+{
+	real rel;
+
+	rel = bot_angle_delta(facing, desired);
+	if (cosine(rel) < 0.0f && limit < 0.22f)
+		return 0.22f;
+	return limit;
 }
 
 static real bot_yaw_between(real_point3d const *from, real_point3d const *to)
@@ -3465,6 +3591,38 @@ static boolean bot_throw_reaches(real_point3d const *from, real_point3d const *t
 	return collision.t >= 0.85f;
 }
 
+/* the blast reaches this bot. A wall in the way is where it goes off.
+the enemy at the end of the throw is not a wall. */
+static boolean bot_throw_hurts_self(real_point3d const *feet, real_point3d const *from,
+	real_point3d const *to, short type, long self_unit, long enemy_unit)
+{
+	struct collision_result collision;
+	unsigned long flags;
+	real_point3d landing;
+	real dx;
+	real dy;
+	real dz;
+
+	landing = *to;
+	flags = FLAG(_collision_test_front_facing_surfaces_bit) |
+		FLAG(_collision_test_back_facing_surfaces_bit) |
+		FLAG(_collision_test_structure_bit) |
+		FLAG(_collision_test_objects_bit) |
+		FLAG(_collision_test_objects_bipeds_bit) |
+		FLAG(_collision_test_objects_vehicles_bit) |
+		FLAG(_collision_test_objects_scenery_bit) |
+		FLAG(_collision_test_objects_machines_bit) |
+		FLAG(_collision_test_objects_controls_bit);
+	if (collision_test_line(flags, from, to, self_unit, &collision) &&
+		collision.t < 1.0f &&
+		!(enemy_unit != NONE && collision.object_index == enemy_unit))
+		landing = collision.point;
+	dx = landing.x - feet->x;
+	dy = landing.y - feet->y;
+	dz = landing.z - feet->z;
+	return square_root(dx * dx + dy * dy + dz * dz) <= bot_grenade_danger(type);
+}
+
 /* an open heading off the grenade. A wall straight away is not a path:
 the way out can be a side opening, and only then anything still open. */
 static boolean bot_grenade_escape_yaw(real_point3d const *feet, real away, long unit_index, real *yaw)
@@ -3501,6 +3659,18 @@ static boolean bot_grenade_escape_yaw(real_point3d const *feet, real away, long 
 			clear = bot_open_distance(feet, heading, unit_index);
 			if (clear < 1.6f || bot_heading_is_corner(feet, heading, unit_index))
 				continue;
+			if (bot_drop_ahead(feet, heading))
+				continue;
+			if (bot_nav_ready())
+			{
+				real_point3d step;
+
+				step.x = feet->x + cosine(heading) * 1.2f;
+				step.y = feet->y + sine(heading) * 1.2f;
+				step.z = feet->z;
+				if (!bot_nav_line(feet->x, feet->y, feet->z, step.x, step.y, step.z))
+					continue;
+			}
 			score = clear + away_part * 6.0f;
 			if (score > best_score)
 			{
@@ -3682,15 +3852,11 @@ static void bot_respect_grenades(struct bot_state *state, struct player_datum *p
 		away = state->facing_yaw + _pi;
 	else
 		away = bot_yaw_between(&nade, feet);
-	/* someone else's grenade is left from well outside the blast, while
-	it is still in the air */
+	/* someone else's grenade is left while it can still reach them.
+	farther than the blast is not a reason to run. */
 	flee = keep;
 	if (!own)
-	{
-		flee = keep + 6.0f;
-		if (flee < 8.0f)
-			flee = 8.0f;
-	}
+		flee = keep + 1.5f;
 	if (dist < flee)
 	{
 		bot_run_from_grenade(state, player, unit_index, feet, away, action);
@@ -3879,6 +4045,164 @@ static boolean bot_drop_ahead(real_point3d const *feet, real yaw)
 			return TRUE;
 	}
 	return FALSE;
+}
+
+/* the mesh stops about three quarters of a unit short and calls that
+arrived. A pickup is the body overlapping the item, so that last step
+is walked straight onto it. */
+static boolean bot_into_item(real_point3d const *feet, real_point3d const *item,
+	long unit_index, real *yaw_out)
+{
+	real dx;
+	real dy;
+	real dist;
+	real yaw;
+
+	dx = item->x - feet->x;
+	dy = item->y - feet->y;
+	dist = square_root(dx * dx + dy * dy);
+	if (dist <= 0.15f || dist > 1.60f)
+		return FALSE;
+	yaw = bot_yaw_between(feet, item);
+	if (bot_first_block(feet, yaw, 0.45f, 0.40f, unit_index) >= 0.0f)
+		return FALSE;
+	/* the last step is still a walk on the mesh. A floor somewhere
+	below the straight line is the fall off the platform. */
+	if (!bot_nav_line(feet->x, feet->y, feet->z, item->x, item->y, item->z))
+		return FALSE;
+	*yaw_out = yaw;
+	return TRUE;
+}
+
+/* from the ladder toward the deck the climb was aimed at. */
+static real bot_opening_away(struct bot_state const *state)
+{
+	real dx;
+	real dy;
+
+	dx = state->shaft_land.x - state->shaft_face.x;
+	dy = state->shaft_land.y - state->shaft_face.y;
+	if (dx * dx + dy * dy < 0.04f)
+		return state->shaft_yaw + _pi;
+	return arctangent(dy, dx);
+}
+
+/* far enough from the opening that the normal path can take over. */
+static boolean bot_clear_of_opening(struct bot_state const *state, real_point3d const *feet)
+{
+	real dx;
+	real dy;
+	real lx;
+	real ly;
+	real land;
+
+	dx = feet->x - state->shaft_face.x;
+	dy = feet->y - state->shaft_face.y;
+	if (dx * dx + dy * dy > 1.8f * 1.8f)
+		return TRUE;
+	lx = state->shaft_land.x - state->shaft_face.x;
+	ly = state->shaft_land.y - state->shaft_face.y;
+	land = lx * lx + ly * ly;
+	/* past the landing, on the deck beyond the hole */
+	if (land > 0.25f && dx * lx + dy * ly > land + 0.30f)
+		return TRUE;
+	return FALSE;
+}
+
+/* this step goes back toward the opening they just left. */
+static boolean bot_toward_opening(struct bot_state const *state, real_point3d const *feet, real yaw)
+{
+	real dx;
+	real dy;
+	real dist;
+
+	if (state->shaft_ticks <= 0 || bot_clear_of_opening(state, feet))
+		return FALSE;
+	if (feet->z < state->shaft_top - 1.4f || feet->z > state->shaft_top + 1.2f)
+		return FALSE;
+	dx = state->shaft_face.x - feet->x;
+	dy = state->shaft_face.y - feet->y;
+	dist = square_root(dx * dx + dy * dy);
+	if (dist < 0.05f)
+		return TRUE;
+	return (cosine(yaw) * dx + sine(yaw) * dy) / dist > 0.20f;
+}
+
+/* the same ladder, and they are already on its deck. */
+static boolean bot_shaft_ladder(struct bot_state const *state, real_point3d const *feet,
+	real face_x, real face_y)
+{
+	real dx;
+	real dy;
+
+	if (state->shaft_ticks <= 0)
+		return FALSE;
+	if (feet->z < state->shaft_top - 1.3f)
+		return FALSE;
+	dx = face_x - state->shaft_face.x;
+	dy = face_y - state->shaft_face.y;
+	return dx * dx + dy * dy < 1.2f * 1.2f;
+}
+
+/* a shot on another floor. Stay on this deck and aim. A step toward
+their feet is the circle under the ceiling. */
+static void bot_vertical_hold(real_point3d const *feet, real_point3d *goal)
+{
+	*goal = *feet;
+}
+
+/* off the ladder. Walk away from the opening, then the path resumes.
+A fight keeps the aim and only drops a step back into the hole. */
+static void bot_shaft_steer(struct bot_state *state, real_point3d const *feet,
+	real_point3d const *eye, long unit_index, long skill,
+	struct player_datum *player, struct player_action *action, boolean face_enemy)
+{
+	real ti;
+	real tj;
+	real motion;
+	real away;
+	real rel;
+	real_point3d look;
+
+	(void)unit_index;
+	if (state->shaft_ticks <= 0 || state->climb)
+		return;
+	if (feet->z < state->shaft_top - 1.4f || feet->z > state->shaft_top + 1.2f ||
+		bot_clear_of_opening(state, feet))
+	{
+		state->shaft_ticks = 0;
+		return;
+	}
+	ti = action->throttle.i;
+	tj = action->throttle.j;
+	motion = state->facing_yaw + arctangent(-tj, ti);
+	if (face_enemy || state->grenade_aim)
+	{
+		if (ti * ti + tj * tj >= 0.02f && bot_toward_opening(state, feet, motion))
+		{
+			action->throttle.i = 0.0f;
+			action->throttle.j = 0.0f;
+		}
+		return;
+	}
+	away = bot_opening_away(state);
+	state->facing_yaw = bot_slew(state->facing_yaw, away, bot_look_step(skill, FALSE));
+	state->facing_pitch = bot_slew(state->facing_pitch, 0.0f, bot_look_step(skill, TRUE));
+	look.x = eye->x + cosine(state->facing_yaw) * cosine(state->facing_pitch);
+	look.y = eye->y + sine(state->facing_yaw) * cosine(state->facing_pitch);
+	look.z = eye->z + sine(state->facing_pitch);
+	bot_face(player, action, eye, &look, 0.0f, 0.0f, NULL);
+	rel = bot_angle_delta(state->facing_yaw, away);
+	if (cosine(rel) < 0.35f)
+	{
+		action->throttle.i = 0.0f;
+		action->throttle.j = 0.0f;
+	}
+	else
+	{
+		action->throttle.i = cosine(rel);
+		action->throttle.j = -sine(rel);
+	}
 }
 
 /* the path already chose this step. A ramp is still under them as it
@@ -5835,6 +6159,8 @@ struct bot_item_goal
 {
 	boolean valid;
 	boolean present;
+	/* a powerup or a power weapon. The trip waits out the spawn. */
+	boolean power;
 	/* ticks until this spot comes back. 0 when the item is on the ground. */
 	long wait;
 	real_point3d point;
@@ -6826,6 +7152,9 @@ static void bot_step_aside(struct bot_state *state, long player_index,
 		real open;
 
 		yaw = state->facing_yaw + _pi * (real)index / 4.0f;
+		/* the hole reads as open. A chest ray does not see the drop. */
+		if (bot_drop_ahead(feet, yaw) || bot_toward_opening(state, feet, yaw))
+			continue;
 		open = bot_open_distance(feet, yaw, unit_index);
 		if ((player_index & 1) != (index & 1))
 			open += 0.35f;
@@ -6835,6 +7164,10 @@ static void bot_step_aside(struct bot_state *state, long player_index,
 			best_yaw = yaw;
 		}
 	}
+	if (best < 0.0f && state->shaft_ticks > 0)
+		best_yaw = bot_opening_away(state);
+	else if (best < 0.0f)
+		best_yaw = state->facing_yaw + _pi;
 	state->roam_goal.x = feet->x + cosine(best_yaw) * 6.0f;
 	state->roam_goal.y = feet->y + sine(best_yaw) * 6.0f;
 	state->roam_goal.z = feet->z;
@@ -7019,10 +7352,71 @@ static short bot_collection_power_gun(long collection_index)
 	return gun;
 }
 
+/* the two sniper ladders on prisoner. The lip in front of the face is a
+wall, and the rifle is the floor the climb has to come out on. */
+static boolean bot_prisoner_sniper_deck(real_point3d const *face, real top,
+	real_point3d *deck)
+{
+	struct scenario *scenario;
+	char const *name;
+	long index;
+	real best;
+	boolean found;
+
+	if (global_scenario_index == NONE)
+		return FALSE;
+	name = tag_get_name(global_scenario_index);
+	if (!name || (!strstr(name, "a50") && !strstr(name, "prisoner")))
+		return FALSE;
+	scenario = global_scenario_get();
+	if (!scenario)
+		return FALSE;
+	best = 4.5f * 4.5f;
+	found = FALSE;
+	for (index = 0; index < scenario->netgame_equipment.count; index++)
+	{
+		struct scenario_netgame_equipment *equipment;
+		real_point3d ground;
+		long surface;
+		real dx;
+		real dy;
+		real dz;
+		real dist2;
+
+		equipment = TAG_BLOCK_GET_ELEMENT(&scenario->netgame_equipment, index,
+			struct scenario_netgame_equipment);
+		if (!equipment || bot_collection_power_gun(equipment->item_collection.index) != 1)
+			continue;
+		dx = equipment->position.x - face->x;
+		dy = equipment->position.y - face->y;
+		dz = equipment->position.z - top;
+		if (dz < 0.0f)
+			dz = -dz;
+		if (dz > 2.0f)
+			continue;
+		dist2 = dx * dx + dy * dy;
+		if (dist2 > best)
+			continue;
+		if (bot_ground_at(&equipment->position, &ground, &surface) &&
+			ground.z > top - 1.4f && ground.z < top + 0.8f)
+			*deck = ground;
+		else
+		{
+			*deck = equipment->position;
+			deck->z = top;
+		}
+		best = dist2;
+		found = TRUE;
+	}
+	return found;
+}
+
 static boolean bot_has_power_gun(long unit_index, short which)
 {
 	short slot;
 
+	if (unit_index == NONE)
+		return FALSE;
 	for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
 	{
 		struct bot_weapon_kind const *kind;
@@ -7126,6 +7520,9 @@ static boolean bot_close_powerup(struct bot_state *state, struct player_datum *p
 			approach.x = feet->x + cosine(yaw) * (hit - 0.35f);
 			approach.y = feet->y + sine(yaw) * (hit - 0.35f);
 		}
+		/* off the platform. The mesh path around is the walk, not this step. */
+		if (!bot_nav_line(feet->x, feet->y, feet->z, approach.x, approach.y, approach.z))
+			continue;
 		best = dist2;
 		*walk = approach;
 		*item = point;
@@ -7179,8 +7576,8 @@ static void bot_take_power_prompt(struct player_datum *player, long unit_index,
 }
 
 /* a powerup or a power gun already in the room. The current trip stays.
-This is only the step onto it, and a body in arm's reach of an enemy
-keeps the fight. */
+This is only the step onto it. A fight keeps the aim and the trigger,
+and the body still walks onto the pickup. */
 static boolean bot_grab_nearby_power(struct bot_state *state, struct player_datum *player,
 	long unit_index, real_point3d const *feet, boolean enemy_close, real enemy_dist,
 	real_point3d *walk)
@@ -7266,6 +7663,7 @@ static void bot_assign_items(void)
 		short kind;
 		/* 1 sniper, 2 rocket. Either is a trip even with a pistol in hand. */
 		short power_gun;
+		boolean power;
 	} spots[48];
 	struct
 	{
@@ -7364,13 +7762,14 @@ static void bot_assign_items(void)
 		spots[spot_count].present = present;
 		spots[spot_count].kind = kind;
 		spots[spot_count].power_gun = gun;
+		spots[spot_count].power = kind != 0 || gun != 0;
 		spots[spot_count].wait = present ? 0 : period - (now % period);
 		if (spots[spot_count].wait == period)
 			spots[spot_count].wait = 0;
 		/* a spawn that is not back yet, and not due soon, is not a trip.
-		a sniper, a rocket, or a powerup is worth the walk a bit earlier. */
+		a power pad stays on the list longer so a fight can still return to it. */
 		{
-			long lead = (gun != 0 || kind != 0) ? 25 : 10;
+			long lead = spots[spot_count].power ? 45 : 10;
 
 			if (!present && spots[spot_count].wait > lead * TICKS_PER_SECOND)
 				continue;
@@ -7416,8 +7815,10 @@ static void bot_assign_items(void)
 		bots[bot_count].has_camo = player->powerup_durations[_player_powerup_active_camouflage] > 0;
 		bots[bot_count].hurt = unit->object.body_vitality < 0.99f;
 		bots[bot_count].unit = player->unit_index;
-		/* a trip already underway is not replaced by this tick's best pad. */
-		bot_taken[bot_count] = bot_states[round].job != _bot_job_none;
+		/* a roam can be dropped for a power pad. A fetch, a ladder, or
+		an assist already has a place to be. */
+		bot_taken[bot_count] = bot_states[round].job != _bot_job_none &&
+			bot_states[round].job != _bot_job_travel;
 		bot_count++;
 	}
 	for (round = 0; round < spot_count; round++)
@@ -7446,6 +7847,9 @@ static void bot_assign_items(void)
 				long interest;
 
 				if (spot_taken[spot_index])
+					continue;
+				if (bot_states[bots[bot_index].player].job == _bot_job_travel &&
+					!spots[spot_index].power)
 					continue;
 				if (bot_states[bots[bot_index].player].avoid_ticks > 0)
 				{
@@ -7478,10 +7882,10 @@ static void bot_assign_items(void)
 				stays up. The pickup is taken when they are on its floor. */
 				if (spots[spot_index].point.z < bots[bot_index].feet.z - 2.0f)
 					continue;
-				/* a pistol can wait while they shoot. A sniper, a rocket,
-				or a powerup is the trip, including across the map. */
-				if (bots[bot_index].busy && spots[spot_index].kind == 0 &&
-					spots[spot_index].power_gun == 0)
+				/* a pistol can wait while they shoot. A power pad is a trip
+				once the walk can arrive a few seconds early. A close
+				fight is not left for a pad on the other side of the map. */
+				if (bots[bot_index].busy && !spots[spot_index].power)
 				{
 					if (!spots[spot_index].present &&
 						spots[spot_index].wait > 4 * TICKS_PER_SECOND)
@@ -7489,6 +7893,9 @@ static void bot_assign_items(void)
 					if (dx * dx + dy * dy > 18.0f * 18.0f)
 						continue;
 				}
+				if (bots[bot_index].busy && spots[spot_index].power &&
+					dx * dx + dy * dy > 18.0f * 18.0f)
+					continue;
 				interest = spots[spot_index].worth;
 				/* already holding it. Another trip to that pad is the camp. */
 				if (spots[spot_index].kind == 1 && bots[bot_index].has_os)
@@ -7506,6 +7913,10 @@ static void bot_assign_items(void)
 				if (interest < 1)
 					continue;
 				dist = square_root(dx * dx + dy * dy);
+				if (spots[spot_index].power && !spots[spot_index].present &&
+					(real)spots[spot_index].wait / (real)TICKS_PER_SECOND >
+						dist / 2.0f + 4.0f)
+					continue;
 				value = (real)interest * 6.0f - dist - (real)spots[spot_index].wait / (real)TICKS_PER_SECOND * 2.0f;
 				if (spots[spot_index].present)
 					value += 8.0f;
@@ -7525,8 +7936,12 @@ static void bot_assign_items(void)
 			break;
 		bot_taken[best_bot] = TRUE;
 		spot_taken[best_spot] = TRUE;
+		if (spots[best_spot].power &&
+			bot_states[bots[best_bot].player].job == _bot_job_travel)
+			bot_job_clear(&bot_states[bots[best_bot].player]);
 		bot_item_goals[bots[best_bot].player].valid = TRUE;
 		bot_item_goals[bots[best_bot].player].present = spots[best_spot].present;
+		bot_item_goals[bots[best_bot].player].power = spots[best_spot].power;
 		bot_item_goals[bots[best_bot].player].wait = spots[best_spot].wait;
 		bot_item_goals[bots[best_bot].player].point = spots[best_spot].point;
 	}
@@ -7557,8 +7972,39 @@ static void bot_assign_items(void)
 			bot_item_goals[round].valid = FALSE;
 			continue;
 		}
+		/* they already took it. The next spawn is a new trip, not a camp. */
+		if (spots[nearest].power)
+		{
+			struct player_datum *holder;
+			struct unit_datum *held;
+
+			holder = player_try_and_get(round);
+			held = holder ? unit_try_and_get(holder->unit_index) : NULL;
+			if (held && spots[nearest].kind == 1 &&
+				(held->object.shield_vitality > 1.05f ||
+					TEST_FLAG(held->object.damage_flags, _object_shield_over_charging_bit)))
+				nearest = NONE;
+			else if (holder && spots[nearest].kind == 2 &&
+				holder->powerup_durations[_player_powerup_active_camouflage] > 0)
+				nearest = NONE;
+			else if (held && spots[nearest].kind == 3 &&
+				held->object.body_vitality >= 0.99f)
+				nearest = NONE;
+			else if (holder && holder->unit_index != NONE &&
+				spots[nearest].power_gun != 0 &&
+				bot_has_power_gun(holder->unit_index, spots[nearest].power_gun))
+				nearest = NONE;
+			if (nearest == NONE)
+			{
+				bot_item_goals[round].valid = FALSE;
+				if (bot_states[round].job == _bot_job_fetch)
+					bot_job_clear(&bot_states[round]);
+				continue;
+			}
+		}
 		bot_item_goals[round].valid = TRUE;
 		bot_item_goals[round].present = spots[nearest].present;
+		bot_item_goals[round].power = spots[nearest].power;
 		bot_item_goals[round].wait = spots[nearest].wait;
 		bot_item_goals[round].point = spots[nearest].point;
 	}
@@ -7609,6 +8055,7 @@ static void update_server_generate_bot_actions(
 		long old_target;
 		long threat_index;
 		real seen_distance;
+		real seen_flat;
 		real threat_distance;
 		real committed_distance;
 		boolean committed_visible;
@@ -7622,9 +8069,13 @@ static void update_server_generate_bot_actions(
 		long style;
 		long target_player_index;
 		boolean planted;
+		boolean face_enemy;
+		boolean shot_at;
 
 		planted = FALSE;
 		holding = FALSE;
+		face_enemy = FALSE;
+		shot_at = FALSE;
 
 		player = player_try_and_get(player_index);
 		if (!player || !network_player_is_valid(&player->network_player_data))
@@ -7723,6 +8174,19 @@ static void update_server_generate_bot_actions(
 		object_get_origin(player->unit_index, &feet);
 		eye = feet;
 		eye.z += 0.62f;
+		if (state->shaft_ticks > 0)
+		{
+			real shaft_dx = state->shaft_face.x - feet.x;
+			real shaft_dy = state->shaft_face.y - feet.y;
+			real shaft_dz = state->shaft_top - feet.z;
+
+			if (shaft_dx * shaft_dx + shaft_dy * shaft_dy > 1.8f * 1.8f ||
+				shaft_dz * shaft_dz > 9.0f ||
+				bot_clear_of_opening(state, &feet))
+				state->shaft_ticks = 0;
+			else
+				state->shaft_ticks--;
+		}
 		moved = distance3d(&state->last_position, &feet);
 		state->last_position = feet;
 		/* a teleporter drops them across the map. The route and the
@@ -7757,6 +8221,7 @@ static void update_server_generate_bot_actions(
 			called = bot_called_enemy(player_index, player->team_index, TRUE,
 				&feet, &called_index, &called_point);
 		seen_distance = 1.0e9f;
+		seen_flat = 1.0e9f;
 		threat_index = NONE;
 		threat_distance = 1.0e9f;
 		committed_visible = FALSE;
@@ -7800,12 +8265,10 @@ static void update_server_generate_bot_actions(
 			if (target_player_index == state->target_index)
 				score_dist -= 3.0f;
 			separation = distance3d(&eye, &point_eye);
-			seen = bot_can_see(&eye, &point_eye, player->unit_index);
+			seen = bot_combat_visible(&eye, player->unit_index, target_player->unit_index);
 			heard = bot_know_hidden_enemies && bot_within_hearing(&feet, &point);
-			/* their floor is not a fight. A sight line on this floor is.
-			tracking the body through the ceiling is how the circle starts. */
-			if (bot_different_floor(&feet, &point))
-				seen = FALSE;
+			/* a clear ray on another floor is a shot from this deck.
+			the ring around their column is what the walk refuses. */
 			if (seen)
 			{
 				if (target_player_index == state->target_index)
@@ -7822,6 +8285,7 @@ static void update_server_generate_bot_actions(
 				if (seen_index == NONE || score_dist <= seen_distance)
 				{
 					seen_distance = score_dist;
+					seen_flat = flat;
 					seen_index = target_player_index;
 				}
 			}
@@ -7835,13 +8299,32 @@ static void update_server_generate_bot_actions(
 			}
 		}
 
-		/* a body this bot can see wins. Otherwise a teammate's sight is
-		the location, and only while that sight still holds. One missed
-		ray is not the end of it. */
+		/* a body this bot can see wins. A closer shooter wins over a
+		farther one. Otherwise a teammate's sight is the location.
+		One missed ray keeps the current enemy through the forget. */
+		{
+			long attacker;
+			real attacker_flat;
+			boolean teams_on;
+
+			teams_on = variant && variant->universal_variant.teams;
+			if (bot_damage_attacker(unit, player_index, player->team_index, teams_on,
+					&feet, &attacker, &attacker_flat) &&
+				(seen_index == NONE || attacker_flat + 0.4f < seen_flat))
+			{
+				seen_index = attacker;
+				seen_flat = attacker_flat;
+				shot_at = TRUE;
+			}
+		}
 		if (seen_index != NONE)
 			state->call_hold = 0;
 		else if (called)
 			seen_index = called_index;
+		else if (state->target_index != NONE && state->unknown_ticks < 60 &&
+			bot_enemy_living(player_index, state->target_index,
+				variant && variant->universal_variant.teams, player->team_index))
+			seen_index = state->target_index;
 		else if (state->call_hold > 0 && state->target_index != NONE)
 		{
 			seen_index = state->target_index;
@@ -7892,7 +8375,6 @@ static void update_server_generate_bot_actions(
 			struct player_datum *target_player;
 			struct unit_datum *target_unit;
 			real_point3d point;
-			real_point3d point_eye;
 
 			target_player = player_try_and_get(engage);
 			target_unit = NULL;
@@ -7909,14 +8391,13 @@ static void update_server_generate_bot_actions(
 			else
 			{
 				object_get_origin(target_player->unit_index, &point);
-				point_eye = point;
-				point_eye.z += 0.62f;
 				/* the chest is just under their camera. A fixed height
 				above the feet aims under a crouch and over a stand. */
 				unit_get_camera_position(target_player->unit_index, &aim_point);
 				aim_point.z -= 0.12f;
 				distance = distance3d(&eye, &aim_point);
-				visible = bot_can_see(&eye, &point_eye, player->unit_index);
+				visible = bot_combat_visible(&eye, player->unit_index,
+					target_player->unit_index);
 				/* the ray that arms a reaction is every five ticks. Losing
 				them still counts every tick, up to 22, which is what makes
 				the next look wait. */
@@ -7965,6 +8446,9 @@ static void update_server_generate_bot_actions(
 							state->last_seen_valid = TRUE;
 						}
 						state->unknown_ticks++;
+						/* still being shot. The forget waits until it stops. */
+						if (shot_at && engage == state->target_index)
+							state->unknown_ticks = 0;
 						if (state->unknown_ticks > 59)
 						{
 							/* forgotten. Walk to where they were, and only
@@ -8080,18 +8564,38 @@ static void update_server_generate_bot_actions(
 				real dy = bot_item_goals[player_index].point.y - feet.y;
 				real item_dist = square_root(dx * dx + dy * dy);
 
-				/* an enemy in arm's reach, and the pickup is the long way.
-				anything else, including a powerup across the fight, is a trip.
-				a metre short is not on the pickup. Once it is gone, or it
-				is not back yet, another lap of the marker is the camp. */
-				if (visible && distance < 4.0f && distance + 0.5f < item_dist)
+				/* a fight in range leaves an ordinary gun where it is. A powerup
+				or a power weapon is still walked onto, and the shot stays
+				on the enemy. Farther than that, the trip continues.
+				a metre short is not on the pickup. An empty pad is walked
+				onto, then waited on. Stopping a hall away is the stand.
+				Arriving a long time early is not a reason to ban it. */
+				if (visible && distance <= bot_fight_interrupt(far_range) &&
+					!(bot_item_goals[player_index].power &&
+						bot_item_goals[player_index].present))
 					;
 				else if (!bot_item_goals[player_index].present && item_dist < 6.0f)
 				{
-					if (bot_item_goals[player_index].wait > 4 * TICKS_PER_SECOND)
+					if (bot_item_goals[player_index].power &&
+						bot_item_goals[player_index].wait <= 12 * TICKS_PER_SECOND)
+					{
+						if (item_dist <= 1.0f)
+							waiting = TRUE;
+						else
+							fetching = TRUE;
+					}
+					else if (bot_item_goals[player_index].power)
+					{
+						bot_item_goals[player_index].valid = FALSE;
+						if (state->job == _bot_job_fetch)
+							bot_job_clear(state);
+					}
+					else if (bot_item_goals[player_index].wait > 4 * TICKS_PER_SECOND)
 						bot_give_up(state, player_index, &feet, FALSE);
-					else
+					else if (item_dist <= 1.0f)
 						waiting = TRUE;
+					else
+						fetching = TRUE;
 				}
 				else if (item_dist > 0.4f)
 					fetching = TRUE;
@@ -8145,8 +8649,18 @@ static void update_server_generate_bot_actions(
 			}
 			else if (!on_item)
 				state->look_timer = 0;
-			/* a pad that does not produce the item is not a place to live */
-			if (waiting && state->wait_ticks > 4 * TICKS_PER_SECOND)
+			/* a pad that does not produce the item is not a place to live.
+			a power pad is allowed the rest of its short wait. */
+			if (waiting && player_index >= 0 && player_index < MAXIMUM_NUMBER_OF_PLAYERS &&
+				bot_item_goals[player_index].power)
+			{
+				if (state->wait_ticks > 12 * TICKS_PER_SECOND)
+				{
+					bot_give_up(state, player_index, &feet, FALSE);
+					waiting = FALSE;
+				}
+			}
+			else if (waiting && state->wait_ticks > 4 * TICKS_PER_SECOND)
 			{
 				bot_give_up(state, player_index, &feet, FALSE);
 				waiting = FALSE;
@@ -8554,6 +9068,8 @@ static void update_server_generate_bot_actions(
 				}
 				if (fetching)
 					move_goal = bot_item_goals[player_index].point;
+				else if (bot_different_floor(&feet, &aim_point))
+					bot_vertical_hold(&feet, &move_goal);
 				else
 					bot_fight_goal(state, &feet, &aim_point, near_range, far_range,
 						player->unit_index, skill, &move_goal);
@@ -8584,25 +9100,25 @@ static void update_server_generate_bot_actions(
 			else
 				state->pad_valid = FALSE;
 
-			/* a powerup or a power gun in this room. The trip they were on
-			waits while they step onto it. A fight in arm's reach does not. */
+			/* a powerup or a power gun in this room. The body steps onto it
+			while a fight keeps the aim. The stick is the walk, not the look. */
 			if (!waiting && unit->object.parent_object_index == NONE && !state->climb)
 			{
 				real_point3d walk;
 
 				if (bot_grab_nearby_power(state, player, player->unit_index, &feet,
-						visible && distance < 4.0f, distance, &walk))
+						FALSE, distance, &walk))
 				{
 					move_goal = walk;
 					state->route_floor = FALSE;
-					goal_yaw = bot_yaw_between(&feet, &move_goal);
-					combat_look = FALSE;
+					if (!(combat_look && visible))
+						goal_yaw = bot_yaw_between(&feet, &move_goal);
 				}
 			}
 
 			limit = bot_look_step(skill, FALSE);
 			pitch_limit = bot_look_step(skill, TRUE);
-			if (combat_look && visible && !fetching)
+			if (combat_look && visible)
 			{
 				goal_yaw = combat_yaw;
 				goal_pitch = combat_pitch;
@@ -8622,10 +9138,15 @@ static void update_server_generate_bot_actions(
 						state->stuck_ticks > TICKS_PER_SECOND / 2 ? 1 : 0, &nav_step);
 				if (steered && nav_step.switched)
 					state->stuck_ticks = 0;
-				if (steered && nav_step.ladder)
+				if (state->climb && !state->climb_up)
+					state->climb = FALSE;
+				if (steered && nav_step.ladder && !nav_step.up)
+					steered = FALSE;
+				if (steered && nav_step.ladder && nav_step.up &&
+					!bot_shaft_ladder(state, &feet, nav_step.face_x, nav_step.face_y))
 				{
 					state->climb = TRUE;
-					state->climb_up = nav_step.up ? TRUE : FALSE;
+					state->climb_up = TRUE;
 					state->climb_yaw = nav_step.yaw;
 					state->climb_top = nav_step.top;
 					state->climb_exit.x = nav_step.land_x;
@@ -8708,6 +9229,8 @@ static void update_server_generate_bot_actions(
 						boolean side_exit;
 						boolean at_ladder;
 						boolean into_face;
+						boolean sniper_step;
+						real_point3d sniper_deck;
 						real seen_yaw;
 
 						/* a ray from the back is about half a turn off.
@@ -8774,12 +9297,27 @@ static void update_server_generate_bot_actions(
 						turn_at = state->climb_top;
 						if (side_exit && deck + 0.15f < turn_at)
 							turn_at = deck + 0.40f;
+						/* prisoner sniper tops only. The shared dismount
+						stops on the lip. This step is the rifle's floor. */
+						sniper_step = state->climb_up &&
+							bot_prisoner_sniper_deck(&state->climb_face, state->climb_top,
+								&sniper_deck) &&
+							feet.z >= sniper_deck.z - 0.40f;
+						if (sniper_step)
+							state->climb_exit = sniper_deck;
 						face_yaw = state->climb_yaw;
 						pitch = state->climb_up ? 0.95f : -0.90f;
 						dismount = FALSE;
 						push = 0.0f;
 						slide = 0.0f;
-						if (state->climb_up && !side_exit && feet.z > deck - 0.50f &&
+						if (sniper_step)
+						{
+							face_yaw = bot_yaw_between(&feet, &sniper_deck);
+							pitch = 0.0f;
+							dismount = TRUE;
+							push = 1.0f;
+						}
+						else if (state->climb_up && !side_exit && feet.z > deck - 0.50f &&
 							(on || feet.z > state->climb_top - 0.90f))
 						{
 							real off;
@@ -8801,37 +9339,13 @@ static void update_server_generate_bot_actions(
 						}
 						else if (state->climb_up && side_exit && feet.z >= turn_at - 0.15f)
 						{
-							real edx;
-							real edy;
-							real across_exit;
-
-							/* the opening is beside the shaft. Turning
-							toward it while still on the rungs lets go,
-							and they fall. Slide along the face first. */
-							edx = state->climb_exit.x - feet.x;
-							edy = state->climb_exit.y - feet.y;
-							across_exit = -sine(state->climb_yaw) * edx +
-								cosine(state->climb_yaw) * edy;
-							if (across_exit < 0.0f)
-								across_exit = -across_exit;
-							if (across_exit > 0.55f)
-							{
-								face_yaw = state->climb_yaw;
-								pitch = 0.0f;
-								dismount = TRUE;
-								push = 0.35f;
-								/* positive strafe is to the left of the look. */
-								slide = (-sine(state->climb_yaw) * edx +
-									cosine(state->climb_yaw) * edy) > 0.0f ?
-									0.85f : -0.85f;
-							}
-							else
-							{
-								face_yaw = exit_yaw;
-								pitch = 0.0f;
-								dismount = TRUE;
-								push = 1.0f;
-							}
+							/* at the lip. Turn toward the landing and step
+							off. The step waits until the body is around,
+							so the look has one target. */
+							face_yaw = exit_yaw;
+							pitch = 0.0f;
+							dismount = TRUE;
+							push = 1.0f;
 						}
 						else if (on)
 						{
@@ -8884,7 +9398,9 @@ static void update_server_generate_bot_actions(
 							push = 1.0f;
 						}
 						yaw_rate = 0.40f;
-						if (on && !dismount)
+						if (sniper_step)
+							yaw_rate = 0.20f;
+						else if (on && !dismount)
 							yaw_rate = 0.60f;
 						else if (dismount && side_exit && slide == 0.0f)
 							yaw_rate = 0.11f;
@@ -8935,16 +9451,36 @@ static void update_server_generate_bot_actions(
 							if (edz < 0.0f)
 								edz = -edz;
 							done = FALSE;
-							/* a side opening is finished on the deck, not
-							on the rim. Height alone is the hole, and the
-							next step then walks around it and they fall.
-							a deck straight off the face still ends as before. */
-							if (state->climb_up && dismount && grounded_floor && !side_exit &&
+							/* on the sniper floor, and off the hole. The
+							rifle is the rest of the walk. */
+							if (sniper_step && grounded_floor)
+							{
+								real sdx;
+								real sdy;
+								real sdz;
+								real fdx;
+								real fdy;
+
+								sdx = sniper_deck.x - feet.x;
+								sdy = sniper_deck.y - feet.y;
+								sdz = sniper_deck.z - feet.z;
+								if (sdz < 0.0f)
+									sdz = -sdz;
+								fdx = feet.x - state->climb_face.x;
+								fdy = feet.y - state->climb_face.y;
+								if (sdz < 0.60f &&
+									(sdx * sdx + sdy * sdy < 1.30f * 1.30f ||
+										fdx * fdx + fdy * fdy > 1.05f * 1.05f))
+									done = TRUE;
+							}
+							/* on the lip is enough to let go. Holding the
+							push until the far deck is how they walk the hole. */
+							else if (state->climb_up && dismount && grounded_floor && !side_exit &&
 								(edx * edx + edy * edy < 1.8f * 1.8f ||
 									feet.z >= state->climb_top - 0.25f))
 								done = TRUE;
 							else if (state->climb_up && dismount && grounded_floor && side_exit &&
-								edz < 0.55f && edx * edx + edy * edy < 0.90f * 0.90f)
+								edz < 0.70f && edx * edx + edy * edy < 1.50f * 1.50f)
 								done = TRUE;
 							else if (!state->climb_up && grounded_floor &&
 								edx * edx + edy * edy < 1.8f * 1.8f && edz < 1.1f)
@@ -8953,7 +9489,18 @@ static void update_server_generate_bot_actions(
 								!at_ladder)
 								done = TRUE;
 							if (done)
+							{
+								if (state->climb_up && grounded_floor &&
+									feet.z > state->climb_top - 1.3f)
+								{
+									state->shaft_face = state->climb_face;
+									state->shaft_yaw = state->climb_yaw;
+									state->shaft_top = state->climb_top;
+									state->shaft_land = state->climb_exit;
+									state->shaft_ticks = 2 * TICKS_PER_SECOND;
+								}
 								state->climb = FALSE;
+							}
 						}
 					}
 					walking = TRUE;
@@ -8970,8 +9517,34 @@ static void update_server_generate_bot_actions(
 					nav_point.z = nav_step.z;
 					state->nav_steer = TRUE;
 					yaw = bot_yaw_between(&feet, &nav_point);
-					if (!(combat_look && visible && !fetching))
+					if (state->shaft_ticks > 0 && !bot_clear_of_opening(state, &feet))
+						yaw = bot_opening_away(state);
+					else
+					{
+						real blocked;
+
+						/* the corner is past a wall. Turn off it now,
+						instead of running into it. */
+						blocked = bot_first_block(&feet, yaw, 0.45f, 1.05f,
+							player->unit_index);
+						if (blocked >= 0.0f)
+							yaw = bot_ease_wall(&feet, yaw, player->unit_index);
+					}
+					/* the shot stays where it is. Forward, back, and strafe
+					are the step, so the body can walk onto a pickup sideways. */
+					if (!(combat_look && visible))
+					{
+						real nose;
+
 						goal_yaw = yaw;
+						limit = bot_about_face(state->facing_yaw, goal_yaw, limit);
+						nose = bot_first_block(&feet, state->facing_yaw, 0.45f, 0.70f,
+							player->unit_index);
+						/* off the wall in one turn, not after they have
+						been pushing on it. */
+						if (nose >= 0.0f && nose <= 0.50f && limit < 0.22f)
+							limit = 0.22f;
+					}
 					state->facing_yaw = bot_slew(state->facing_yaw, goal_yaw, limit);
 					state->facing_pitch = bot_slew(state->facing_pitch, goal_pitch, pitch_limit);
 					look.x = eye.x + cosine(state->facing_yaw) * cosine(state->facing_pitch);
@@ -8988,6 +9561,8 @@ static void update_server_generate_bot_actions(
 					}
 					else
 					{
+						real nose;
+
 						action.throttle.i = ahead;
 						action.throttle.j = -sine(rel);
 						if (action.throttle.i > 1.0f)
@@ -8998,21 +9573,81 @@ static void update_server_generate_bot_actions(
 							action.throttle.j = 1.0f;
 						else if (action.throttle.j < -1.0f)
 							action.throttle.j = -1.0f;
+						/* already in the wall. Turning off it is the step.
+						another shove is how they stay there. */
+						nose = bot_first_block(&feet, state->facing_yaw, 0.45f, 0.70f,
+							player->unit_index);
+						if (nose >= 0.0f && nose <= 0.50f && action.throttle.i > 0.0f)
+							action.throttle.i = 0.0f;
 					}
 					walking = TRUE;
 				}
 				else
 				{
+					real_point3d const *pickup = NULL;
+					real into_yaw;
+					boolean into_item;
+
+					/* close enough that the mesh has stopped, still short of
+					the overlap that picks the item up. */
+					if (!waiting && unit->object.parent_object_index == NONE &&
+						state->shaft_ticks <= 0)
+					{
+						if (state->job_grab > 0)
+							pickup = &state->job_grab_point;
+						else if (fetching &&
+							player_index >= 0 && player_index < MAXIMUM_NUMBER_OF_PLAYERS &&
+							bot_item_goals[player_index].valid)
+							pickup = &bot_item_goals[player_index].point;
+					}
+					into_item = pickup &&
+						bot_into_item(&feet, pickup, player->unit_index, &into_yaw);
+					if (into_item && !(combat_look && visible))
+					{
+						goal_yaw = into_yaw;
+						limit = bot_about_face(state->facing_yaw, goal_yaw, limit);
+					}
 					state->facing_yaw = bot_slew(state->facing_yaw, goal_yaw, limit);
 					state->facing_pitch = bot_slew(state->facing_pitch, goal_pitch, pitch_limit);
 					look.x = eye.x + cosine(state->facing_yaw) * cosine(state->facing_pitch);
 					look.y = eye.y + sine(state->facing_yaw) * cosine(state->facing_pitch);
 					look.z = eye.z + sine(state->facing_pitch);
 					bot_face(player, &action, &eye, &look, 0.0f, 0.0f, &aim);
-					if (state->unstick_ticks > 0)
+					if (into_item)
 					{
-						action.throttle.i = 1.0f;
-						action.throttle.j = 0.0f;
+						real rel = bot_angle_delta(state->facing_yaw, into_yaw);
+						real ahead = cosine(rel);
+
+						if (!(combat_look && visible) && ahead < 0.0f)
+						{
+							action.throttle.i = 0.0f;
+							action.throttle.j = 0.0f;
+						}
+						else
+						{
+							action.throttle.i = ahead;
+							action.throttle.j = -sine(rel);
+						}
+						walking = TRUE;
+					}
+					else if (state->unstick_ticks > 0)
+					{
+						real_point3d step;
+
+						step.x = feet.x + cosine(state->facing_yaw) * 0.80f;
+						step.y = feet.y + sine(state->facing_yaw) * 0.80f;
+						step.z = feet.z;
+						if (bot_nav_line(feet.x, feet.y, feet.z, step.x, step.y, step.z))
+						{
+							action.throttle.i = 1.0f;
+							action.throttle.j = 0.0f;
+						}
+						else
+						{
+							action.throttle.i = 0.0f;
+							action.throttle.j = 0.0f;
+							state->unstick_ticks = 0;
+						}
 					}
 					else
 					{
@@ -9041,6 +9676,7 @@ static void update_server_generate_bot_actions(
 				state->fetch_fail = 0;
 			}
 			planted = waiting;
+			face_enemy = combat_look && visible;
 		}
 		if (engage != NONE)
 		{
@@ -9050,14 +9686,16 @@ static void update_server_generate_bot_actions(
 			short grenade;
 
 			/* the cone widens while the trigger was already down.
-			the gun they are holding, not the facing they asked for. */
+			the gun they are holding, not the facing they asked for.
+			the camera ray has to be open. A body past a lintel is not. */
 			widen = state->trigger_down;
 			{
 				real_point3d camera;
 
 				unit_get_camera_position(player->unit_index, &camera);
-				on_target = visible && bot_on_target(&camera, &aim_point,
-					&unit->unit.aiming_vector, skill, widen);
+				on_target = visible && bot_gun_clear(player->unit_index, &aim_point) &&
+					bot_on_target(&camera, &aim_point,
+						&unit->unit.aiming_vector, skill, widen);
 			}
 			shoot = FALSE;
 
@@ -9143,14 +9781,17 @@ static void update_server_generate_bot_actions(
 					throw_to.x = eye.x + cosine(state->facing_yaw) * cosine(state->facing_pitch) * distance;
 					throw_to.y = eye.y + sine(state->facing_yaw) * cosine(state->facing_pitch) * distance;
 					throw_to.z = eye.z + sine(state->facing_pitch) * distance;
-					aimed = visible && distance >= 6.0f && distance <= 18.0f &&
+					aimed = visible && bot_gun_clear(player->unit_index, &aim_point) &&
+						distance >= 6.0f && distance <= 18.0f &&
 						yaw_off <= 0.22f && pitch_off <= 0.20f &&
 						bot_throw_reaches(&eye, &throw_to, player->unit_index, enemy_unit);
 					last_ditch = bot_about_to_die(unit) &&
 						!bot_different_floor(&feet, &aim_point) &&
 						bot_grenade_can_finish(distance, grenade);
 					if (last_ditch ||
-						(aimed && (long)((bot_random() >> 8) % 1000) < bot_grenade_chance[skill]))
+						(aimed && !bot_throw_hurts_self(&feet, &eye, &throw_to, grenade,
+							player->unit_index, enemy_unit) &&
+							(long)((bot_random() >> 8) % 1000) < bot_grenade_chance[skill]))
 					{
 						action.desired_grenade_index = grenade;
 						action.control_flags |= FLAG(_unit_control_throw_grenade_bit) |
@@ -9162,6 +9803,8 @@ static void update_server_generate_bot_actions(
 						threw = TRUE;
 						if (last_ditch)
 							state->nade_trade = TRUE;
+						else
+							state->nade_hold = TICKS_PER_SECOND;
 					}
 				}
 				}
@@ -9211,9 +9854,21 @@ static void update_server_generate_bot_actions(
 			bot_take_power_prompt(player, player->unit_index, &action);
 
 		/* standing with the throttle up, or standing with it at rest.
-		either one for two seconds is a body that has stopped. */
-		if (moved < 0.03f && unit->object.parent_object_index == NONE)
+		either one for two seconds is a body that has stopped.
+		a pad they are waiting on is that stand on purpose.
+		the nose already in a wall is not a two second shove. */
+		if (planted)
+			state->stuck_ticks = 0;
+		else if (moved < 0.03f && unit->object.parent_object_index == NONE)
+		{
+			real nose;
+
 			state->stuck_ticks++;
+			nose = bot_first_block(&feet, state->facing_yaw, 0.45f, 0.70f,
+				player->unit_index);
+			if (!state->climb && nose >= 0.0f && nose <= 0.50f)
+				state->stuck_ticks += 2;
+		}
 		else
 			state->stuck_ticks = 0;
 		/* the step is into something the body cannot enter. Drop this
@@ -9230,6 +9885,15 @@ static void update_server_generate_bot_actions(
 			{
 				state->stuck_ticks = 0;
 				state->pad_valid = FALSE;
+				if (state->climb && state->climb_up &&
+					feet.z > state->climb_top - 1.3f)
+				{
+					state->shaft_face = state->climb_face;
+					state->shaft_yaw = state->climb_yaw;
+					state->shaft_top = state->climb_top;
+					state->shaft_land = state->climb_exit;
+					state->shaft_ticks = 2 * TICKS_PER_SECOND;
+				}
 				state->climb = FALSE;
 				bot_give_up(state, player_index, &feet, FALSE);
 				bot_step_aside(state, player_index, &feet, player->unit_index);
@@ -9274,6 +9938,12 @@ static void update_server_generate_bot_actions(
 				unit_set_desired_flashlight_state(player->unit_index, FALSE);
 		}
 
+		/* a live grenade. Run while it can still hurt, and do not step
+		back onto it. The wind-up of their own throw keeps its aim. */
+		if (!state->grenade_aim && !state->climb &&
+			unit->object.parent_object_index == NONE)
+			bot_respect_grenades(state, player, player->unit_index, &feet, &action);
+
 		/* the grenade leaves along the aim from the tick it was chosen.
 		a flee or a new step during the wind-up is the turn as it releases. */
 		if (state->grenade_aim)
@@ -9288,6 +9958,8 @@ static void update_server_generate_bot_actions(
 			held.z = eye.z + sine(state->facing_pitch);
 			bot_face(player, &action, &eye, &held, 0.0f, 0.0f, NULL);
 		}
+		bot_shaft_steer(state, &feet, &eye, player->unit_index, skill,
+			player, &action, face_enemy);
 		queue->current_action = action;
 	}
 }

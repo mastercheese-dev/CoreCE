@@ -915,6 +915,9 @@ static int nav_build_tile(int tile_x, int tile_z)
 			if (ladder->stand[0] < core_min_x || ladder->stand[0] >= core_max_x ||
 				ladder->stand[2] < core_min_z || ladder->stand[2] >= core_max_z)
 				continue;
+			/* stand is the bottom. A link the other way is a climb down. */
+			if (ladder->land[1] < ladder->stand[1] + 0.35f)
+				continue;
 			if (mesh->npolys + con_count + 1 > nav_poly_limit)
 				break;
 			base = con_count * 6;
@@ -929,7 +932,7 @@ static int nav_build_tile(int tile_x, int tile_z)
 			con_rad[con_count] = 1.80f;
 			con_flags[con_count] = 1;
 			con_area[con_count] = RC_WALKABLE_AREA;
-			con_dir[con_count] = (unsigned char)DT_OFFMESH_CON_BIDIR;
+			con_dir[con_count] = 0;
 			con_id[con_count] = (unsigned int)ladder_index;
 			con_count++;
 		}
@@ -1105,6 +1108,53 @@ extern "C" int bot_nav_settled(void)
 	if (nav_state == NAV_FAILED && nav_same_map(&id))
 		return 1;
 	return bot_nav_ready();
+}
+
+/* the straight walk stays on the mesh. The hit fraction is huge when the
+end is still on a polygon. Anything short of that is the platform edge. */
+extern "C" int bot_nav_line(float fx, float fy, float fz, float gx, float gy, float gz)
+{
+	dtQueryFilter filter;
+	float start[3];
+	float end[3];
+	float start_point[3];
+	float hit_normal[3];
+	dtPolyRef start_ref;
+	dtPolyRef path[8];
+	int path_count;
+	float t;
+	float dx;
+	float dz;
+	dtStatus status;
+
+	if (nav_state != NAV_READY || !nav_mesh || !nav_query)
+		return 0;
+	if (fx != fx || fy != fy || fz != fz || gx != gx || gy != gy || gz != gz)
+		return 0;
+	start[0] = fx;
+	start[1] = fy;
+	start[2] = fz;
+	end[0] = gx;
+	end[1] = gy;
+	end[2] = gz;
+	nav_to_recast(start);
+	nav_to_recast(end);
+	filter.setIncludeFlags(0x1);
+	filter.setExcludeFlags(0);
+	if (!nav_nearest(&filter, start, 1.0f, 1.2f, &start_ref, start_point))
+		return 0;
+	dx = start_point[0] - start[0];
+	dz = start_point[2] - start[2];
+	/* snapped onto a different ledge. The line from there is not this step. */
+	if (dx * dx + dz * dz > 0.75f * 0.75f)
+		return 0;
+	t = 0.0f;
+	path_count = 0;
+	status = nav_query->raycast(start_ref, start_point, end, &filter,
+		&t, hit_normal, path, &path_count, 8);
+	if (dtStatusFailed(status))
+		return 0;
+	return t >= 1.0f;
 }
 
 static void nav_note(float x, float z)
@@ -2169,6 +2219,9 @@ static int nav_emit(float const *start_point, float const *goal_point,
 					exit_z = az;
 				}
 				id = con->userId;
+				/* the other end is below. That link is not a step. */
+				if (exit_z < hz - 0.35f)
+					return 0;
 				/* beside the shaft, a straight line at the face is the wall.
 				the mesh still has to walk them to the stand. The climb
 				starts once the body is in front of the rungs. */

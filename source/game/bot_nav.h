@@ -70,6 +70,9 @@ corridors are kept for the goal. A short one is the usual trip. Another
 is taken when this one has stopped, or when the body is already on it. */
 int bot_nav_steer(float fx, float fy, float fz, float gx, float gy, float gz,
 	int agent, int blocked, struct bot_nav_step *step);
+/* 1 when the straight segment stays on the walkable mesh. A gap, a hole,
+or the lip of another platform is not a step. */
+int bot_nav_line(float fx, float fy, float fz, float gx, float gy, float gz);
 /* The mesh is usable, or the build has stopped. A build still running is
 not settled. A failed build does not hold the match. */
 int bot_nav_settled(void);
