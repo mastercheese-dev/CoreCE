@@ -6087,6 +6087,10 @@ static boolean lobby_join_reset(void)
 /* the party lobby leaves the playlist screen, and a search can move this
 party onto another invite. defined with the matchmaking menu. */
 static void mm_lobby_abandoned(void);
+static void mm_remember_host_invite(void);
+static void mm_follow_reset(void);
+static void mm_follow_offer(void);
+static boolean mm_begin_host(struct widget_instance *widget, struct event_record *event, int party);
 static int mm_lobby_switch(struct widget_instance *list);
 static void mm_paste_reset(void);
 static void mm_invite_with_port(char *out, int size, char const *invite, unsigned short port);
@@ -6889,6 +6893,7 @@ static void lobby_update(struct widget_instance *list)
 
 	/* a link pasted here leaves this party and joins that lobby. the screen
 	goes away with that join. */
+	mm_remember_host_invite();
 	if (mm_paste_poll(list))
 		return;
 	/* a search that combined this party with another leaves this lobby and
@@ -6973,10 +6978,13 @@ static void lobby_update(struct widget_instance *list)
 		gametype[NUMBEROF(gametype) - 1] = 0;
 		if (show_paste && have_offer && offer.invite[0])
 			mm_share_party_link(offer.invite, offer.port);
-		if (party && !matchmaking_is_ready() && have_offer)
+		else if (show_paste && global_network_game_server_get() && p2p_invite_link(link, sizeof(link)))
+			mm_share_party_link(link, matchmaking_game_port());
+		mm_follow_offer();
+		if (party && !matchmaking_is_ready())
 		{
 			int count = lobby_view_player_count();
-			int cap = mm_local_cap(&offer);
+			int cap = have_offer ? mm_local_cap(&offer) : 4;
 
 			if (count < 1)
 				count = 1;
@@ -7019,7 +7027,8 @@ static void lobby_update(struct widget_instance *list)
 		{
 			usnprintf(text, NUMBEROF(text) - 1, L"%s\r\n%s\r\n%d of %d players\r\n\r\n%s", gametype,
 				engine_names[PIN(game->variant.game_engine_index, 0, 5)], lobby_player_count, game->maximum_players,
-				seconds > 0 ? L"Starting in:" : game->machine_count < 2 ? L"Waiting for players" : L"");
+				seconds > 0 ? L"Starting in:" : party && matchmaking_is_ready() ? L"Looking for a match" :
+				party ? L"Find Game when ready" : game->machine_count < 2 ? L"Waiting for players" : L"");
 			text[NUMBEROF(text) - 1] = 0;
 			if (seconds > 0)
 			{
@@ -9186,9 +9195,10 @@ static boolean list_copy_back(struct widget_instance *widget, boolean *widget_de
 	return TRUE;
 }
 
-/* ---------- Matchmaking (above Server Browser). The service names the map,
-the rules, and the port. This machine publishes while it waits, and stops
-when the menu goes. Hosting stays in the game it opened. Joining uses the
+/* ---------- Matchmaking (above Server Browser). Choosing a game type opens
+the private lobby at once. This machine publishes while that lobby is open,
+and stops when the player leaves. The service can still name the map, the
+rules, and a join. Hosting stays in the game it opened. Joining uses the
 offer's port, never the ordinary game port. */
 
 enum
@@ -9221,6 +9231,10 @@ static struct
 
 /* the invite this party is in. a search that names a different one moves us. */
 static char mm_joined_invite[256];
+/* the map and rules already applied from a service offer, so a repeat does not rebuild the variant */
+static char mm_followed_map[64];
+static int mm_followed_mode = -1;
+static long mm_followed_score = -1;
 static unsigned short mm_switch_port;
 static int mm_switching;
 static int mm_switch_started;
@@ -9705,6 +9719,41 @@ static void mm_sync_client(void)
 	}
 }
 
+/* a service offer that arrives after the lobby is open. the queue keeps
+publishing. a host offer replaces the map and the rules. a join is taken
+by the search, which leaves this lobby for that invite. */
+static void mm_follow_offer(void)
+{
+	struct matchmaking_offer offer;
+	char build[0x20];
+	void *server;
+
+	if (!matchmaking_queue_active())
+		return;
+	if (!matchmaking_offer_copy(&offer) || offer.role != MATCHMAKING_ROLE_HOST)
+		return;
+	server = global_network_game_server_get();
+	if (!server || !offer.map[0])
+		return;
+	if (!strcmp(mm_followed_map, offer.map) && mm_followed_mode == offer.rules.mode &&
+		mm_followed_score == offer.rules.score)
+		return;
+	if (!cache_files_map_plays_multiplayer(offer.map, build))
+		return;
+	main_set_multiplayer_map_name(offer.map);
+	game_engine_override_map_name(offer.map);
+	network_game_server_change_map_name(server, offer.map);
+	mm_apply_rules(&offer);
+	ui_widget_port_game_variant_set(&gametype_edit.setup_variant, &gametype_edit.setup_options);
+	game_engine_override_game_variant(&gametype_edit.setup_variant);
+	game_set_game_variant(&gametype_edit.setup_variant);
+	game_set_game_variant_options(&gametype_edit.setup_options);
+	mm_sync_client();
+	snprintf(mm_followed_map, sizeof(mm_followed_map), "%s", offer.map);
+	mm_followed_mode = offer.rules.mode;
+	mm_followed_score = offer.rules.score;
+}
+
 static struct advertised_game *mm_peer_game(void)
 {
 	void *client = global_network_game_client_get();
@@ -9831,8 +9880,8 @@ static void mm_share_party_link(char const *invite, unsigned short port)
 	snprintf(mm_party_shared, sizeof(mm_party_shared), "%s", shared);
 }
 
-/* the party lobby, before a search. the host has stopped publishing a queue.
-a friend the service sent here is still publishing. */
+/* the party lobby, before Find Game. this machine is still publishing, or it
+is still hosting the party it opened. */
 static int mm_lobby_is_party(void)
 {
 	struct matchmaking_offer offer;
@@ -9978,12 +10027,32 @@ static boolean lobby_paste_link(struct widget_instance *widget)
 	return TRUE;
 }
 
+/* this party's own invite, once hosting has one. a later search can name another. */
+static void mm_remember_host_invite(void)
+{
+	char link[256];
+
+	if (mm_joined_invite[0] || !global_network_game_server_get())
+		return;
+	if (!p2p_invite_link(link, (int)sizeof(link)) || strncmp(link, "halo://join/", 12))
+		return;
+	snprintf(mm_joined_invite, sizeof(mm_joined_invite), "%s", link);
+}
+
+static void mm_follow_reset(void)
+{
+	mm_followed_map[0] = 0;
+	mm_followed_mode = -1;
+	mm_followed_score = -1;
+}
+
 /* the machine's last player left the lobby before the match. the queue ends. */
 static void mm_lobby_abandoned(void)
 {
 	int pasted = mm_paste_waiting || mm_paste_port != 0;
 	unsigned short port = matchmaking_game_port();
 
+	mm_follow_reset();
 	mm_switching = 0;
 	mm_switch_started = 0;
 	mm_switch_join = 0;
@@ -10146,12 +10215,16 @@ static boolean mm_open(struct widget_instance *screen)
 	return TRUE;
 }
 
-/* "port mm choose": publish this playlist until this player has joined */
-static boolean mm_choose(struct widget_instance *widget)
+/* "port mm choose": open this playlist's lobby now. the queue keeps publishing
+behind it until the player leaves or the match starts. */
+static boolean mm_choose(struct widget_instance *widget, struct event_record *event, boolean *widget_deleted)
 {
 	struct matchmaking_catalog catalog;
 	int ready = matchmaking_catalog(&catalog);
-	const char *playlist = mm_playlist_of(widget, ready > 0 ? &catalog : NULL);
+	int slot = mm_slot(widget && widget->name ? widget->name : "");
+	const struct matchmaking_playlist *row = ready > 0 && slot >= 0 && slot < catalog.count ?
+		&catalog.playlist[slot] : NULL;
+	const char *playlist = row ? row->id : NULL;
 	char name[12];
 
 	if (mm_menu.state == MM_MENU_LAUNCHING || mm_menu.state == MM_MENU_JOINING ||
@@ -10173,17 +10246,47 @@ static boolean mm_choose(struct widget_instance *widget)
 		mm_status(text);
 		return FALSE;
 	}
-	if (!playlist)
+	if (!playlist || !playlist[0])
 		return FALSE;
 	mm_gamertag(name, sizeof(name));
 	mm_menu.invited = 0;
 	mm_menu.waiting = 0;
-	mm_menu.offer.port = 0;
+	mm_joined_invite[0] = 0;
+	mm_follow_reset();
 	mm_lobby_clear();
 	matchmaking_queue(playlist, name);
-	mm_menu.state = MM_MENU_SEARCHING;
-	mm_status(L"Waiting for the lobby.");
-	return FALSE;
+	if (!matchmaking_queue_active())
+	{
+		mm_menu.state = MM_MENU_ERROR;
+		mm_status(L"That game type is not available.");
+		return FALSE;
+	}
+	matchmaking_party_offer(&mm_menu.offer, row);
+	if (!mm_begin_host(widget, event, 1))
+	{
+		mm_menu.state = MM_MENU_ERROR;
+		matchmaking_leave();
+		return FALSE;
+	}
+	/* opening the lobby deletes this screen. the queue and the server stay. */
+	mm_menu.state = MM_MENU_DONE;
+	if (!widget_deleted)
+	{
+		static boolean deleted;
+
+		deleted = FALSE;
+		widget_deleted = &deleted;
+	}
+	if (!ui_widget_port_open(widget, LOBBY_NAME, widget_deleted))
+	{
+		mm_menu.state = MM_MENU_ERROR;
+		mm_status(L"Could not open the lobby.");
+		matchmaking_reset();
+		dispose_global_network_game_client();
+		dispose_global_network_game_server();
+		return FALSE;
+	}
+	return TRUE;
 }
 
 /* "port mm leave": the screen went away. a match already taken keeps its port. */
@@ -10203,7 +10306,7 @@ static boolean mm_menu_leave(void)
 	return TRUE;
 }
 
-static boolean mm_begin_host(struct widget_instance *widget, struct event_record *event)
+static boolean mm_begin_host(struct widget_instance *widget, struct event_record *event, int party)
 {
 	char build[0x20];
 	wchar_t name[16];
@@ -10256,7 +10359,11 @@ static boolean mm_begin_host(struct widget_instance *widget, struct event_record
 	multiplayer.game_name[NUMBEROF(multiplayer.game_name) - 1] = 0;
 	multiplayer.maximum_players_index = mm_players_index(mm_menu.offer.players);
 	network_game_server_port_set_settings(multiplayer.game_name, mm_menu.offer.players);
-	matchmaking_commit_host(mm_menu.offer.playlist, mm_menu.offer.port);
+	/* a party keeps publishing. the fallback host publishes its invite instead. */
+	if (party)
+		matchmaking_commit_party();
+	else
+		matchmaking_commit_host(mm_menu.offer.playlist, mm_menu.offer.port);
 	return TRUE;
 }
 
@@ -10351,7 +10458,7 @@ static boolean mm_launch(struct widget_instance *widget, struct event_record *ev
 		}
 		return mm_finish_join(widget, widget_deleted);
 	}
-	if (!mm_begin_host(widget, event))
+	if (!mm_begin_host(widget, event, 0))
 	{
 		mm_menu.state = MM_MENU_ERROR;
 		matchmaking_leave();
@@ -10642,7 +10749,7 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port mm choose"))
 		{
-			return mm_choose(widget);
+			return mm_choose(widget, event, widget_deleted);
 		}
 		else if (!strcmp(name, "port mm leave"))
 		{

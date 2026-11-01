@@ -136,6 +136,10 @@ void matchmaking_stop(void);
 void matchmaking_commit_host(const char *playlist, unsigned short port);
 /* the private lobby has been joined. keep publishing and keep the port. */
 void matchmaking_commit_join(void);
+/* this machine opened its own party lobby. keep publishing and keep the port. */
+void matchmaking_commit_party(void);
+/* a party opened before the service names a match. catalog row supplies the port. */
+void matchmaking_party_offer(struct matchmaking_offer *offer, const struct matchmaking_playlist *row);
 /* a join link that is not this party's. a machine already publishing stops,
 so a friend on someone else's link does not keep a queue. */
 void matchmaking_yield_to_invite(const char *text);

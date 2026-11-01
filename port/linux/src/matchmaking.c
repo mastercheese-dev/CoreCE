@@ -1677,6 +1677,44 @@ void matchmaking_commit_join(void)
 	pthread_mutex_unlock(&matchmaking_lock);
 }
 
+void matchmaking_commit_party(void)
+{
+	pthread_mutex_lock(&matchmaking_lock);
+	matchmaking.committed = 1;
+	matchmaking.in_party = 1;
+	matchmaking.want_hosted = 0;
+	pthread_mutex_unlock(&matchmaking_lock);
+}
+
+void matchmaking_party_offer(struct matchmaking_offer *offer, const struct matchmaking_playlist *row)
+{
+	unsigned short port;
+
+	if (!offer || !row || !row->id[0])
+		return;
+	memset(offer, 0, sizeof(*offer));
+	offer->role = MATCHMAKING_ROLE_HOST;
+	offer->phase = MATCHMAKING_PHASE_PARTY;
+	copy_short(offer->playlist, sizeof(offer->playlist), row->id, 15);
+	copy_short(offer->name, sizeof(offer->name), row->name[0] ? row->name : row->id, 31);
+	copy_short(offer->map, sizeof(offer->map), "chillout", 31);
+	port = port_ok(row->port) ? row->port : 0;
+	if (!port && !strcmp(row->id, "ffa"))
+		port = 5161;
+	else if (!port && !strcmp(row->id, "hardcore"))
+		port = 5162;
+	else if (!port && !strcmp(row->id, "objective"))
+		port = 5160;
+	offer->port = port;
+	offer->players = row->players > 1 ? row->players : players_for(row->id);
+	offer->teams = row->teams;
+	offer->team_size = row->team_size > 0 ? row->team_size : offer->teams ? 2 : 1;
+	offer->local_max = row->local_max > 0 ? row->local_max : 4;
+	offer->joined = -1;
+	offer->wait_seconds = -1;
+	rules_default(&offer->rules, row->id, offer->map);
+}
+
 void matchmaking_yield_to_invite(const char *text)
 {
 	int yield = 0;
