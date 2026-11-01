@@ -1339,17 +1339,14 @@ static struct widget_instance *named(struct widget_instance *widget, char const 
 }
 
 /* the text box's own text (as the server list sets its items'), in a
-buffer of length characters (made the first time: a text box is always
-given the same length) */
+buffer of length characters. a box that already holds a shorter string
+(a string list drew one) is grown, so this write stays inside the block */
 static void text_set_length(struct widget_instance *text_box, wchar_t const *text, short length)
 {
-	if (!text_box)
+	if (!text_box || length < 1)
 		return;
-	if (!text_box->parameters.text_box.text)
-	{
-		text_box->parameters.text_box.text = ui_widget_realloc(NULL, length * sizeof(wchar_t),
-			__FILE__, __LINE__);
-	}
+	text_box->parameters.text_box.text = ui_widget_realloc(text_box->parameters.text_box.text,
+		(word)(length * sizeof(wchar_t)), __FILE__, __LINE__);
 	if (text_box->parameters.text_box.text)
 	{
 		ustrncpy(text_box->parameters.text_box.text, text, length - 1);
@@ -2811,43 +2808,20 @@ static void profile_list_finish_copy(struct widget_instance *list)
 	focus_row(list, (short)(profile_list.chosen - profile_list.first));
 }
 
-/* the matchmaking party's join link, on the add-player line. the box is one
-short line in the tags, so the link is broken up to fit. */
-static void mm_fill_party_link(struct widget_instance *help, char const *invite)
+/* BOT is a row on the LAN add-player list only */
+static boolean profile_list_lan_add(struct widget_instance *list)
 {
-	wchar_t line[192];
-	int used = 0;
-	int index = 0;
-	int column = 0;
-	char const *prefix = "Join with this link:\r\n";
+	struct widget_instance *screen = list ? screen_of(list) : NULL;
 
-	if (!help || !invite)
-		return;
-	while (prefix[index] && used < (int)NUMBEROF(line) - 1)
-		line[used++] = (wchar_t)(unsigned char)prefix[index++];
-	for (index = 0; invite[index] && used < (int)NUMBEROF(line) - 1; index++)
-	{
-		if (column >= 36)
-		{
-			line[used++] = L'\r';
-			if (used < (int)NUMBEROF(line) - 1)
-				line[used++] = L'\n';
-			column = 0;
-		}
-		if (used >= (int)NUMBEROF(line) - 1)
-			break;
-		line[used++] = (wchar_t)(unsigned char)invite[index];
-		column++;
-	}
-	line[used] = 0;
-	help->parameters.text_box.string_list_index = HALO_CUSTOM_MAP_TEXT;
-	text_set_length(help, line, (short)NUMBEROF(line));
+	return screen && screen->name && !strcmp(screen->name, "lan_add_player_screen");
 }
 
 /* "3wide player profile list update": the rows, and the profile chosen:
 its name, colour, current level, best difficulty and controls */
 static int mm_lobby_is_party(void);
-static void mm_invite_with_port(char *out, int size, char const *invite, unsigned short port);
+static int mm_link_just_copied(void);
+static void mm_copy_buttons(struct widget_instance *root);
+static void focus_off_hidden(struct widget_instance *bar);
 
 static void profile_list_update(struct widget_instance *list)
 {
@@ -2860,7 +2834,7 @@ static void profile_list_update(struct widget_instance *list)
 	profile_list_finish_new(list);
 	profile_list_finish_copy(list);
 	profile_list_read(FALSE);
-	if (!(list->name && !strcmp(list->name, "player_profile_list")))
+	if (!profile_list_lan_add(list))
 		profile_list_bot_row = FALSE;
 	item = list_scroll(list, &profile_list.first, profile_list_slots(), profile_list_rows());
 	if (item != NONE)
@@ -2877,23 +2851,19 @@ static void profile_list_update(struct widget_instance *list)
 		struct widget_instance *help = named(screen, "player_profile_help", 0);
 		int party_link = FALSE;
 
-		/* matchmaking's Add Player shows the server's join link. a friend
-		who uses it is in this party and does not publish a queue. the port
-		on the link is this lobby's game port. */
+		/* this party's add-player screen does not print the join link.
+		Copy Link does that, and says so once it has. */
 		if (screen && screen->name && !strcmp(screen->name, "player_profile_screen") &&
 			mm_lobby_is_party())
 		{
-			struct matchmaking_offer offer;
-
-			if (matchmaking_offer_copy(&offer) && offer.invite[0])
-			{
-				char shared[160];
-
-				mm_invite_with_port(shared, (int)sizeof(shared), offer.invite, offer.port);
-				mm_fill_party_link(help, shared);
-				party_link = TRUE;
-			}
+			party_link = TRUE;
+			if (mm_link_just_copied())
+				label_set(help, L"Link copied.");
+			else if (help && help->parameters.text_box.string_list_index == HALO_CUSTOM_MAP_TEXT)
+				help->parameters.text_box.string_list_index = 0;
 		}
+		mm_copy_buttons(list);
+		focus_off_hidden(named(list, "profile_button_bar", 0));
 		/* the LAN add-player screen has no side card, so the line under the
 		list names who A will add, or that BOT opens its own screen */
 		if (!party_link && profile_list.picking)
@@ -6096,8 +6066,8 @@ static void mm_paste_reset(void);
 static void mm_invite_with_port(char *out, int size, char const *invite, unsigned short port);
 static int mm_paste_poll(struct widget_instance *list);
 static void mm_party_focus(struct widget_instance *list, int party);
-static void mm_share_party_link(char const *invite, unsigned short port);
 static boolean lobby_paste_link(struct widget_instance *widget);
+static boolean lobby_copy_link(struct widget_instance *widget);
 static void mm_ascii(wchar_t *text, int size, char const *ascii);
 
 /* local players this matchmaking party may still seat. locals only reserves
@@ -6253,18 +6223,6 @@ static boolean lobby_add_player(struct widget_instance *widget, boolean *widget_
 	boolean lan_lobby = root && root->name && !strcmp(root->name, "lobby_screen") &&
 		(multiplayer.mode == _multiplayer_mode_host_lan || multiplayer.mode == _multiplayer_mode_lan);
 
-	if (mm_lobby_is_party())
-	{
-		struct matchmaking_offer offer;
-
-		if (matchmaking_offer_copy(&offer) && offer.invite[0])
-		{
-			char shared[160];
-
-			mm_invite_with_port(shared, (int)sizeof(shared), offer.invite, offer.port);
-			platform_clipboard_set(shared);
-		}
-	}
 	if (!lobby_seat_available())
 		return FALSE;
 	lobby_join.adding = TRUE;
@@ -6323,7 +6281,8 @@ static boolean lobby_player_list_initialize(struct widget_instance *list)
 	long mine = lobby_join.controller != NONE ? player_ui_get_active_player_profile_index(lobby_join.controller) : NONE;
 	short index, controller;
 
-	profile_list_bot_row = multiplayer.mode == _multiplayer_mode_host_lan;
+	profile_list_bot_row = profile_list_lan_add(list) &&
+		multiplayer.mode == _multiplayer_mode_host_lan;
 	if (!virtual_keyboard_active())
 		profile_list_making = FALSE;
 	profile_list_copy_reset();
@@ -6748,7 +6707,9 @@ static void lobby_join_help(struct widget_instance *list)
 	struct widget_instance *help = named(screen_of(list), "lobby_join_help", 0);
 	wchar_t const *text = L"";
 
-	if (lobby_local_player_count() < MAXIMUM_LOCAL_PLAYERS)
+	if (mm_link_just_copied())
+		text = L"Link copied.";
+	else if (lobby_local_player_count() < MAXIMUM_LOCAL_PLAYERS)
 		text = L"ADD PLAYER adds someone here.";
 	text_set(help, text);
 }
@@ -6782,19 +6743,28 @@ static void lobby_row_text(short row, wchar_t *text)
 static void lobby_map_show(struct widget_instance *description, char const *map_name)
 {
 	char const *const *names;
-	short count = xbox_multiplayer_map_count(ui_widget_port_multiplayer_maps(&names, NULL)), map = 19, index;
+	/* picture 13 is the unknown level. string 19 is its name. a short cache
+	name such as chillout matches the list's last path component. */
+	short count = xbox_multiplayer_map_count(ui_widget_port_multiplayer_maps(&names, NULL));
+	short picture = 13, name_index = 19, index;
 	short level = campaign_level_of(map_name);
 	struct widget_instance *widget;
 
 	for (index = 0; index < count; index++)
 	{
-		if (!_stricmp(names[index], map_name))
-			map = index;
+		if (!_stricmp(scenario_name(names[index]), scenario_name(map_name)))
+		{
+			picture = index;
+			name_index = index;
+		}
 	}
 	/* (a Custom Edition map's picture and name, multiplayer or campaign, by
 	its display index, if this machine has it: custom_edition_maps.c) */
 	if (custom_edition_level_name(map_name) && custom_edition_maps_display_index(map_name) != NONE)
-		map = custom_edition_maps_display_index(map_name);
+	{
+		picture = custom_edition_maps_display_index(map_name);
+		name_index = picture;
+	}
 	/* (a network co-op game's level: its picture and name, sp_levels' and
 	map_list's, in the place of the map's) */
 	visible_set(named(description, "lobby_map_pic", 0), level == NONE);
@@ -6802,9 +6772,9 @@ static void lobby_map_show(struct widget_instance *description, char const *map_
 	visible_set(named(description, "replay_level_right_pic", 0), level != NONE);
 	visible_set(named(description, "replay_level_right_name", 0), level != NONE);
 	if ((widget = named(description, "lobby_map_pic", 0)) != NULL)
-		widget->animation.current_frame_index = map;
+		widget->animation.current_frame_index = picture;
 	if ((widget = named(description, "lobby_map_name", 0)) != NULL)
-		widget->parameters.text_box.string_list_index = map;
+		widget->parameters.text_box.string_list_index = name_index;
 	if (level == NONE)
 		return;
 	if ((widget = named(description, "replay_level_right_pic", 0)) != NULL)
@@ -6876,6 +6846,14 @@ void menu_functions_text_box_drawn(struct widget_instance *widget, rectangle2d c
 		network_voice_draw_icon(&icon, network_voice_machine_muted(machine_index), 1.0f);
 		return;
 	}
+}
+
+static void lobby_button_at(struct widget_instance *list, char const *name, short x)
+{
+	struct widget_instance *button = named(list, name, 0);
+
+	if (button)
+		button->horizontal_offset = x;
 }
 
 /* "port lobby update" */
@@ -6957,6 +6935,25 @@ static void lobby_update(struct widget_instance *list)
 			start->disabled = FALSE;
 		}
 	}
+	/* five party buttons share the bar. a LAN lobby keeps the four it had. */
+	if (show_paste)
+	{
+		lobby_button_at(list, "lobby_button_copy", 0);
+		lobby_button_at(list, "lobby_button_copy_dim", 0);
+		lobby_button_at(list, "lobby_button_paste", 128);
+		lobby_button_at(list, "lobby_button_start", 256);
+		lobby_button_at(list, "lobby_button_add", 384);
+		lobby_button_at(list, "lobby_button_leave", 512);
+	}
+	else
+	{
+		lobby_button_at(list, "lobby_button_paste", 120);
+		lobby_button_at(list, "lobby_button_team", 120);
+		lobby_button_at(list, "lobby_button_start", 250);
+		lobby_button_at(list, "lobby_button_add", 380);
+		lobby_button_at(list, "lobby_button_leave", 510);
+	}
+	mm_copy_buttons(list);
 	/* (the buttons' focus, off Switch Team when it is hidden) */
 	focus_off_hidden(named(list, "lobby_button_bar", 0));
 	mm_party_focus(list, show_paste);
@@ -6976,10 +6973,6 @@ static void lobby_update(struct widget_instance *list)
 
 		ustrncpy(gametype, game->variant.human_readable_game_description, NUMBEROF(gametype) - 1);
 		gametype[NUMBEROF(gametype) - 1] = 0;
-		if (show_paste && have_offer && offer.invite[0])
-			mm_share_party_link(offer.invite, offer.port);
-		else if (show_paste && global_network_game_server_get() && p2p_invite_link(link, sizeof(link)))
-			mm_share_party_link(link, matchmaking_game_port());
 		mm_follow_offer();
 		if (party && !matchmaking_is_ready())
 		{
@@ -7036,7 +7029,7 @@ static void lobby_update(struct widget_instance *list)
 
 				usnprintf(text + length, NUMBEROF(text) - 1 - length, L" %d", seconds);
 			}
-			if (global_network_game_server_get() && p2p_invite_link(link, sizeof(link)))
+			if (!show_paste && global_network_game_server_get() && p2p_invite_link(link, sizeof(link)))
 			{
 				size_t length = ustrlen(text);
 
@@ -9249,7 +9242,7 @@ static int mm_paste_frames;
 static int mm_party_focus_set;
 static unsigned short mm_paste_port;
 static char mm_paste_invite[160];
-static char mm_party_shared[160];
+static unsigned long mm_link_copied_until;
 
 /* searching, joining, or already in the match: the offer's port stays */
 static int mm_holds_port(void)
@@ -9852,32 +9845,71 @@ static void mm_paste_reset(void)
 	mm_paste_frames = 0;
 	mm_paste_port = 0;
 	mm_paste_invite[0] = 0;
-	mm_party_shared[0] = 0;
 	mm_party_focus_set = 0;
 }
 
-static void mm_share_party_link(char const *invite, unsigned short port)
+/* this party's join link, with its game port, once hosting has one */
+static int mm_party_link_text(char *out, int size)
+{
+	struct matchmaking_offer offer;
+	char invite[160];
+
+	if (!out || size < 2)
+		return 0;
+	out[0] = 0;
+	if (matchmaking_offer_copy(&offer) && offer.invite[0])
+	{
+		mm_invite_with_port(out, size, offer.invite,
+			offer.port ? offer.port : matchmaking_game_port());
+		return out[0] != 0;
+	}
+	invite[0] = 0;
+	if (!p2p_invite_link(invite, (int)sizeof(invite)) || !invite[0])
+		return 0;
+	mm_invite_with_port(out, size, invite, matchmaking_game_port());
+	return out[0] != 0;
+}
+
+static int mm_link_just_copied(void)
+{
+	return mm_link_copied_until != 0 && system_milliseconds() < mm_link_copied_until;
+}
+
+/* Copy Link stays dim, with no border, until this lobby's link exists */
+static void mm_copy_buttons(struct widget_instance *root)
+{
+	struct widget_instance *copy = named(root, "lobby_button_copy", 0);
+	struct widget_instance *dim = named(root, "lobby_button_copy_dim", 0);
+	char shared[160];
+	int party = mm_lobby_is_party();
+	int ready = party && mm_party_link_text(shared, (int)sizeof(shared));
+
+	visible_set(dim, party && !ready);
+	visible_set(copy, party && ready);
+	if (dim)
+	{
+		dim->disabled = TRUE;
+		dim->alpha_modifier = 0.5f;
+	}
+	if (copy)
+	{
+		copy->disabled = FALSE;
+		copy->alpha_modifier = 1.0f;
+	}
+}
+
+/* "port lobby copy link": put this party's link on the clipboard */
+static boolean lobby_copy_link(struct widget_instance *widget)
 {
 	char shared[160];
-	char current[160];
 
-	mm_invite_with_port(shared, (int)sizeof(shared), invite, port);
-	if (!shared[0])
-		return;
-	current[0] = 0;
-	platform_clipboard_get(current, (int)sizeof(current));
-	if (!strcmp(current, shared))
-	{
-		snprintf(mm_party_shared, sizeof(mm_party_shared), "%s", shared);
-		return;
-	}
-	/* a friend's link is already there. this lobby's own link is replaced
-	when the clipboard still holds it, including the copy made as the game
-	started hosting. */
-	if (mm_party_shared[0] && strcmp(current, invite) && strcmp(current, mm_party_shared))
-		return;
+	(void)widget;
+	if (!mm_lobby_is_party() || !mm_party_link_text(shared, (int)sizeof(shared)))
+		return TRUE;
 	platform_clipboard_set(shared);
-	snprintf(mm_party_shared, sizeof(mm_party_shared), "%s", shared);
+	mm_link_copied_until = system_milliseconds() + 2500;
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+	return TRUE;
 }
 
 /* the party lobby, before Find Game. this machine is still publishing, or it
@@ -10941,6 +10973,10 @@ boolean pc_menu_event_function_invoke(
 		else if (!strcmp(name, "port lobby paste link"))
 		{
 			return lobby_paste_link(widget);
+		}
+		else if (!strcmp(name, "port lobby copy link"))
+		{
+			return lobby_copy_link(widget);
 		}
 		else if (!strcmp(name, "port lobby join"))
 		{

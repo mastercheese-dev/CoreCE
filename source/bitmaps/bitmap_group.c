@@ -790,7 +790,8 @@ struct bitmap_data *bitmap_group_get_bitmap_from_sequence(
 					bitmap_index = (short)(frame_index % sequence->bitmap_count +
 						sequence->first_bitmap_index);
 				}
-				else if (sequence->sprites.count && frame_index >= 0) /* port: not below the first sprite */
+				else if (sequence->sprites.count > 0 && frame_index >= 0 &&
+					frame_index < sequence->sprites.count)
 				{
 					bitmap_index = TAG_BLOCK_GET_ELEMENT(
 						&sequence->sprites,

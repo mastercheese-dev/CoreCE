@@ -121,6 +121,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#include "errors.h"
 
 /* ---------- constants */
 
@@ -783,6 +784,8 @@ static boolean memory_block_valid(
 		{
 			if (*(unsigned long *)((byte *)block+block_size-sizeof(unsigned long)) != 'chkn')
 			{
+				error(_error_silent, "stack pool block from %s:%lu wrote past its end",
+					block->file ? block->file : "?", block->line);
 				display_assert(
 					"!\"wrote beyond the valid address space for this block\"",
 					"c:\\halo\\SOURCE\\memory\\stack_memory_pool.c",
