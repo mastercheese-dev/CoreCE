@@ -5,62 +5,47 @@ campaign loading and gameplay, mouse capture, and audible output were confirmed
 on an M5 Mac with 16 GB RAM running macOS 26.5.1. This is the phase-one baseline;
 it is not a claim that every campaign level or Mac configuration is verified.
 
-The CPU code runs natively on ARM64. The existing GLES renderer uses ANGLE's
-Metal backend. No Windows runtime, Xbox emulator, Apple Developer account,
-special entitlement, or security-setting change is required for this local build.
+The CPU code runs natively on ARM64. The Mac build draws with Metal. No Windows
+runtime, Xbox emulator, Apple Developer account, special entitlement, or
+security-setting change is required for this local build.
 
 ## Download
 
-For shared testing, use a published tag in the
-[testing releases](https://github.com/pfista/halo-og/releases) and
-download `Halo-OG-macos-arm64.dmg` directly from its assets. The
-[`test-v0.3.0-net11-dmg2` installer](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-dmg2/Halo-OG-macos-arm64.dmg)
-opens a window with CoreCE, a drag arrow and the Applications folder. Testing
-prereleases have permanent URLs containing the tag and require no GitHub sign-in.
-See [manual testing publication](../../docs/macos-menu-and-releases.md#manual-testing-prerelease)
-for the publishing workflow. No testing prerelease is created automatically.
+The current Mac release is build 52, `CoreCE-macos-arm64.dmg`, on this
+repository's [releases page](https://github.com/mastercheese-dev/CoreCE/releases/tag/build-52).
+Windows build 30 and Linux build 58 are the current releases for those systems.
+A testing release, when one is published, is a `testing-N` prerelease on that
+same page and uses the same disk image name.
 
-For an unpublished CI build:
+Open the disk image and drag **CoreCE.app** into Applications. The app is ad hoc
+signed and is not notarized, so macOS may block the first launch. After you try
+to open it, allow it in **System Settings**, under **Privacy & Security**.
+[Apple's steps](https://support.apple.com/en-us/102445) walk through that screen.
 
-Sign in to GitHub and open the
-[macOS DMG workflow](https://github.com/pfista/halo-og/actions/workflows/macos-dmg.yml).
-Choose a successful run, then download **halo-macos-arm64-dmg** from its
-**Artifacts** section. Builds run on code pushes to `main` and can also be
-started manually. Artifacts expire after 14 days.
+An unpublished CI build is the **halo-macos-arm64-dmg** artifact from the macOS
+DMG workflow on this repository. Pushes to `main` start that workflow, and it
+can also be started by hand. Artifacts expire after 14 days. The disk image in
+the artifact is `CoreCE-macos-arm64.dmg`. `BuildInfo.txt` records the source
+revision and guest hash. `SHA256SUMS` checks the disk image with
+`shasum -a 256 -c SHA256SUMS`.
 
-Extract the downloaded ZIP and open `Halo-OG-macos-arm64.dmg`.
-Drag **CoreCE.app** onto the Applications shortcut, then launch it
-from Applications. `README.txt` records that build's minimum macOS version and
-installation steps. `BuildInfo.txt` records the source revision and guest hash;
-`SHA256SUMS` lets you verify the DMG with `shasum -a 256 -c SHA256SUMS` from the
-extracted folder.
-
-This build requires **Apple Silicon and macOS 26 or later** with the current
-bundled dependencies. No Homebrew, Xbox SDK or build tools are needed. The app
-is ad hoc signed and is not notarized by Apple, so macOS may block its first
-launch; after attempting to open it, use **System Settings → Privacy & Security
-→ Open Anyway** if you choose to run this build. See
-[Apple's opening instructions](https://support.apple.com/en-us/102445).
+This build requires **Apple Silicon and macOS 26 or later**. No Homebrew, Xbox
+SDK, or build tools are needed to run the downloaded app.
 
 On first launch, select your own original Xbox Halo disc image or extracted
-game folder. The download contains no maps or disc images. See
-[Mac data import and releases](../../docs/macos-menu-and-releases.md) for details.
+game folder. The download contains no maps or disc images.
 
-Cross-platform testers should use Mac, Windows, Linux or Android assets from
-the same testing tag. Its release notes and `provenance.json` identify the source
-revision and network protocol. New builds use protocol **11**; protocol 10
-clients cannot join these sessions. A successful CI build establishes packaging
-and build checks; play between platforms still needs testing.
+Players in one game need network protocol 35. A client does not join a host of
+another protocol.
 
 ## Launch
 
-Open `build/macos/CoreCE.app` in Finder. There is no automatic timeout.
-The app includes SDL3, ANGLE, Sparkle, and the compiled game image. It remembers
+Open `build/macos-metal/CoreCE.app` in Finder. There is no automatic timeout.
+The app includes SDL3, Sparkle, and the compiled game image. It draws with Metal. It remembers
 your chosen local data location. Development builds can fall back to this
 checkout's `assets/` directory. The helmet menu icon opens Settings, changes
-fullscreen, and selects your own disc image or maps folder. See
-[Mac menu and releases](../../docs/macos-menu-and-releases.md) for first launch,
-data import and the intentionally unconfigured release hosting.
+fullscreen, and selects your own disc image or maps folder. The first launch
+asks for that disc image or game folder when the app was built without one.
 
 The app defaults to borderless fullscreen at the desktop's aspect ratio, with
 Retina output. The 3D field of view widens; the image is not stretched. Rendering
@@ -74,7 +59,7 @@ the tick-based camera. Existing `config.toml` values remain in effect. The
 upstream high-resolution HUD artwork, interpolation and direct camera remain
 available as explicit settings. For a separate 4:3 comparison configuration,
 use [xbox-ntsc.toml](profiles/xbox-ntsc.toml) and the existing
-`HALO_SCREEN_WIDTH=640` override. See the [fidelity policy](../../docs/xbox-fidelity.md).
+`HALO_SCREEN_WIDTH=640` override.
 Text glyphs keep the fonts in the game data and have clear borders to
 prevent neighboring characters from bleeding into their edges, and widescreen
 menu dimming and flat backgrounds cover the whole display.
@@ -85,7 +70,8 @@ Saves, cache files, `config.toml`, and `halo.log` are under:
 ~/Library/Application Support/CoreCE/
 ```
 
-[Runtime files](../../docs/macos-runtime-files.md) lists every directory and file the installed Mac app uses, and the Windows and Linux release folders.
+Saves, `config.toml`, and `halo.log` are in that folder. On Windows, saves are
+in `%APPDATA%\Halo OG`. On Linux, saves are in `~/.local/share/halo-og`.
 
 On first launch, prior settings, saves and managed game data are copied from
 `~/Library/Application Support/OpenCE/`, or from `Halo OG` when that is the
@@ -117,8 +103,7 @@ Menus support mouse navigation. The cursor stays free after switching apps or
 closing a native panel; choose Resume or click gameplay to capture it. That
 first capture click does not fire. Windowed play keeps a resizable native frame
 with its title/buttons hidden; drag the top strip while the cursor is released.
-See [native settings](../../docs/native-settings.md) for live Audio/Video options
-in the main and pause menus.
+Live Audio and Video options are in Settings, from the main menu and from the pause menu.
 
 All keyboard/controller actions and mouse buttons can be changed in the
 `[bindings]` section of `~/Library/Application Support/CoreCE/config.toml`.
@@ -161,17 +146,16 @@ other [shared native settings](../linux/README.md#settings) remain available.
 For a command-line run from the repository root:
 
 ```sh
-build/macos/halo build/macos/halo_guest.elf
+build/macos-metal/halo build/macos-metal/halo_guest.elf
 ```
 
-That development command uses `build/macos/saves/` by default; the app uses the
-Mac Application Support location above.
+That development command uses `build/macos/saves/` by default, because the host
+looks there when it is started with a guest image. The app uses the Mac
+Application Support location above.
 
-For Mac invite links and Mac-versus-iPhone LAN setup, follow
-[Apple multiplayer setup](../../docs/apple-multiplayer.md). Builds must use the
-same networking revision and map set. Hosting copies an invite to the clipboard;
-opening it, or copying it and switching to Halo, connects the peers so the host
-appears in the System Link browser.
+Builds in one game need the same network protocol and the same map set. Hosting
+copies an invite to the clipboard. Opening it, or copying it and switching to
+CoreCE, connects the peers so the host appears in the System Link browser.
 
 With the Discord desktop client running, CoreCE connects to its local RPC socket
 and accepts Discord game invitations. Hosting a game publishes CoreCE, with the
@@ -179,21 +163,19 @@ CoreCE icon, and an invite in Discord. A person who asks to join is let in.
 Enable activity sharing in Discord to make it visible. The installed app handles
 both `halo://` links and the Discord application's launch scheme, so an invite
 can start CoreCE when it is closed. Ordinary campaign/client gameplay does not publish activity.
-This branch uses multiplayer protocol 11 and 64-digit invite codes; all players
-need matching builds. Command-W is ignored while playing, and Command-Q or
-the window's close button quits.
+This tree uses network protocol 35. Players need matching builds. Command-W is
+ignored while playing, and Command-Q or the window's close button quits.
 
 ## Build
 
-First complete [Apple build setup](../../docs/apple-build.md): clone the fork,
-install LLVM 22 and the public dependencies, and place your own game maps
-locally. Native builds use the checked-in SDK declarations and do not need the
+Clone this repository, install LLVM 22 and the public dependencies, and place
+your own game maps locally. Native builds use the checked-in SDK declarations and do not need the
 Xbox SDK. Keep the documented environment exports in the shell used below.
 From the repository root:
 
 ```sh
 python3 tools/macos_build.py
-open "build/macos/CoreCE.app"
+open "build/macos-metal/CoreCE.app"
 ```
 
 To build and install a single copy in Applications for Spotlight:
@@ -209,8 +191,8 @@ Then press Command-Space, type `CoreCE`, and press Return. An
 optional directory, such as `--install ~/Applications`, installs for just your
 account. Installation verifies the signed bundle before replacing a previous
 copy, preserves the previous app in a hidden backup directory, and registers
-the new copy with Launch Services and Spotlight. Generated app copies in
-`build/macos` are preserved under `build/macos/app-backups.noindex` with a
+the new copy with Launch Services and Spotlight. Generated app copies under
+`build/` are preserved under `build/macos-metal/app-backups.noindex` with a
 `.app.backup` extension so Spotlight cannot select an older development build.
 Quit an older running copy before launching the installed version: macOS can
 reactivate an existing
@@ -371,24 +353,19 @@ Set `HALO_PERF_LOG=/absolute/path/frames.csv` for profiling an ordinary launch.
 Driver draw time includes waits (including drawable/vsync waits); it is not a
 GPU timestamp measurement. Normal launches do not enable per-draw profiling.
 
-See [Apple regression checks](../../docs/apple-regression-checks.md) for the
-source-only CI boundary, local gameplay checks and measured upload comparison.
-
-The [overshield shadow regression](../../docs/overshield-shadow-fix.md) records
-the GLES border-sampling correction and its fixed-camera/gameplay evidence.
 Run `python3 -m unittest tools.test_texture_border -v` with Metal access for the
 offscreen production-shader pixel checks.
 
 ## Phase two
 
-Use this ANGLE/Metal build as the reference before changing rendering behavior.
+Use this Metal build as the reference before changing rendering behavior.
 Capture repeatable `a10`, `a30`, and `b30` scenes, recording frame-time percentiles,
 GPU time, resident memory, loading time, and shader compilation stalls. Then
 prioritize measured bottlenecks: shader/pipeline caching, upload and dirty-region
 costs, resolution scaling, frame pacing, and CPU hot paths. Preserve the 30 Hz
 simulation and validate interpolation separately.
 
-Direct NV2A-to-Metal shader translation is a later experiment, with visual
-comparisons for fog, water, shadows, blending, gamma, and render targets. ANGLE
-already uses Metal today; a direct renderer should earn its maintenance cost
+The Mac build draws with Metal. Further shader work still needs visual
+comparisons for fog, water, shadows, blending, gamma, and render targets. A
+new renderer should earn its maintenance cost
 through measured performance or compatibility improvements.

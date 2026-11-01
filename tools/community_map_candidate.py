@@ -130,7 +130,7 @@ def main():
     info_path = app / "Contents/Info.plist"
     with info_path.open("rb") as stream:
         info = plistlib.load(stream)
-    bundle_id = "com.pfista.halo.community-map-pilot.c" + hashlib.sha256(str(out).encode()).hexdigest()[:12]
+    bundle_id = "local.halo.community-map-pilot.c" + hashlib.sha256(str(out).encode()).hexdigest()[:12]
     info.update(CFBundleIdentifier=bundle_id,
                 CFBundleName="Halo Xbox Map Pilot", CFBundleDisplayName="Halo Xbox Map Pilot")
     with info_path.open("wb") as stream:

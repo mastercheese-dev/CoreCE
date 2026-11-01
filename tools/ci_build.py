@@ -12,11 +12,9 @@ which only make the build slower; release builds use both, as a local
 release build does (profile-guided optimisation needs clang 22 or later,
 and is skipped with an older one). A profile build is a debug build with
 configure.py --profile, so that the profiling build is built too. CI_COMPILER_LAUNCHER (ccache, say) is
-passed on as --compiler-launcher. Upstream main gets the run's number
-(HALO_BUILD_NUMBER), which its release is named after and the self-updater
-compares. A release build of this fork sets that number, and HALO_BUILD_CHANNEL
-for a testing release, before configure. CI artifacts from this fork keep
-number 0, so they do not offer an update.
+passed on as --compiler-launcher. A published release sets HALO_BUILD_NUMBER
+and HALO_BUILD_CHANNEL before configure. CI artifacts keep number 0, so they
+do not offer an update.
 """
 
 import argparse
@@ -48,11 +46,8 @@ def run(command, cwd=ROOT):
 
 
 def update_build_number(environment):
-    """Only upstream main publishes the build-* releases used by the updater."""
-    number = environment.get("GITHUB_RUN_NUMBER", "")
-    if (environment.get("GITHUB_REPOSITORY") == "cybersecurity/halo-ce-universal"
-            and environment.get("GITHUB_REF") == "refs/heads/main" and number.isdigit()):
-        return number
+    """CI artifacts are not a published release. The number stays 0."""
+    del environment
     return "0"
 
 

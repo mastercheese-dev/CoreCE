@@ -174,7 +174,7 @@ class HTTPS:
     def request(self, method, url, *, headers=None, body=None, limit=16384):
         if urlsplit(url).scheme != "https":
             raise PublishError("Only HTTPS requests are permitted")
-        request_headers = {"User-Agent": "Halo-OG-map-publisher/1"}
+        request_headers = {"User-Agent": "CoreCE-map-publisher/1"}
         request_headers.update(headers or {})
         request = Request(url, data=body, headers=request_headers, method=method)
         try:

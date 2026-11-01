@@ -164,7 +164,7 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
         _configuration = [config copy];
         _configured = HaloDownloadConfigurationIsValid(config) && [config[@"catalog_url"] isKindOfClass:NSString.class];
         _statusText = _configured ? @"Community downloads are off." : @"Map hosting is not configured for this build.";
-        _work = dispatch_queue_create("com.pfista.halo.maps", DISPATCH_QUEUE_SERIAL);
+        _work = dispatch_queue_create("local.halo.maps", DISPATCH_QUEUE_SERIAL);
         _states = [NSMutableDictionary dictionary];
         _failures = [NSMutableDictionary dictionary];
         _transfers = [NSMutableDictionary dictionary];

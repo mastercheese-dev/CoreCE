@@ -61,7 +61,7 @@ OpenSauce (scenario_object_definitions_structures.hpp, s_scenario_vehicle)
 leaves those 0x20 bytes unnamed; in hugeass.map the byte at 0x58 is 1 on
 exactly the blue team's vehicles, and the word at 0x5A is 0x0303, 0x0404,
 0x0808, 0x0F0F or 0 by vehicle, the game types' default and allowed bits
-(docs/custom_edition_caches.md). */
+*/
 struct custom_edition_vehicle_placement
 {
 	struct scenario_object_datum object;

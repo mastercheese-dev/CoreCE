@@ -403,8 +403,7 @@ static const struct config_setting config_settings[] =
 		"put them and Custom Edition's bitmaps.map, sounds.map and loc.map in\n"
 		"the custom_maps folder beside the maps folder; the map lists show them\n"
 		"as CUSTOM SINGLEPLAYER and CUSTOM MULTIPLAYER. Their tags are checked\n"
-		"as the game's own maps' are before they run; false refuses them\n"
-		"(docs/custom_edition_caches.md)." },
+		"as the game's own maps' are before they run; false refuses them." },
 	{ "display.viewmodel_shield", _config_boolean, "false", "HALO_VIEWMODEL_SHIELD", _environment_value, _platform_all,
 		"The energy shield's flare on the first-person arms too, as on the body\n"
 		"(the stock game draws it on the body only)." },

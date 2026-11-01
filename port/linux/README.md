@@ -1231,8 +1231,7 @@ a Custom Edition install; the map lists show them as CUSTOM SINGLEPLAYER and
 CUSTOM MULTIPLAYER, played as campaign levels (alone, or as network co-op)
 or as multiplayer maps by their scenario type, and `game.custom_edition =
 false` refuses them. `map_validate` checks them too, with the resource maps
-beside each map or in `--maps <folder>`. See
-`docs/custom_edition_caches.md`.
+beside each map or in `--maps <folder>`.
 
 Defensive checks stay in the game code too. An index into a tag block, the
 tags or a tag's data that is out of range gets zeros (`tag_empty_data` in

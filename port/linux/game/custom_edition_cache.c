@@ -835,7 +835,7 @@ boolean custom_edition_cache_refuse(
 	}
 	error(
 		_error_silent,
-		"'%.96s' is a Halo Custom Edition cache (build %.31s) this build cannot run: %s (docs/custom_edition_caches.md)",
+		"'%.96s' is a Halo Custom Edition cache (build %.31s) this build cannot run: %s",
 		path,
 		build,
 		status != _cache_file_status_ok ? cache_file_status_describe(status) :

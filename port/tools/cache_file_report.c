@@ -3,7 +3,7 @@ CACHE_FILE_REPORT.C
 
 Reports what the native builds can do with Halo 1 map files: which format
 each file is, whether it can be loaded, and why not
-(port/linux/game/cache_file_formats.c; docs/custom_edition_caches.md).
+(port/linux/game/cache_file_formats.c).
 
 	cache_file_report [--maps DIRECTORY] [--dump-tags FILE] FILE...
 
@@ -309,7 +309,7 @@ static int report_custom_edition_cache(
 	}
 	printf("milestone.recognize: yes\n");
 	printf("milestone.load: %s\n", status == _cache_file_status_ok ? "yes" : "no");
-	printf("milestone.run: not observed by this tool (the game converts the rest as it loads a map; docs/custom_edition_caches.md)\n");
+	printf("milestone.run: not observed by this tool (the game converts the rest as it loads a map)\n");
 
 	for (type = _resource_map_bitmaps; type < NUMBER_OF_RESOURCE_MAP_TYPES; type++)
 	{

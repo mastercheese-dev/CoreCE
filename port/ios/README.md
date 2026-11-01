@@ -1,15 +1,15 @@
 # iPhone development build
 
 This port targets iPhone 17 Pro Max, arm64, iOS 26.0 or later. It uses the
-existing game and Xbox SDK inputs from the local Mac setup. The renderer uses
-ANGLE's Metal backend and inherits the Mac vertex-upload and occlusion-query
-fixes. The first build uses the display's landscape aspect ratio at a 480-pixel
-internal height, scaled to the native drawable.
+checked-in SDK declarations and your own game maps. The renderer uses ANGLE's
+Metal backend. The first build uses the display's landscape aspect ratio at a
+480-pixel internal height, scaled to the native drawable.
 
 ## Build
 
-First complete [Apple build setup](../../docs/apple-build.md), including full
-Xcode 26+, CMake, the public dependencies, your local game maps and XDK headers.
+The Mac build instructions in [port/macos/README.md](../macos/README.md#build) cover
+LLVM 22 and the public dependencies. This phone build also needs Xcode 26 or
+later, CMake, your local game maps, and the checked-in SDK declarations.
 You do not need to build the Mac app or the simulator first.
 `DEVELOPER_DIR` defaults to `/Applications/Xcode.app/Contents/Developer`;
 the build does not change the system's selected developer directory.
@@ -74,7 +74,7 @@ Documents folder. An older `Documents/GameData/maps` folder is still used when
 it is already there. Saves, `config.toml` and `halo.log` are in `Documents/save`
 inside the app container. Do not publish the app bundle or local signing logs.
 
-For multiplayer on a physical phone, see [Mac and iPhone System Link](../../docs/apple-multiplayer.md).
+A physical phone joins a Mac game only when both use the same network protocol.
 
 ## Simulator
 

@@ -17,7 +17,7 @@ class InstallerBoundary(unittest.TestCase):
         self.app = self.root / "CoreCE.app"
         self.app.mkdir()
         (self.app / "engine").write_bytes(b"verified source")
-        self.output = self.root / "Halo-OG.dmg"
+        self.output = self.root / "CoreCE.dmg"
 
     def package_with(self, builder):
         with patch.dict("sys.modules", {"dmgbuild": SimpleNamespace(build_dmg=builder)}), \

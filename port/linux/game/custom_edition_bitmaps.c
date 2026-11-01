@@ -16,8 +16,8 @@ the whole padded to 128. Every Custom Edition bitmap's pixels go through it
 as they arrive.
 
 Halo PC keeps what some textures hold in other channels than this build
-reads it from (enum custom_edition_channel_order, cache_file_formats.h;
-docs/custom_edition_caches.md): a model shader's multipurpose masks, and
+reads it from (enum custom_edition_channel_order, cache_file_formats.h):
+a model shader's multipurpose masks, and
 a HUD meter's shape and the order it fills in. Reordering them in the pixels
 would mean decompressing them, which the texture cache has no room for, so
 the renderer is told where Halo PC keeps the channels of each bitmap's

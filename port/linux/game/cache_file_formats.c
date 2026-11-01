@@ -2,7 +2,7 @@
 CACHE_FILE_FORMATS.C
 
 Halo Custom Edition caches and Custom Edition resource maps
-(cache_file_formats.h; docs/custom_edition_caches.md).
+(cache_file_formats.h).
 
 Sources for the layouts, cited per structure below:
 - OpenSauce (GPL-3.0, Kornner Studios; the snapshot examined is the
@@ -14,11 +14,9 @@ Sources for the layouts, cited per structure below:
 - BlamLib, in the same archive: the font and unicode string list layouts.
 - Reclaimer (GPL-3.0, Gravemind2401; the Reclaimer-master archive): how
   bitmap tags and pixel data are found in bitmaps.map.
-No code from either project is used: they are documentation here, and this
-repository is CC0. Facts that neither source states were established by
-reading the sample Custom Edition maps; the comments below say so where they
-are used ("observed", "every map examined"), and
-docs/custom_edition_caches.md lists each with its evidence.
+No code from either project is copied in. Facts that neither source states
+were established by reading the sample Custom Edition maps. The comments
+below say so where they are used ("observed", "every map examined").
 */
 
 /* ---------- headers */
@@ -1580,7 +1578,7 @@ own data_file_read instead.) The entry's copy of the header is used for the
 fields the map's copy leaves zero, its sample rate, encoding, compression
 and longest permutation length, which it holds as the Xbox maps of build
 2276 do. Its pointers and tag references belong to the editing kit and to
-the map that sounds.map was built with (docs/custom_edition_caches.md). */
+the map that sounds.map was built with. */
 static enum cache_file_status resource_sound_load(
 	struct load_state *state,
 	uint8_t *instance,
@@ -3130,7 +3128,7 @@ static void hud_meters_convert(
 flag at half the size of its bitmap, and Custom Edition's HUD bitmaps are
 made for that: in Blood Gulch every flagged element draws a bitmap twice the
 size of the one its Xbox counterpart draws, and every other element one of
-the same size (docs/custom_edition_caches.md). A bitmap may ask the same of
+the same size. A bitmap may ask the same of
 every element that draws it (hud_bitmap_halves_scale). This build has no
 such flags (hud_draw.c draws a bitmap at its size times the placement's
 scale), so the scale takes them in.

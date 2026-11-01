@@ -1,13 +1,11 @@
 # Install the unsigned IPA with your own Apple account
 
-Use an Apple Silicon Mac with Xcode 26+ and Python 3. This runtime requires
-iOS/iPadOS 26+ and a profile granting Extended Virtual Addressing; a paid
-development team was required in upstream testing. Start with a device IPA
-provided by the builder, or build one using [the iOS build instructions](README.md)
-and `tools/ios_package.py`. Download the unsigned device IPA and re-signing kit from the
-[PR #1 testing release](https://github.com/AttilaTheFun/halo-ce-universal/releases/tag/apple-ios-pr1-20261013). The release is built from
-`apple/ios-installer`, not the private branding branch. GitHub Actions does not
-yet publish an unsigned IPA automatically. A simulator app cannot run on an iPhone.
+Use an Apple Silicon Mac with Xcode 26 or later and Python 3. This runtime requires
+iOS/iPadOS 26 or later and a profile granting Extended Virtual Addressing. A paid
+development team was required to provision that capability. Build the unsigned
+device IPA from this repository with [the iOS build instructions](README.md)
+and `tools/ios_package.py`. This repository does not publish an IPA. A simulator
+app cannot run on an iPhone.
 
 The script signs locally using a certificate/private key already in your
 Keychain and a provisioning profile issued for your account. It does not
@@ -42,12 +40,10 @@ you use your own account.
 
 ## Sign and install
 
-Extract `CoreCE-iOS-resigning-kit.zip` and run the command below from its
-folder. Alternatively, check out `apple/ios-installer` from
-`AttilaTheFun/halo-ce-universal` and run it from the repository root:
+From the root of this repository, run:
 
 ```sh
-./tools/ios_resign.sh ~/Downloads/CoreCE-iOS-PR1-unsigned.ipa \
+./tools/ios_resign.sh ~/Downloads/CoreCE-unsigned.ipa \
   --identity 'Apple Development: Your Name (IDENTITY_ID)' \
   --profile ~/Downloads/embedded.mobileprovision \
   --bundle-id com.yourname.haloce \
@@ -126,14 +122,9 @@ existing legacy save directory). Existing imports and saves are preserved.
 
 ## Build it yourself
 
-```sh
-git clone --branch apple/ios-installer https://github.com/AttilaTheFun/halo-ce-universal.git
-cd halo-ce-universal
-```
-
-Follow [the build instructions](README.md#build), supplying your own team and
-unique bundle ID. Source builds need the same Extended Virtual Addressing
-capability; compiling locally does not remove that requirement.
+Follow [the build instructions](README.md#build) in this repository, supplying
+your own team and unique bundle ID. Source builds need the same Extended
+Virtual Addressing capability. Compiling locally does not remove that requirement.
 
 The public IPA is checked by re-signing it locally and verifying the nested
 framework and app signatures and required entitlement. This does not establish

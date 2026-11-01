@@ -2349,7 +2349,7 @@ def multiplayer_files() -> dict:
 REPLACED_FOLDERS = [f"{MT}/server_settings"]
 
 
-# ---------- the mods (port/linux/game/mods.c, docs/mods.md): the main menu's
+# ---------- the mods (port/linux/game/mods.c): the main menu's
 # MODS, which opens the list of the mods folder's mods, in their load order,
 # each turned on or off and moved up or down (menu_functions.c's "port mods"
 # functions)

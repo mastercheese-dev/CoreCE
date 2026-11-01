@@ -22,9 +22,8 @@ enumeration's first value, the empty string, or NONE for objects, tags and
 the scenario's lists. Only a script index has no such default, so a map that
 would need one is refused.
 Both builds number their value types alike: every call in the maps examined
-has the same types here (docs/custom_edition_caches.md, and
-tools/custom_edition_script_names.py checks a map's calls against this
-build's tables).
+has the same types here. tools/custom_edition_script_names.py checks a map's
+calls against this build's tables.
 */
 
 /* ---------- headers */

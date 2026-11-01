@@ -1,4 +1,4 @@
-"""Mods (docs/mods.md) in the game: a mod of tag files made here (a sound, a bitmap and a unicode string list, as the
+"""Mods in the game: a mod of tag files made here (a sound, a bitmap and a unicode string list, as the
 Halo Editing Kit writes them) played over Blood Gulch's tags, the same files damaged, which the game must leave out,
 a model made from the map's own (its nodes, regions and markers, with geometry of its own), and the same with a
 marker moved or a node renamed, which it must leave out, and the load order: alphabetical, moved as mods ask, as

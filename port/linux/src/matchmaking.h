@@ -71,7 +71,7 @@ struct matchmaking_offer
 	/* how many players are in the lobby now. -1 when the offer did not say */
 	int joined;
 	/* seconds the server will still look for parties. 0 means the roster is
-	full or bots are filling it. -1 means there is no countdown. */
+	full. -1 means there is no countdown. */
 	int wait_seconds;
 	/* party is the private lobby. search is after Find Game. */
 	int phase;

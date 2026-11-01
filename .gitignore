@@ -7,13 +7,45 @@ __pycache__
 .mypy_cache
 .cache/
 
-# Build files
+# Build files. build/ holds the Mac Metal, Linux, and Windows outputs,
+# including downloaded toolchains. dist/ holds packaged CI outputs.
 build/
 .ninja_*
 build.ninja
 
 # Generated configs
 compile_commands.json
+
+# Products of those builds. Ignored in any directory, so a copy left
+# outside build/ or dist/ is not committed. The profiles in pgo/ stay
+# tracked. words_alpha.txt.gz and the Gradle wrapper jar stay tracked.
+*.dmg
+*.dll
+*.so
+*.so.*
+*.a
+*.obj
+*.lib
+*.exp
+*.ilk
+*.idb
+*.res
+*.o.d
+*.obj.d
+*.profraw
+*.gcda
+*.gcno
+*.gcov
+*.tar.gz
+*.tar.xz
+*.tgz
+
+# In-source CMake output. The Linux portable build runs CMake under build/.
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+cmake-build-*/
 
 # The January build and the Xbox SDK (tools/xdk_headers.py reads the
 # build's PDB); never commit

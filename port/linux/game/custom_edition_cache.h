@@ -7,7 +7,7 @@ are refused). By default it finds them, says what they are, and refuses
 them. With the game.custom_edition setting on it loads and runs them
 instead, which is experimental: their tags are laid out for Halo PC, and
 custom_edition_cache.c and custom_edition_geometry.c convert what they know
-to differ (docs/custom_edition_caches.md). The format itself is read by
+to differ. The format itself is read by
 cache_file_formats.c.
 */
 

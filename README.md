@@ -8,21 +8,21 @@
 </p>
 <p align="center">
   <a href="https://github.com/mastercheese-dev/CoreCE/releases/download/build-52/CoreCE-macos-arm64.dmg"><img src="https://img.shields.io/badge/Mac-download-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download CoreCE for Mac"></a>
-  <a href="https://github.com/mastercheese-dev/CoreCE/releases/download/build-28/halo-windows-release.zip"><img src="https://img.shields.io/badge/Windows-download-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download CoreCE for Windows"></a>
-  <a href="https://github.com/mastercheese-dev/CoreCE/releases/download/linux-net34-20/halo-linux-release.zip"><img src="https://img.shields.io/badge/Linux-download-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Download CoreCE for Linux"></a>
+  <a href="https://github.com/mastercheese-dev/CoreCE/releases/download/build-30/halo-windows-release.zip"><img src="https://img.shields.io/badge/Windows-download-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download CoreCE for Windows"></a>
+  <a href="https://github.com/mastercheese-dev/CoreCE/releases/download/build-58/halo-linux-release.zip"><img src="https://img.shields.io/badge/Linux-download-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Download CoreCE for Linux"></a>
 </p>
 
 <p align="center">
   <img src="docs/images/main-menu.png" alt="Original Halo main menu running on Apple Silicon" width="512">
 </p>
 
-**CoreCE** is an open source port of the Halo: Combat Evolved decompilation, from Xbox development build 2342 and [bnunu/halo-1](https://github.com/bnunu/halo-1). Windows, Linux, and Apple Silicon each run the game's own code, with a new layer in place of the Xbox hardware. Windows and Linux draw with OpenGL. The Mac build draws with Metal. Sound, input, and gamepads go through SDL3.
+**CoreCE** is a fork of [OpenCE](https://github.com/OpenCommunityEdition/OpenCE). OpenCE continues the Halo: Combat Evolved decompilation of Xbox development build 2342, from [bnunu/halo-1](https://github.com/bnunu/halo-1), itself a fork of [punpckhdq/halo](https://github.com/punpckhdq/halo). Windows, Linux, and Apple Silicon each run the game's own code, with a new layer in place of the Xbox hardware. Windows and Linux draw with OpenGL. The Mac build draws with Metal. Sound, input, and gamepads go through SDL3.
 
 You can play with up to 128 players, run campaign co-op online, load Custom Edition maps, change the field of view, browse servers, host peer-to-peer, download missing maps, and use voice chat. With Smooth Motion on, the game draws a frame for every refresh of the display. The simulation stays at 30 ticks a second, as on the Xbox.
 
 ## Download
 
-The Mac button downloads build 52 (`CoreCE-macos-arm64.dmg`). The Windows button downloads build 28 (`halo-windows-release.zip`). The Linux button downloads `halo-linux-release.zip` from `linux-net34-20`. Each system is published on its own. Older builds are on the [releases page](https://github.com/mastercheese-dev/CoreCE/releases).
+The Mac button downloads build 52 (`CoreCE-macos-arm64.dmg`). The Windows button downloads build 30 (`halo-windows-release.zip`). The Linux button downloads build 58 (`halo-linux-release.zip`). Each system is published on its own. Those three are on the [releases page](https://github.com/mastercheese-dev/CoreCE/releases).
 
 | System | Download this | Then |
 | --- | --- | --- |
@@ -55,8 +55,6 @@ Settings live in `config.toml` next to `halo.exe`. Saves go in `%APPDATA%\Halo O
 2. Unzip it into its own folder and run `halo`.
 3. The zip brings its own SDL3 (`libSDL3.so.0`). Install the 32-bit OpenGL libraries, the 32-bit PipeWire or PulseAudio client, and the 32-bit X11 libraries. SteamOS already has them. Package names, glibc, and Wayland are in the [Linux README](port/linux/README.md), along with controls and settings. Most of the controls and settings are the same on every platform.
 
-Arch Linux can install the [AUR package](https://aur.archlinux.org/packages/CoreCE-bin) and skip the zip.
-
 On a Steam Deck, do the setup in Desktop Mode. Unzip the release, then in Steam open the Games menu, choose Add a Game, and add `halo` as a non-Steam game. It then starts from Game Mode as well. If the Deck sleeps while it is hosting, the other players lose the host after 15 seconds.
 
 Settings live in `config.toml` next to `halo`. Saves go in `~/.local/share/halo-og`. The first launch copies an older `~/.local/share/halo-linux` folder into that location and leaves the old folder in place.
@@ -81,7 +79,7 @@ If an older Mac build left files behind, CoreCE copies the first folder it finds
 
 Put the Xbox maps in `maps`. Put Custom Edition maps in `custom_maps`, beside `maps`. If `maps` contains Halo PC maps, the game explains that and stops.
 
-On Linux and Windows, `maps` sits next to the executable. You can also set `paths.data` in `config.toml` to a folder you already have. On Mac, the same choices are described in [Mac data import](docs/macos-menu-and-releases.md#independently-supplied-data).
+On Linux and Windows, `maps` sits next to the executable. You can also set `paths.data` in `config.toml` to a folder you already have. On Mac, the first launch offers the same choice: copy the game into Application Support, or use a folder you already have.
 
 ## Multiplayer
 
@@ -101,13 +99,13 @@ Put Halo Custom Edition maps in `custom_maps`, beside `maps`. That folder also n
 
 The Gearbox maps that shipped with Halo PC (Ice Fields, Death Island, Danger Canyon, Infinity, Timberland, and Gephyrophobia) are a separate set. Copy them from a Halo Custom Edition install's `maps` folder into `custom_maps`. They then appear under Custom Singleplayer and Custom Multiplayer. A custom singleplayer map plays as a campaign level, alone or as online co-op. Maps that require OpenSauce will not load.
 
-The server browser and the LAN browser can download a missing custom map from the other players, including `bitmaps.map`, `sounds.map`, and `loc.map`. This works on a LAN, and on the internet when the host has map sharing on (the default). See [docs/custom_edition_caches.md](docs/custom_edition_caches.md).
+The server browser and the LAN browser can download a missing custom map from the other players, including `bitmaps.map`, `sounds.map`, and `loc.map`. This works on a LAN, and on the internet when the host has map sharing on (the default).
 
 ## Community maps and competitive options
 
-Mac Settings can download 40 approved community maps in the background after you opt in. The collection is about 863 MiB, built for Xbox v5 NTSC data. Verified downloads stay usable offline. Windows and Linux currently install matching maps by hand. See [community-map setup](docs/playtesting.md#community-maps).
+Mac Settings can download 40 approved community maps in the background after you opt in. The collection is about 863 MiB, built for Xbox v5 NTSC data. Verified downloads stay usable offline. Windows and Linux currently install matching maps by hand.
 
-**CoreCE Options** offers spawn markers, timer announcements, and optional silent movement and weapon-ready sounds. Those modifications default off. The host chooses them. Use **Stock** for original-rule play. The match clock is each machine's Graphics setting: Off, On, or On with Voice. On with Voice plays the countdown shipped with the game. See [CoreCE Options](docs/performance-options.md).
+**CoreCE Options** offers spawn markers, timer announcements, and optional silent movement and weapon-ready sounds. Those modifications default off. The host chooses them. Use **Stock** for original-rule play. The match clock is each machine's Graphics setting: Off, On, or On with Voice. On with Voice plays the countdown shipped with the game.
 
 **Match Options**, on the game type, covers movement sounds, training, camouflage, team scores, weapon spread, and field of view. The host's choices apply to the game. Default field of view leaves each player's Graphics setting.
 
@@ -152,7 +150,7 @@ You do not need the Xbox SDK. The port supplies the declarations the game uses. 
 | --- | --- |
 | `ninja linux` | `build/linux/halo` |
 | `ninja windows` (on Windows) | `build/windows/halo.exe` and `SDL3.dll` |
-| Mac | [Apple setup](docs/apple-build.md). The Mac build uses LLVM 22 and `tools/macos_build.py`. |
+| Mac | [Mac build](port/macos/README.md#build). It uses LLVM 22 and `tools/macos_build.py`. |
 
 ### Build options
 
@@ -162,7 +160,7 @@ The experimental [iPhone port](port/ios/README.md) is a developer build. These r
 
 ## Credits
 
-The decompilation is of Xbox build 2342. CoreCE starts from [OpenCE](https://github.com/OpenCommunityEdition/OpenCE) and [bnunu/halo-1](https://github.com/bnunu/halo-1), a fork of [punpckhdq/halo](https://github.com/punpckhdq/halo). High-res redraw artists are in [AUTHORS.md](AUTHORS.md). This tree reviews upstream changes one by one.
+The decompilation is of Xbox build 2342. CoreCE starts from [OpenCE](https://github.com/OpenCommunityEdition/OpenCE) and [bnunu/halo-1](https://github.com/bnunu/halo-1), a fork of [punpckhdq/halo](https://github.com/punpckhdq/halo). This tree reviews upstream changes one by one.
 
 ## Licence
 

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'New immutable testing tag, for example test-v0.3.0-net11'
+        description: 'New testing tag, for example testing-39'
         required: true
         type: string
 
@@ -17,7 +17,8 @@ concurrency:
 
 jobs:
   prepare:
-    if: ${{ github.repository == 'pfista/halo-og' && github.ref == 'refs/heads/main' }}
+    # Testing releases are published by hand. See AGENTS.md.
+    if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

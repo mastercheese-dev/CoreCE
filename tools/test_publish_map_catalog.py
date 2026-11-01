@@ -411,7 +411,7 @@ class PublisherTests(unittest.TestCase):
                 http.request("GET", "https://api.cloudflare.com/", headers={"Authorization": "Bearer private_token"})
         self.assertNotIn("private", str(error.exception))
         request = transport.call_args.args[0]
-        self.assertEqual(request.get_header("User-agent"), "Halo-OG-map-publisher/1")
+        self.assertEqual(request.get_header("User-agent"), "CoreCE-map-publisher/1")
         self.assertIsNone(publisher.NoRedirect().redirect_request(None, None, 302, "redirect", {}, "https://other.test/"))
         with self.assertRaises(publisher.PublishError):
             http.request("GET", "http://insecure.test/")

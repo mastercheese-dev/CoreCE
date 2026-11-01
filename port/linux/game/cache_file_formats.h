@@ -7,9 +7,8 @@ caches (version 7, the hardcore maps), and the Custom
 Edition resource maps bitmaps.map, sounds.map and loc.map. A cache that
 needs OpenSauce (its header asks for memory upgrades, mod data files and the
 like) is refused; one that only carries OpenSauce's header and tags is run as
-stock Custom Edition runs it, without them. docs/custom_edition_caches.md
-defines what each milestone (recognize, load, run) means, which of them this
-module reaches, and the evidence behind every layout used here.
+stock Custom Edition runs it, without them. The milestones are recognize,
+load, and run. The comments on each layout record the evidence for it.
 
 The code is standalone C with fixed-width types: the same file is compiled
 into the native game builds and into the host tool
@@ -240,7 +239,7 @@ struct custom_edition_load_report
 };
 
 /* Where Halo PC keeps what a texture holds in other channels than this
-build reads it from (docs/custom_edition_caches.md). The renderer samples a
+build reads it from. The renderer samples a
 texture in the order the game names for it (port/linux/src/xbox_textures.c,
 halo_custom_edition_texels_channels). */
 enum custom_edition_channel_order

@@ -15,11 +15,8 @@ name: Build
 # - Windows, whose minutes cost twice Linux's, builds only Windows;
 # - artifacts are kept for three days.
 #
-# A successful build of upstream's main is also published as a GitHub release, the
-# newest marked latest, so that
-# https://github.com/<repository>/releases/latest/download/<file> always
-# gives the latest build; the last five are kept. Forks keep CI artifacts
-# without automatically publishing releases or posting to Discord.
+# CI artifacts are not a release. Releases are published by hand, as AGENTS.md
+# describes, on mastercheese-dev/CoreCE.
 on:
   push:
     paths-ignore:
@@ -273,13 +270,9 @@ jobs:
           retention-days: 3
 
   release:
-    # The six builds (and the Windows builds' PDBs) as a release, tagged
-    # build-<run number> and marked latest
-    # (every file keeps its name from release to release, for the README's
-    # latest/download links); then all but the newest five build-* releases
-    # go, tags and all. Only for upstream's main, and when every platform built.
+    # Kept in the workflow and not run. A release is published by hand.
     needs: [linux, android, windows]
-    if: ${{ github.repository == 'cybersecurity/halo-ce-universal' && github.ref == 'refs/heads/main' }}
+    if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -363,7 +356,7 @@ jobs:
     # with each platform's result, this run's release (main only), and links
     # to the latest release's builds.
     needs: [linux, android, windows, release]
-    if: ${{ !cancelled() && github.repository == 'cybersecurity/halo-ce-universal' }}
+    if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

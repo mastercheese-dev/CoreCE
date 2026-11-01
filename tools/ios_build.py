@@ -76,7 +76,7 @@ def main():
                 '--android-guest-gl-include', 'build/macos/toolchain/gl', '--pgo', 'off')
             ninja = shutil.which('ninja') or ROOT / 'build/macos/toolchain/venv/bin/ninja'
             if not Path(ninja).is_file():
-                raise RuntimeError('Install Ninja and run tools/macos_setup.py first; see docs/apple-build.md')
+                raise RuntimeError('Install Ninja and run tools/macos_setup.py first. The Mac build steps are in port/macos/README.md.')
             run(ninja, f'-j{args.jobs}', 'ios_guest')
             run(sys.executable, 'tools/ios_embed.py', guest / 'halo_guest.elf', guest / 'embed')
         if not args.guest_only:

@@ -20,8 +20,8 @@ from urllib.parse import quote, urlencode
 import zipfile
 
 
-REPOSITORY = "pfista/halo-og"
-DMG = "Halo-OG-macos-arm64.dmg"
+REPOSITORY = "mastercheese-dev/CoreCE"
+DMG = "CoreCE-macos-arm64.dmg"
 WORKFLOWS = {
     "macos-dmg.yml": {"halo-macos-arm64-dmg": DMG},
     "build.yml": {f"halo-{platform}-release": f"halo-{platform}-release.zip"
@@ -65,8 +65,8 @@ def validate_inputs(repository, sha, tag):
         raise RuntimeError("Testing publication is limited to " + REPOSITORY)
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise RuntimeError("Use a full source commit SHA")
-    if not re.fullmatch(r"test-[A-Za-z0-9][A-Za-z0-9._-]{0,79}", tag) or ".." in tag or tag.endswith("."):
-        raise RuntimeError("Use a new test- tag with letters, digits, dots, underscores or hyphens")
+    if not re.fullmatch(r"testing-[1-9][0-9]*", tag):
+        raise RuntimeError("Use a testing- tag with the next testing number")
 
 
 def check_main_and_tag(api, sha, tag):
@@ -181,8 +181,7 @@ def release_notes(record):
     source = f"{url}/blob/{record['sha']}"
     return (f"CoreCE testing build `{record['tag']}` from [{record['sha']}]({url}/commit/{record['sha']}).\n\n"
             f"Network protocol: **{record['network_protocol']}**.\n\n"
-            f"Start with the [playtesting setup guide]({source}/docs/playtesting.md) "
-            f"or [project README]({source}/README.md). Download your platform's asset below; "
+            f"Start with the [project README]({source}/README.md). Download your platform's asset below; "
             "all players should use this same testing release.\n\n"
             "Mac, Windows, Linux and Android assets use the same source revision. "
             "Supply your own original Xbox Halo game data. No maps or disc images are included.\n\n"
@@ -194,7 +193,7 @@ def release_notes(record):
             "With original Xbox NTSC 2276 data selected, opt into **Download approved community maps "
             "in the background** in Settings to get the hosted Downrush map. Downloads default off.\n\n"
             f"For manual setup on any platform, download [downrush.map]({DOWNRUSH_URL}) "
-            "and follow the playtesting guide to add it to your maps folder. Its SHA-256 is "
+            "and add it to your maps folder. Its SHA-256 is "
             f"`{DOWNRUSH_SHA256}`. Use the same map bytes on every player.\n\n"
             "Check SHA256SUMS before installing. provenance.json records workflow runs, artifact IDs "
             "and hashes. These are test builds; physical cross-platform and Internet/NAT play "

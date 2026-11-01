@@ -15,7 +15,7 @@ from tools import ci_build, testing_release as release
 
 
 SHA = "a" * 40
-TAG = "test-v0.3.0-net11"
+TAG = "testing-39"
 
 
 class FixtureAPI:
@@ -99,7 +99,7 @@ class TestingReleaseTests(unittest.TestCase):
         self.prepare()
         notes = (self.directory / "release-notes.md").read_text()
         source = f"https://github.com/{release.REPOSITORY}/blob/{SHA}"
-        for path in ("README.md", "docs/playtesting.md", "port/linux/README.md#requirements"):
+        for path in ("README.md", "port/linux/README.md#requirements"):
             self.assertIn(f"({source}/{path})", notes)
         self.assertIn(f"[downrush.map]({release.DOWNRUSH_URL})", notes)
         self.assertIn(f"`{release.DOWNRUSH_SHA256}`", notes)
@@ -184,24 +184,27 @@ class TestingReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "asset changed"):
             release.verify_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
 
-    def test_fork_ci_cannot_offer_upstream_updates(self):
+    def test_ci_builds_do_not_advertise_an_update(self):
         environment = {"GITHUB_REPOSITORY": release.REPOSITORY, "GITHUB_REF": "refs/heads/main",
                        "GITHUB_RUN_NUMBER": "70", "HALO_BUILD_NUMBER": "999"}
-        self.assertEqual(ci_build.update_build_number(environment), "0")
-        environment["GITHUB_REPOSITORY"] = "cybersecurity/halo-ce-universal"
-        self.assertEqual(ci_build.update_build_number(environment), "70")
-        environment["GITHUB_REF"] = "refs/heads/feature"
         self.assertEqual(ci_build.update_build_number(environment), "0")
 
     def test_fork_android_apks_increment_install_code_without_enabling_updater(self):
         (self.root / ci_build.APKS["release"]).parent.mkdir(parents=True)
         (self.root / ci_build.APKS["release"]).write_bytes(b"fixture APK")
-        for dependency in ("miniupnpc",):
-            license = self.root / "port/third_party" / dependency / "LICENSE.TXT"
-            if dependency == "miniupnpc":
-                license = license.with_name("LICENSE")
-            license.parent.mkdir(parents=True)
-            license.write_text("fixture license")
+        notices = (
+            "LICENSE",
+            "port/third_party/mbedtls/LICENSE",
+            "port/third_party/miniupnpc/LICENSE",
+            "port/assets/fonts/Overpass-OFL.txt",
+            "port/third_party/expat/COPYING",
+            "port/third_party/opus/COPYING",
+            "port/assets/icons/lucide/LICENSE",
+        )
+        for notice in notices:
+            path = self.root / notice
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("fixture license")
         for number in ("70", "71"):
             commands = []
             def capture(command, cwd=None):

@@ -9,8 +9,7 @@ undefined operation on malformed input fails the test that caused it. The
 module is also compiled as the game compiles it (gnu89).
 
 When real maps are present (HALO_CUSTOM_EDITION_MAPS, or the gitignored
-assets/custom_edition), test_real_maps_* also check the results recorded in
-docs/custom_edition_caches.md.
+assets/custom_edition), test_real_maps_* also check the recorded results.
 """
 import os
 from pathlib import Path
@@ -644,7 +643,7 @@ def test_minimal_custom_edition_cache_loads_with_every_resource(report_tool, tmp
     assert report["milestone.recognize"] == "yes"
     assert report["milestone.load"] == "yes"
     # the tool loads and converts what it can from the bytes alone; running
-    # takes the game (docs/custom_edition_caches.md)
+    # takes the game
     assert report["milestone.run"].startswith("not observed by this tool")
     assert report["convert"] == "ok"
 
@@ -1482,8 +1481,7 @@ def test_real_maps_opensauce_caches_are_recognized(report_tool, real_maps):
 
 
 def test_real_maps_convert_as_recorded(report_tool, real_maps):
-    """The map run in the native build (docs/custom_edition_caches.md)
-    converts as recorded there."""
+    """The map run in the native build converts as recorded here."""
     recorded = {
         "bloodgulch.map": {"structure_bsp_materials_checked": "79", "shaders_renumbered": "21",
                            "chicago_extended_shaders_converted": "10", "bitmaps_prepared": "676",

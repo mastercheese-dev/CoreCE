@@ -147,7 +147,7 @@ def local_dmg(args):
     run("codesign", "--verify", "--deep", "--strict", app)
     with (app / "Contents/Info.plist").open("rb") as stream:
         info = plistlib.load(stream)
-    destination = args.output or ROOT / "build/macos" / ("Halo-OG-" + info["CFBundleShortVersionString"] + "-local.dmg")
+    destination = args.output or ROOT / "build/macos" / ("CoreCE-" + info["CFBundleShortVersionString"] + "-local.dmg")
     create_dmg(app, destination.resolve())
     print("Local test DMG (not notarized or approved for public distribution): " + str(destination))
 
@@ -182,7 +182,7 @@ def build_release(args):
     app_notary = notarize(app_zip, args.notary_profile)
     run("xcrun", "stapler", "staple", APP)
     run("spctl", "--assess", "--type", "execute", APP)
-    dmg = destination / ("Halo-OG-" + args.version + ".dmg")
+    dmg = destination / ("CoreCE-" + args.version + ".dmg")
     create_dmg(APP, dmg)
     run("codesign", "--sign", args.sign_identity, "--timestamp", dmg)
     dmg_notary = notarize(dmg, args.notary_profile)

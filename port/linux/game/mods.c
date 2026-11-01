@@ -6,7 +6,7 @@ pack is: a map's sounds (mod_sounds.c), bitmaps (mod_bitmaps.c), text
 (mod_strings.c) and models (mod_models.c) from Halo PC tag files, as the
 Halo Editing Kit and Invader write them, in the mods of the mods folder that
 are on, in their load order (port/linux/src/port_mods.c; the main menu's
-Mods chooses: menu_functions.c; the mod.toml files: docs/mods.md). Nothing a
+Mods chooses: menu_functions.c). Nothing a
 mod plays is anything the machines of a network game must agree on: no tag
 that the game simulates is played from a file (a model's nodes, markers and
 regions must be the map's: only what is drawn of it is the file's), and no

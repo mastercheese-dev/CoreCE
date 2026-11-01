@@ -54,7 +54,7 @@ update.h's: posix_update.c on Linux, win32_update.c on Windows.
 #define HALO_BUILD_CHANNEL "main"
 #endif
 #ifndef HALO_UPDATE_REPOSITORY
-#define HALO_UPDATE_REPOSITORY "OpenCommunityEdition/CoreCE"
+#define HALO_UPDATE_REPOSITORY "mastercheese-dev/CoreCE"
 #endif
 
 #define UPDATE_REPOSITORY HALO_UPDATE_REPOSITORY

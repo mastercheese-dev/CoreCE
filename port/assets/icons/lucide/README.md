@@ -14,4 +14,4 @@ https://github.com/lucide-icons/lucide:
 `tools/ce_menus.py` draws the first two, white, as the menus' bitmap
 `voice/speaker` (port/linux/game/network_voice.c tints it), and the others,
 amber and red, as `mods/status` and the smaller `mods/status_small`
-(`tools/port_settings.py`). Credited in `AUTHORS.md`.
+(`tools/port_settings.py`).

@@ -17,7 +17,7 @@ strips need no change. Against the Xbox maps of build 2276, whose models have
 this build's layout, the models the two versions of Blood Gulch share have
 the same strips and positions, and their compressed texture coordinates,
 node indices and node weights are what the compressor makes of the Custom
-Edition vertices (docs/custom_edition_caches.md).
+Edition vertices.
 */
 
 /* ---------- headers */
