@@ -2012,10 +2012,13 @@ void platform_pump_events(void)
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
 			input_state.focused = FALSE;
-			/* the cursor belongs to whatever is in front. A key or button
-			already held stays held, and the grab returns with the window. */
 			scoreboard_pointer_active = FALSE;
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+			/* the mouse waits for a click. Grabbing it again as the window
+			returns drops the controller. A key already held stays held. */
+			input_state.mouse_released = TRUE;
 			platform_mouse_capture(FALSE);
+#endif
 #ifdef HALO_ANDROID
 			touch_input_cancel();
 #endif

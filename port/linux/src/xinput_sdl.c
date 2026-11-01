@@ -1020,6 +1020,13 @@ static int sdl_gamepads(SDL_Gamepad *gamepads[PORT_COUNT])
 	ids = SDL_GetGamepads(&count);
 	if (!ids)
 		return 0;
+	/* a pad can leave and return without a second added event. Open it
+	again, or the connection stays down on every platform. */
+	for (index = 0; index < count; index++)
+	{
+		if (!SDL_GetGamepadFromID(ids[index]))
+			SDL_OpenGamepad(ids[index]);
+	}
 #ifdef HALO_ANDROID
 	{
 		/* Android can list input devices with a few gamepad buttons (the
