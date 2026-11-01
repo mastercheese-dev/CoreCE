@@ -80,12 +80,12 @@ struct matchmaking_offer
 	int name_count;
 	char names[MATCHMAKING_LOBBY_NAMES][MATCHMAKING_LOBBY_NAME_LENGTH];
 	/* which party each name is in. -1 when that name is not in a party.
-	party 0 and party 1 are the two teams. */
+	the first party is one team and the next party is the other. a later
+	party joins the team with fewer players. */
 	int name_party[MATCHMAKING_LOBBY_NAMES];
 	/* how many parties the offer listed. 0 means it did not list any. */
 	int party_count;
-	/* seats to fill once the roster is set. -1 when the offer did not say.
-	0 means leave the seats empty. */
+	/* a count the service may send. this client does not add seats from it. */
 	int bots;
 	int teams;
 	int team_size;
@@ -140,12 +140,16 @@ void matchmaking_leave(void);
 void matchmaking_reset(void);
 /* the match has started. stop publishing and clear the retained queue. the port stays. */
 void matchmaking_stop(void);
-/* this machine is the fallback host. publish the invite once it exists. */
+/* this machine is hosting. publish the invite and keep the queue. */
 void matchmaking_commit_host(const char *playlist, unsigned short port);
 /* the private lobby has been joined. keep publishing and keep the port. */
 void matchmaking_commit_join(void);
-/* this machine opened its own party lobby. keep publishing and keep the port. */
+/* this machine opened its own party lobby. keep publishing, and publish
+the invite once it exists. */
 void matchmaking_commit_party(void);
+/* this machine left the lobby it was hosting. the retained invite is cleared.
+the queue stays until the match starts or the player leaves. */
+void matchmaking_release_host(void);
 /* a party opened before the service names a match. catalog row supplies the port. */
 void matchmaking_party_offer(struct matchmaking_offer *offer, const struct matchmaking_playlist *row);
 /* a join link that is not this party's. a machine already publishing stops,
@@ -159,15 +163,17 @@ int matchmaking_link(void);
 unsigned short matchmaking_game_port(void);
 void matchmaking_set_game_port(unsigned short port);
 /* 0 or 1 for a matchmaking team game, -1 otherwise. a party stays together.
-without a parties list, every human in this game shares team 0. */
+the first party is one team and the next party is the other. a later party
+joins the team with fewer players. with no parties, every human in this
+game shares team 0. */
 int matchmaking_join_team(const wchar_t *name);
+/* 1 when this host should count the lobby down. a private party, and role
+wait, stay open. wait_seconds 0 starts now. a full lobby starts only after
+Find Game. */
+int matchmaking_may_count(int player_count, int maximum_players);
 /* how long the lobby waits before it starts, in milliseconds. 0 means start
-now. the offer's wait_seconds is that wait. when the offer did not say, this
-is the long lobby wait. */
+now. the offer's wait_seconds is that wait, and it is not longer than 100
+seconds. matchmaking_may_count says whether the lobby counts at all. */
 unsigned long matchmaking_countdown_ms(void);
-/* how many seats to fill. -1 when this is not a matchmaking team game.
-other_team_only is 1 while the lobby is still open, and the count is then
-how many of those seats go on team 1. humans is how many people are in now. */
-int matchmaking_filler_count(int final, int humans, int *team_size, int *other_team_only);
 
 #endif

@@ -2834,7 +2834,9 @@ static void profile_list_update(struct widget_instance *list)
 	profile_list_finish_new(list);
 	profile_list_finish_copy(list);
 	profile_list_read(FALSE);
-	if (!profile_list_lan_add(list))
+	/* the LAN add-player list is the only one with this row. a matchmaking
+	lobby never shows it, even if that screen were opened */
+	if (!profile_list_lan_add(list) || matchmaking_game_port())
 		profile_list_bot_row = FALSE;
 	item = list_scroll(list, &profile_list.first, profile_list_slots(), profile_list_rows());
 	if (item != NONE)
@@ -6274,6 +6276,12 @@ static boolean lobby_leave(struct widget_instance *widget, struct event_record *
 	return left;
 }
 
+/* a LAN host. a matchmaking lobby does not add a bot from this screen */
+static boolean lobby_bots_allowed(void)
+{
+	return multiplayer.mode == _multiplayer_mode_host_lan && !matchmaking_game_port();
+}
+
 /* "port lobby player list initialize": on the joining controller's profile,
 else the first no other player of this machine has */
 static boolean lobby_player_list_initialize(struct widget_instance *list)
@@ -6281,8 +6289,7 @@ static boolean lobby_player_list_initialize(struct widget_instance *list)
 	long mine = lobby_join.controller != NONE ? player_ui_get_active_player_profile_index(lobby_join.controller) : NONE;
 	short index, controller;
 
-	profile_list_bot_row = profile_list_lan_add(list) &&
-		multiplayer.mode == _multiplayer_mode_host_lan;
+	profile_list_bot_row = profile_list_lan_add(list) && lobby_bots_allowed();
 	if (!virtual_keyboard_active())
 		profile_list_making = FALSE;
 	profile_list_copy_reset();
@@ -6360,7 +6367,11 @@ static long lobby_bot_skill;
 /* "port lobby bot begin": the next free name, and Normal until they change it */
 static boolean lobby_bot_begin(void)
 {
-	wchar_t const *name = lobby_bot_name();
+	wchar_t const *name;
+
+	if (!lobby_bots_allowed())
+		return FALSE;
+	name = lobby_bot_name();
 
 	/* ADD PLAYER had marked a second person, which moves the only gamepad
 	off the player who is already in. A bot does not take that pad. */
@@ -6520,7 +6531,7 @@ static boolean lobby_bot_add(struct widget_instance *widget)
 
 	lobby_bot_take_skill(widget);
 
-	if (multiplayer.mode != _multiplayer_mode_host_lan)
+	if (!lobby_bots_allowed())
 	{
 		display_error_text_deferred(L"Bots can only be added in a LAN game.", NONE);
 		return FALSE;
@@ -6589,6 +6600,8 @@ static boolean lobby_player_choose(struct widget_instance *widget, boolean *widg
 		return TRUE;
 	if (profile_list_bot_row && profile_list.chosen == profile_list.count)
 	{
+		if (!lobby_bots_allowed())
+			return TRUE;
 		lobby_join_reset();
 		return FALSE;
 	}
@@ -6613,6 +6626,8 @@ static boolean lobby_player_confirm(struct widget_instance *widget, short contro
 	profile_list_take_focus(widget);
 	if (profile_list_bot_row && profile_list.chosen == profile_list.count)
 	{
+		if (!lobby_bots_allowed())
+			return TRUE;
 		lobby_join_reset();
 		return FALSE;
 	}
@@ -9226,8 +9241,7 @@ static struct
 static char mm_joined_invite[256];
 /* the map and rules already applied from a service offer, so a repeat does not rebuild the variant */
 static char mm_followed_map[64];
-static int mm_followed_mode = -1;
-static long mm_followed_score = -1;
+static struct matchmaking_rules mm_followed_rules;
 static unsigned short mm_switch_port;
 static int mm_switching;
 static int mm_switch_started;
@@ -9714,8 +9728,9 @@ static void mm_sync_client(void)
 }
 
 /* a service offer that arrives after the lobby is open. the queue keeps
-publishing. a host offer replaces the map and the rules. a join is taken
-by the search, which leaves this lobby for that invite. */
+publishing. role host replaces the map and the rules. the port stays the
+catalog port this lobby already bound. role server or join is taken by
+the lobby switch, which leaves for that invite. */
 static void mm_follow_offer(void)
 {
 	struct matchmaking_offer offer;
@@ -9729,8 +9744,8 @@ static void mm_follow_offer(void)
 	server = global_network_game_server_get();
 	if (!server || !offer.map[0])
 		return;
-	if (!strcmp(mm_followed_map, offer.map) && mm_followed_mode == offer.rules.mode &&
-		mm_followed_score == offer.rules.score)
+	if (!strcmp(mm_followed_map, offer.map) &&
+		!memcmp(&mm_followed_rules, &offer.rules, sizeof(mm_followed_rules)))
 		return;
 	if (!cache_files_map_plays_multiplayer(offer.map, build))
 		return;
@@ -9744,8 +9759,7 @@ static void mm_follow_offer(void)
 	game_set_game_variant_options(&gametype_edit.setup_options);
 	mm_sync_client();
 	snprintf(mm_followed_map, sizeof(mm_followed_map), "%s", offer.map);
-	mm_followed_mode = offer.rules.mode;
-	mm_followed_score = offer.rules.score;
+	mm_followed_rules = offer.rules;
 }
 
 static struct advertised_game *mm_peer_game(void)
@@ -10075,8 +10089,7 @@ static void mm_remember_host_invite(void)
 static void mm_follow_reset(void)
 {
 	mm_followed_map[0] = 0;
-	mm_followed_mode = -1;
-	mm_followed_score = -1;
+	csmemset(&mm_followed_rules, 0, sizeof(mm_followed_rules));
 }
 
 /* the machine's last player left the lobby before the match. the queue ends. */
@@ -10150,15 +10163,21 @@ static int mm_lobby_switch(struct widget_instance *list)
 		}
 		return 1;
 	}
-	/* a party stays on its own link. a search can be combined with another. */
-	if (offer.phase == MATCHMAKING_PHASE_PARTY || !offer.invite[0] || !offer.port ||
-		!mm_joined_invite[0] || !strcmp(offer.invite, mm_joined_invite))
+	/* role server or join, after Find Game, leaves this lobby for that
+	invite. role host stays here. role wait stays here and does not start. */
+	if ((offer.role != MATCHMAKING_ROLE_SERVER && offer.role != MATCHMAKING_ROLE_JOIN) ||
+		offer.phase != MATCHMAKING_PHASE_SEARCH || !offer.invite[0] || !offer.port)
+		return 0;
+	if (mm_joined_invite[0] && !strcmp(offer.invite, mm_joined_invite))
 		return 0;
 	mm_switch_port = offer.port;
 	matchmaking_set_game_port(offer.port);
 	if (!mm_switch_started)
 	{
+		/* this lobby must not start once we are leaving it */
+		dispose_global_network_game_server();
 		dispose_global_network_game_client();
+		matchmaking_release_host();
 		mm_switch_started = 1;
 	}
 	if (!p2p_join_invite(offer.invite) || !ui_widget_port_browse(list, NULL, NULL))
@@ -10392,7 +10411,7 @@ static boolean mm_begin_host(struct widget_instance *widget, struct event_record
 	multiplayer.game_name[NUMBEROF(multiplayer.game_name) - 1] = 0;
 	multiplayer.maximum_players_index = mm_players_index(mm_menu.offer.players);
 	network_game_server_port_set_settings(multiplayer.game_name, mm_menu.offer.players);
-	/* a party keeps publishing. the fallback host publishes its invite instead. */
+	/* the queue stays up, and the invite is published for the service. */
 	if (party)
 		matchmaking_commit_party();
 	else

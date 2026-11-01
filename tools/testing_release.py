@@ -268,29 +268,16 @@ def verify_candidate(api, repository, sha, tag, directory):
     return record
 
 
-def next_version(api):
-    """One higher than the highest 0.3.N already used on a release title."""
-    highest = -1
-    page = 1
-    while True:
-        releases = api.get(f"releases?per_page=100&page={page}")
-        if not releases:
-            break
-        for release in releases:
-            match = re.match(r"^0\.3\.(\d+)(?:\s|$)", release.get("name") or "")
-            if match:
-                highest = max(highest, int(match.group(1)))
-        if len(releases) < 100:
-            break
-        page += 1
-    return "0.3." + str(0 if highest < 0 else highest + 1)
-
-
-def release_title(version, tag, names):
-    if not re.fullmatch(r"0\.3\.\d+", version):
-        raise RuntimeError("Use a 0.3.N version")
-    if not re.fullmatch(r"(testing|build)-[1-9][0-9]*", tag):
+def release_version(tag):
+    """0.3.N, where N is the number on testing-N or build-N."""
+    match = re.fullmatch(r"(testing|build)-([1-9][0-9]*)", tag)
+    if not match:
         raise RuntimeError("Use a testing- or build- tag")
+    return "0.3." + match.group(2)
+
+
+def release_title(tag, names):
+    version = release_version(tag)
     ordered = (
         (DMG, "Mac"),
         ("halo-windows-release.zip", "Windows"),
@@ -326,7 +313,7 @@ def main():
                 stdout=subprocess.DEVNULL)
             subprocess.run(["gh", "release", "create", args.tag, "--repo", args.repository,
                 "--verify-tag", "--prerelease", "--latest=false",
-                "--title", release_title(next_version(api), args.tag, ASSETS),
+                "--title", release_title(args.tag, ASSETS),
                 "--notes-file", str(args.directory / "release-notes.md"),
                 *(str(args.directory / name) for name in sorted(ASSETS))], check=True)
             print(f"DMG: https://github.com/{args.repository}/releases/download/{args.tag}/{DMG}")
