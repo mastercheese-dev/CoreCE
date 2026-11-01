@@ -2649,10 +2649,12 @@ boolean network_game_server_add_player_to_game(
 	if (machine->machine_index == player->machine_index)
 	{
 			/* port: a matchmaking party stays on the team the offer names.
-		without that, the smaller team (the Xbox game took turns with a
-		counter of its own, which a failed add or an earlier game moved on) */
+		the host's own player is team 0. a remote human with the same name
+		is the other team when the offer lists that name there too. */
 		{
-			int party_team = matchmaking_join_team(player->name);
+			int host_local = player->machine_index == network_game_client_get_local_machine_index() &&
+				player->controller_index < MAXIMUM_LOCAL_PLAYERS;
+			int party_team = matchmaking_join_team(player->name, host_local);
 
 			if (party_team == 0 || party_team == 1)
 				player->team_index = (char)party_team;
@@ -2691,7 +2693,9 @@ boolean network_game_server_add_player_to_game(
 		if (!player->name[0])
 			get_unique_random_name(server, player);
 
-		if (!player_name_is_unique(server, player->name))
+		/* a matchmaking offer can list the same gamertag twice. renaming the
+		second one would seat them as an unlisted friend on the host's team. */
+		if (!matchmaking_game_port() && !player_name_is_unique(server, player->name))
 			get_unique_random_name(server, player);
 
 		if (player->primary_color_index == NONE)
@@ -4527,7 +4531,9 @@ static boolean network_game_server_reseat_matchmaking(
 		if (player->machine_index == host_machine &&
 			player->controller_index >= MAXIMUM_LOCAL_PLAYERS)
 			continue;
-		team = matchmaking_join_team(player->name);
+		team = matchmaking_join_team(player->name,
+			player->machine_index == host_machine &&
+			player->controller_index < MAXIMUM_LOCAL_PLAYERS);
 		if (team != 0 && team != 1)
 			continue;
 		if (player->team_index == (char)team)
@@ -5312,6 +5318,26 @@ static boolean network_game_server_idle_pregame_tasks(
 			network_game_server_reseat_matchmaking(server))
 			network_game_server_send_game_data_pregame(server);
 
+		/* the team pass above runs before a start on this tick. wait_seconds 0
+		holds until every listed name is seated, then starts on the next tick. */
+		if (matchmaking_game_port())
+		{
+			const wchar_t *names[MAXIMUM_NETWORK_PLAYER_COUNT];
+			int name_count = 0;
+
+			for (itr = 0; itr < MAXIMUM_NETWORK_PLAYER_COUNT; itr++)
+			{
+				struct network_player *player = &server->game.players[itr];
+
+				if (!network_player_is_valid(player))
+					continue;
+				if (bot_controller_is_bot(player->machine_index, player->controller_index))
+					continue;
+				names[name_count++] = player->name;
+			}
+			matchmaking_backstop_observe(matchmaking_listed_absent(names, name_count));
+		}
+
 		/* port: the gametype's auto team balance (game_variant_options):
 		the lobby's teams kept within a player of each other, the bigger
 		team's last player moved */
@@ -5397,14 +5423,16 @@ static boolean network_game_server_idle_pregame_tasks(
 			}
 			else
 			{
-				/* full means start. so does wait_seconds 0. a shorter wait from
-				the offer replaces the one already running. */
+				/* an omitted wait starts a full lobby. wait_seconds 0 does not,
+				while a listed name is still absent. a shorter positive wait
+				replaces the one already running. */
 				if (matchmaking_game_port())
 				{
 					unsigned long wanted = matchmaking_countdown_ms();
 					long remaining;
 
-					if (server->game.maximum_players > 0 &&
+					if (matchmaking_wait_omitted() &&
+						server->game.maximum_players > 0 &&
 						server->game.player_count >= server->game.maximum_players)
 						wanted = 0;
 					remaining = countdown_timer_get_time_remaining(&server->countdown_state.timer);

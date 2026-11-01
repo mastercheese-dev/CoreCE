@@ -169,18 +169,31 @@ int matchmaking_link(void);
 /* the port a matchmaking game is using, or 0 for an ordinary game */
 unsigned short matchmaking_game_port(void);
 void matchmaking_set_game_port(unsigned short port);
-/* 0 or 1 for a matchmaking team game, -1 otherwise. parties[0] is the host's
-team, including a seat the service put there. parties[1] is the other team.
-a human in neither list joined the link and stays on the host's team. with
-no parties, every human in this game shares team 0. */
-int matchmaking_join_team(const wchar_t *name);
+/* 0 or 1 for a matchmaking team game, -1 otherwise. host_local is the host's
+own player and is team 0. a filler name, one matchmaking_name_is_filler
+already recognizes, takes the party that lists it. a remote human with the
+host's name is team 1 when parties[1] lists that name too. a human in
+neither list joined the link and stays on the host's team. with no parties,
+every human in this game shares team 0. */
+int matchmaking_join_team(const wchar_t *name, int host_local);
+/* 1 when a name in the offer's parties has no matching player yet. the same
+name listed twice needs two players. */
+int matchmaking_listed_absent(const wchar_t *const *names, int count);
+/* once per lobby tick, before the countdown is read. wait_seconds 0 remembers
+whether every listed name was already seated. any other wait clears that. */
+void matchmaking_backstop_observe(int listed_absent);
+/* 1 when a search offer left wait_seconds out. a full lobby may start then. */
+int matchmaking_wait_omitted(void);
 /* 1 when this host should count the lobby down. a private party, and role
-wait, stay open. wait_seconds 0 starts now. a full lobby starts only after
-Find Game. */
+wait, stay open. wait_seconds 0 runs the backstop. a full lobby whose wait
+was omitted starts after Find Game. */
 int matchmaking_may_count(int player_count, int maximum_players);
-/* how long the lobby waits before it starts, in milliseconds. 0 means start
-now. the offer's wait_seconds is that wait, and it is not longer than 100
-seconds. matchmaking_may_count says whether the lobby counts at all. */
+/* how long the lobby waits before it starts, in milliseconds. an omitted wait
+is 0, so a full search lobby starts. wait_seconds 0 holds while a listed
+name is absent, returns 0 on the tick after every listed name is seated, and
+returns 0 if a listed name is still missing 15 seconds after that 0 arrived.
+a positive wait is that many seconds, and not longer than 100.
+matchmaking_may_count says whether the lobby counts at all. */
 unsigned long matchmaking_countdown_ms(void);
 
 #endif

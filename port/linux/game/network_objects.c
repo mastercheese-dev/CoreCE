@@ -2445,6 +2445,9 @@ static void distributed_client_create(
 	distributed_client_apply_change(object_index, change);
 }
 
+static void distributed_client_apply_held_inventories(
+	void);
+
 void network_objects_handle_changes(
 	void const *entries,
 	short count)
@@ -2474,6 +2477,9 @@ void network_objects_handle_changes(
 			objects_client_has[absolute_index] = NONE;
 		}
 	}
+	/* a respawn's inventory can arrive before these creates. it was kept,
+	and the weapons go on now that the unit exists. */
+	distributed_client_apply_held_inventories();
 }
 
 boolean network_objects_client_synchronized(
@@ -2906,6 +2912,124 @@ static boolean distributed_client_own_settled(
 	return game_time_get() - time > (long)ceil(round_trip) + INVENTORY_INTERVAL_TICKS + OWN_INVENTORY_MARGIN_TICKS;
 }
 
+/* an inventory that arrived before its unit or weapons. the host sends the
+next copy a second later, which is the empty hands after a respawn. kept
+until those objects exist, then applied. */
+enum
+{
+	HELD_INVENTORIES = 32,
+	HELD_INVENTORY_MS = 2000
+};
+
+struct held_inventory
+{
+	int used;
+	unsigned long stored_ms;
+	struct distributed_inventory inventory;
+};
+
+static struct held_inventory objects_client_held_inventories[HELD_INVENTORIES];
+
+static boolean distributed_client_inventory_waiting(
+	struct distributed_inventory const *inventory)
+{
+	short weapon_slot;
+
+	if (!inventory || !network_objects_client_has(inventory->unit_index) ||
+		!object_try_and_get_and_verify_type(inventory->unit_index, _object_mask_unit))
+	{
+		return TRUE;
+	}
+	for (weapon_slot = 0; weapon_slot < MAXIMUM_WEAPONS_PER_UNIT; weapon_slot++)
+	{
+		long wanted_index = inventory->weapon_indices[weapon_slot];
+
+		if (wanted_index == NONE)
+			continue;
+		if (!network_objects_client_has(wanted_index) ||
+			!object_try_and_get_and_verify_type(wanted_index, _object_mask_weapon))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+static void distributed_client_release_held_inventory(
+	long unit_index)
+{
+	short index;
+
+	for (index = 0; index < HELD_INVENTORIES; index++)
+	{
+		if (objects_client_held_inventories[index].used &&
+			objects_client_held_inventories[index].inventory.unit_index == unit_index)
+		{
+			objects_client_held_inventories[index].used = FALSE;
+		}
+	}
+}
+
+static void distributed_client_hold_inventory(
+	struct distributed_inventory const *inventory)
+{
+	short index;
+	short free_slot = NONE;
+	short oldest = 0;
+
+	if (!inventory)
+		return;
+	for (index = 0; index < HELD_INVENTORIES; index++)
+	{
+		struct held_inventory *held = &objects_client_held_inventories[index];
+
+		if (held->used && held->inventory.unit_index == inventory->unit_index)
+		{
+			held->inventory = *inventory;
+			held->stored_ms = system_milliseconds();
+			return;
+		}
+		if (!held->used && free_slot == NONE)
+			free_slot = index;
+		if (held->used && held->stored_ms < objects_client_held_inventories[oldest].stored_ms)
+			oldest = index;
+	}
+	if (free_slot == NONE)
+		free_slot = oldest;
+	objects_client_held_inventories[free_slot].used = TRUE;
+	objects_client_held_inventories[free_slot].stored_ms = system_milliseconds();
+	objects_client_held_inventories[free_slot].inventory = *inventory;
+}
+
+static void distributed_client_apply_inventory(
+	struct distributed_inventory const *inventory);
+
+static void distributed_client_apply_held_inventories(
+	void)
+{
+	short index;
+	unsigned long now = system_milliseconds();
+
+	for (index = 0; index < HELD_INVENTORIES; index++)
+	{
+		struct held_inventory *held = &objects_client_held_inventories[index];
+		struct distributed_inventory inventory;
+
+		if (!held->used)
+			continue;
+		if (now - held->stored_ms > HELD_INVENTORY_MS)
+		{
+			held->used = FALSE;
+			continue;
+		}
+		if (distributed_client_inventory_waiting(&held->inventory))
+			continue;
+		inventory = held->inventory;
+		held->used = FALSE;
+		distributed_client_apply_inventory(&inventory);
+	}
+}
+
 /* the unit carries what the host's does */
 static void distributed_client_apply_inventory(
 	struct distributed_inventory const *inventory)
@@ -2915,11 +3039,20 @@ static void distributed_client_apply_inventory(
 	boolean local;
 	short weapon_slot;
 
-	if (!network_objects_client_has(inventory->unit_index) ||
-		!object_try_and_get_and_verify_type(inventory->unit_index, _object_mask_unit))
+	if (!inventory)
+		return;
+	if (distributed_client_inventory_waiting(inventory))
 	{
+		unit = network_objects_client_has(inventory->unit_index) ?
+			(struct unit_datum *)object_try_and_get_and_verify_type(inventory->unit_index, _object_mask_unit) :
+			NULL;
+		if (unit && TEST_FLAG(unit->object.damage_flags, _object_dead_bit))
+			distributed_client_release_held_inventory(inventory->unit_index);
+		else
+			distributed_client_hold_inventory(inventory);
 		return;
 	}
+	distributed_client_release_held_inventory(inventory->unit_index);
 	unit = unit_get(inventory->unit_index);
 	if (TEST_FLAG(unit->object.damage_flags, _object_dead_bit))
 		return;
@@ -3357,6 +3490,7 @@ static void distributed_client_carry_unsteered_vehicles(
 void network_objects_client_tick(
 	void)
 {
+	distributed_client_apply_held_inventories();
 	/* (loaded: the host's objects, please; flagged when one of them failed
 	since it last asked) */
 	/* The opening holds the clock at 0, so a retry measured in game ticks
@@ -3407,6 +3541,7 @@ void network_objects_new_game(
 	short index;
 
 	csmemset(objects_host_inventories, 0, sizeof(objects_host_inventories));
+	csmemset(objects_client_held_inventories, 0, sizeof(objects_client_held_inventories));
 	host_damage_animation_count = 0;
 	csmemset(client_damage_animations, 0, sizeof(client_damage_animations));
 	for (absolute_index = 0; absolute_index < MAXIMUM_TRACKED_OBJECTS; absolute_index++)

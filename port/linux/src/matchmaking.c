@@ -68,6 +68,11 @@ static struct
 	int locals;
 	/* humans in this lobby, not the seats the service fills */
 	int players;
+	/* wait_seconds 0 is a backstop, not an immediate start */
+	unsigned long backstop_at;
+	int backstop_seated;
+	int backstop_hold;
+	int backstop_absent;
 	int party_mark;
 	int link;
 	int id_ready;
@@ -87,6 +92,14 @@ static struct
 static unsigned short host_order_short(unsigned short value)
 {
 	return (unsigned short)((value << 8) | (value >> 8));
+}
+
+static void backstop_clear_locked(void)
+{
+	matchmaking.backstop_at = 0;
+	matchmaking.backstop_seated = 0;
+	matchmaking.backstop_hold = 0;
+	matchmaking.backstop_absent = 0;
 }
 
 static int same_word(const char *text, const char *end, const char *word)
@@ -1687,6 +1700,7 @@ void matchmaking_queue(const char *playlist, const char *name)
 	matchmaking.ready = 0;
 	matchmaking.locals = 1;
 	matchmaking.players = 1;
+	backstop_clear_locked();
 	matchmaking.party_mark++;
 	hosted_drop_locked();
 	matchmaking.want_clear = 0;
@@ -1835,6 +1849,7 @@ void matchmaking_reset(void)
 	matchmaking.in_party = 0;
 	matchmaking.ready = 0;
 	matchmaking.locals = 1;
+	backstop_clear_locked();
 	hosted_drop_locked();
 	matchmaking.offer_ready = 0;
 	matchmaking.accept_offers = 0;
@@ -1964,6 +1979,7 @@ void matchmaking_yield_to_invite(const char *text)
 		matchmaking.offer_ready = 0;
 		matchmaking.committed = 0;
 		matchmaking.game_port = 0;
+		backstop_clear_locked();
 		hosted_drop_locked();
 		matchmaking.search++;
 		if (matchmaking.published_queue)
@@ -2085,26 +2101,71 @@ static int party_seat(const struct matchmaking_offer *offer, int party)
 	return counts[0] <= counts[1] ? 0 : 1;
 }
 
-int matchmaking_join_team(const wchar_t *name)
+static int party_team(const struct matchmaking_offer *offer, int party)
 {
-	struct matchmaking_offer offer;
+	if (party <= 0)
+		return 0;
+	if (party == 1)
+		return 1;
+	return party_seat(offer, party);
+}
+
+static int name_listed_in_party(const struct matchmaking_offer *offer, const wchar_t *name, int party)
+{
 	int index;
 
-	if (!matchmaking_game_port() || !matchmaking_offer_copy(&offer) || !offer.teams)
+	for (index = 0; index < offer->name_count && index < MATCHMAKING_LOBBY_NAMES; index++)
+	{
+		if (offer->name_party[index] != party)
+			continue;
+		if (offer_name_matches(name, offer->names[index]))
+			return 1;
+	}
+	return 0;
+}
+
+int matchmaking_join_team(const wchar_t *name, int host_local)
+{
+	struct matchmaking_offer offer;
+	char host_name[12];
+	int index;
+
+	if (!matchmaking_game_port())
+		return -1;
+	pthread_mutex_lock(&matchmaking_lock);
+	offer = matchmaking.offer;
+	memcpy(host_name, matchmaking.name, sizeof(host_name));
+	pthread_mutex_unlock(&matchmaking_lock);
+	host_name[sizeof(host_name) - 1] = 0;
+	if (!offer.teams)
 		return -1;
 	/* no parties listed: the people in this hosted game share a team */
 	if (offer.party_count <= 0)
 		return 0;
+	/* the host's own player is team 0, even when a remote human has the same name */
+	if (host_local)
+		return 0;
+	/* a filler name is unique and belongs to the party that lists it */
+	if (matchmaking_name_is_filler(name))
+	{
+		for (index = 0; index < offer.name_count && index < MATCHMAKING_LOBBY_NAMES; index++)
+		{
+			if (!offer_name_matches(name, offer.names[index]))
+				continue;
+			return party_team(&offer, offer.name_party[index]);
+		}
+	}
+	/* both humans can publish the same name. the remote one is the other
+	team only when parties[1] lists that name too. the first string match
+	would put every copy, and the filler beside the first, on team 0. */
+	if (host_name[0] && offer_name_matches(name, host_name) &&
+		name_listed_in_party(&offer, name, 1))
+		return 1;
 	for (index = 0; index < offer.name_count && index < MATCHMAKING_LOBBY_NAMES; index++)
 	{
 		if (!offer_name_matches(name, offer.names[index]))
 			continue;
-		if (offer.name_party[index] <= 0)
-			return 0;
-		/* parties[1] is the other team. a later party still takes the smaller one. */
-		if (offer.name_party[index] == 1)
-			return 1;
-		return party_seat(&offer, offer.name_party[index]);
+		return party_team(&offer, offer.name_party[index]);
 	}
 	/* not listed: this human joined the link and stays on the host's team. */
 	return 0;
@@ -2124,20 +2185,115 @@ int matchmaking_may_count(int player_count, int maximum_players)
 		return 0;
 	if (offer.wait_seconds >= 0)
 		return 1;
-	/* Find Game, and the human seats already fill the cap. start then. */
+	/* Find Game, and the seats already fill the cap. an omitted wait starts then. */
 	return maximum_players > 0 && player_count >= maximum_players &&
 		offer.phase == MATCHMAKING_PHASE_SEARCH;
+}
+
+int matchmaking_listed_absent(const wchar_t *const *names, int count)
+{
+	struct matchmaking_offer offer;
+	unsigned char used[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
+	int index;
+
+	if (!names || count < 0)
+		count = 0;
+	if (count > HALO_PORT_MAXIMUM_NETWORK_PLAYERS)
+		count = HALO_PORT_MAXIMUM_NETWORK_PLAYERS;
+	if (!matchmaking_offer_copy(&offer) || offer.party_count <= 0)
+		return 0;
+	memset(used, 0, (size_t)count);
+	for (index = 0; index < offer.name_count && index < MATCHMAKING_LOBBY_NAMES; index++)
+	{
+		int player;
+		int found = 0;
+
+		if (offer.name_party[index] < 0 || !offer.names[index][0])
+			continue;
+		for (player = 0; player < count; player++)
+		{
+			if (used[player] || !names[player])
+				continue;
+			if (!offer_name_matches(names[player], offer.names[index]))
+				continue;
+			used[player] = 1;
+			found = 1;
+			break;
+		}
+		if (!found)
+			return 1;
+	}
+	return 0;
+}
+
+void matchmaking_backstop_observe(int listed_absent)
+{
+	unsigned long now = GetTickCount();
+
+	pthread_mutex_lock(&matchmaking_lock);
+	if (matchmaking.offer.wait_seconds != 0 || matchmaking.offer.phase == MATCHMAKING_PHASE_PARTY)
+	{
+		backstop_clear_locked();
+		pthread_mutex_unlock(&matchmaking_lock);
+		return;
+	}
+	if (!matchmaking.backstop_at)
+		matchmaking.backstop_at = now ? now : 1;
+	matchmaking.backstop_absent = listed_absent ? 1 : 0;
+	if (listed_absent)
+		matchmaking.backstop_seated = 0;
+	else if (!matchmaking.backstop_seated)
+	{
+		matchmaking.backstop_seated = 1;
+		matchmaking.backstop_hold = 1;
+	}
+	else
+		matchmaking.backstop_hold = 0;
+	pthread_mutex_unlock(&matchmaking_lock);
+}
+
+int matchmaking_wait_omitted(void)
+{
+	struct matchmaking_offer offer;
+
+	if (!matchmaking_offer_copy(&offer))
+		return 0;
+	return offer.wait_seconds < 0 && offer.phase == MATCHMAKING_PHASE_SEARCH;
 }
 
 unsigned long matchmaking_countdown_ms(void)
 {
 	struct matchmaking_offer offer;
+	unsigned long now;
+	unsigned long at;
+	int absent;
+	int hold;
 	int wait;
 
-	if (!matchmaking_offer_copy(&offer) || offer.wait_seconds < 0)
+	pthread_mutex_lock(&matchmaking_lock);
+	offer = matchmaking.offer;
+	at = matchmaking.backstop_at;
+	absent = matchmaking.backstop_absent;
+	hold = matchmaking.backstop_hold;
+	pthread_mutex_unlock(&matchmaking_lock);
+	if (offer.wait_seconds < 0)
 		return 0;
 	wait = offer.wait_seconds;
 	if (wait > 100)
 		wait = 100;
-	return (unsigned long)wait * 1000UL;
+	if (wait > 0)
+		return (unsigned long)wait * 1000UL;
+	/* wait_seconds 0 waits for every listed name. the tick that first sees
+	them seated holds. the next tick starts. a name still missing 15 seconds
+	after this 0 arrived starts then. */
+	now = GetTickCount();
+	if (!at || absent)
+	{
+		if (at && now - at >= 15000UL)
+			return 0;
+		return 15000UL;
+	}
+	if (hold)
+		return 15000UL;
+	return 0;
 }
