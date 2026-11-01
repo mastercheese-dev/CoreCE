@@ -821,7 +821,7 @@ void hardcore_rules_opening_frame(void)
 	unsigned long ring_ms;
 	real progress;
 
-	if (!opening_hold || opening_fading)
+	if (!opening_hold)
 		return;
 	if (!game_engine_running() || !game_in_progress())
 	{
@@ -829,17 +829,38 @@ void hardcore_rules_opening_frame(void)
 		return;
 	}
 	opening_advance();
-	/* the disc's loading.tga, on the original sweep */
+	/* the disc's loading.tga, on the original sweep. a network match stays
+	on this screen until the host starts it. the sweep does not finish and
+	then jump backward while the other machines are still syncing. it keeps
+	moving, short of the end, and it reaches the end as the match starts. */
 	ring_ms = opening_started_ms != 0 ? system_milliseconds() - opening_started_ms : 0;
-	progress = (real)ring_ms / (real)OPENING_RING_MS;
-	if (progress < 0.02f)
-		progress = 0.02f;
-	if (progress > 1.f)
-		progress = 0.72f;
+	if (opening_fading)
+		progress = 1.f;
+	else if (opening_network())
+	{
+		if (ring_ms < OPENING_RING_MS)
+			progress = 0.02f + 0.86f * ((real)ring_ms / (real)OPENING_RING_MS);
+		else
+		{
+			real extra = (real)(ring_ms - OPENING_RING_MS) / 25000.f;
+
+			if (extra > 1.f)
+				extra = 1.f;
+			progress = 0.88f + 0.09f * extra;
+		}
+	}
+	else
+	{
+		progress = (real)ring_ms / (real)OPENING_RING_MS;
+		if (progress < 0.02f)
+			progress = 0.02f;
+		if (progress > 1.f)
+			progress = 1.f;
+	}
 	progress_bar_show_ring(progress);
 	/* The host names the tick. This machine does not fade because it
 	happens to look ready. */
-	if (opening_network())
+	if (opening_fading || opening_network())
 		return;
 	if (!hardcore_rules_opening_world_ready())
 		return;

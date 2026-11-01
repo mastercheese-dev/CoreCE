@@ -79,6 +79,14 @@ struct matchmaking_offer
 	int local_max;
 	int name_count;
 	char names[MATCHMAKING_LOBBY_NAMES][MATCHMAKING_LOBBY_NAME_LENGTH];
+	/* which party each name is in. -1 when that name is not in a party.
+	party 0 and party 1 are the two teams. */
+	int name_party[MATCHMAKING_LOBBY_NAMES];
+	/* how many parties the offer listed. 0 means it did not list any. */
+	int party_count;
+	/* seats to fill once the roster is set. -1 when the offer did not say.
+	0 means leave the seats empty. */
+	int bots;
 	int teams;
 	int team_size;
 	/* the network version the service accepts, when it refuses this build */
@@ -150,5 +158,16 @@ int matchmaking_link(void);
 /* the port a matchmaking game is using, or 0 for an ordinary game */
 unsigned short matchmaking_game_port(void);
 void matchmaking_set_game_port(unsigned short port);
+/* 0 or 1 for a matchmaking team game, -1 otherwise. a party stays together.
+without a parties list, every human in this game shares team 0. */
+int matchmaking_join_team(const wchar_t *name);
+/* how long the lobby waits before it starts, in milliseconds. 0 means start
+now. the offer's wait_seconds is that wait. when the offer did not say, this
+is the long lobby wait. */
+unsigned long matchmaking_countdown_ms(void);
+/* how many seats to fill. -1 when this is not a matchmaking team game.
+other_team_only is 1 while the lobby is still open, and the count is then
+how many of those seats go on team 1. humans is how many people are in now. */
+int matchmaking_filler_count(int final, int humans, int *team_size, int *other_team_only);
 
 #endif

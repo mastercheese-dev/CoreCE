@@ -9692,7 +9692,8 @@ static void mm_apply_rules(const struct matchmaking_offer *offer)
 	game_variant_options_default(variant, &gametype_edit.setup_options);
 	gametype_edit.setup_options.radar_players = (byte)PIN(rules->radar_players, 0, _radar_players_none);
 	gametype_edit.setup_options.time_limit = (short)(rules->time_limit_ticks <= 0 ? 0 : rules->time_limit_ticks / (30 * 60));
-	gametype_edit.setup_options.auto_team_balance = TRUE;
+	/* a party stays together. the offer names the teams. */
+	gametype_edit.setup_options.auto_team_balance = FALSE;
 	gametype_edit.setup_options.loadout = _loadout_custom;
 	gametype_edit.setup_options.primary_weapon = (byte)rules->primary;
 	gametype_edit.setup_options.secondary_weapon = (byte)rules->secondary;

@@ -802,6 +802,11 @@ static void network_game_server_countdown_started(
 	struct network_game_server *server);
 static void network_game_server_add_bot_players(
 	struct network_game_server *server);
+static boolean network_game_server_reseat_matchmaking(
+	struct network_game_server *server);
+static boolean network_game_server_fill_matchmaking(
+	struct network_game_server *server,
+	int final);
 static void network_game_server_variant_options(
 	struct game_variant const *variant,
 	struct game_variant_options *options);
@@ -2646,23 +2651,31 @@ boolean network_game_server_add_player_to_game(
 
 	if (machine->machine_index == player->machine_index)
 	{
-		/* port: the smaller team (the Xbox game took turns with a counter of
-		its own, which a failed add or an earlier game moved on) */
+			/* port: a matchmaking party stays on the team the offer names.
+		without that, the smaller team (the Xbox game took turns with a
+		counter of its own, which a failed add or an earlier game moved on) */
 		{
-			long player_count_by_team[NUMBER_OF_MULTIPLAYER_TEAMS] = { 0, 0 };
-			long player_index;
+			int party_team = matchmaking_join_team(player->name);
 
-			for (player_index = 0; player_index < MAXIMUM_NETWORK_PLAYER_COUNT; player_index++)
+			if (party_team == 0 || party_team == 1)
+				player->team_index = (char)party_team;
+			else
 			{
-				struct network_player *other_player = &server->game.players[player_index];
+				long player_count_by_team[NUMBER_OF_MULTIPLAYER_TEAMS] = { 0, 0 };
+				long player_index;
 
-				if (network_player_is_valid(other_player) &&
-					VALID_INDEX(other_player->team_index, NUMBER_OF_MULTIPLAYER_TEAMS))
+				for (player_index = 0; player_index < MAXIMUM_NETWORK_PLAYER_COUNT; player_index++)
 				{
-					player_count_by_team[other_player->team_index]++;
+					struct network_player *other_player = &server->game.players[player_index];
+
+					if (network_player_is_valid(other_player) &&
+						VALID_INDEX(other_player->team_index, NUMBER_OF_MULTIPLAYER_TEAMS))
+					{
+						player_count_by_team[other_player->team_index]++;
+					}
 				}
+				player->team_index = player_count_by_team[1] < player_count_by_team[0] ? 1 : 0;
 			}
-			player->team_index = player_count_by_team[1] < player_count_by_team[0] ? 1 : 0;
 		}
 
 		/* a controller past the four local players is a bot on this host.
@@ -4265,7 +4278,7 @@ void network_game_server_update_countdown(
 							countdown_timer_increment(
 								&server->countdown_state.timer,
 								NETWORK_GAME_COUNTDOWN_ADJUSTMENT,
-								matchmaking_game_port() ? NETWORK_GAME_MATCHMAKING_COUNTDOWN_TIME :
+								matchmaking_game_port() ? matchmaking_countdown_ms() :
 									NETWORK_GAME_COUNTDOWN_TIME);
 							break;
 
@@ -4321,7 +4334,7 @@ void network_game_server_update_countdown(
 						if (network_game_is_splitscreen_local())
 							countdown = NETWORK_GAME_SPLITSCREEN_COUNTDOWN_TIME;
 						else if (matchmaking_game_port())
-							countdown = NETWORK_GAME_MATCHMAKING_COUNTDOWN_TIME;
+							countdown = matchmaking_countdown_ms();
 						else
 							countdown = NETWORK_GAME_COUNTDOWN_TIME;
 
@@ -4402,6 +4415,9 @@ static void network_game_server_add_bot_players(
 		L"Bot13", L"Bot14", L"Bot15", L"Bot16"
 	};
 
+	/* a matchmaking game fills its own seats. this count is for an ordinary host. */
+	if (matchmaking_game_port())
+		return;
 	bot_count = config_integer("network.bots");
 	if (bot_count <= 0)
 		return;
@@ -4483,6 +4499,176 @@ static void network_game_server_add_bot_players(
 	csmemcpy(network_game_server_start_players, server->game.players,
 		sizeof(network_game_server_start_players));
 	p2p_set_game_player_counts(server->game.player_count, server->game.maximum_players);
+}
+
+/* a person who joined before the offer named their party is moved back onto it.
+fillers stay where they were placed. */
+static boolean network_game_server_reseat_matchmaking(
+	struct network_game_server *server)
+{
+	boolean changed = FALSE;
+	long index;
+	short host_machine = network_game_client_get_local_machine_index();
+
+	if (!server->game.variant.universal_variant.teams)
+		return FALSE;
+	for (index = 0; index < MAXIMUM_NETWORK_PLAYER_COUNT; index++)
+	{
+		struct network_player *player = &server->game.players[index];
+		int team;
+
+		if (!network_player_is_valid(player))
+			continue;
+		if (bot_controller_is_bot(player->machine_index, player->controller_index))
+			continue;
+		if (player->machine_index == host_machine &&
+			player->controller_index >= MAXIMUM_LOCAL_PLAYERS)
+			continue;
+		team = matchmaking_join_team(player->name);
+		if (team != 0 && team != 1)
+			continue;
+		if (player->team_index == (char)team)
+			continue;
+		player->team_index = (char)team;
+		changed = TRUE;
+	}
+	return changed;
+}
+
+/* empty seats on the other team while the lobby is open, then the rest when
+the match is about to start. controllers start past the local pads. */
+static boolean network_game_server_fill_matchmaking(
+	struct network_game_server *server,
+	int final)
+{
+	static wchar_t const *const filler_names[16] = {
+		L"Bot1", L"Bot2", L"Bot3", L"Bot4",
+		L"Bot5", L"Bot6", L"Bot7", L"Bot8",
+		L"Bot9", L"Bot10", L"Bot11", L"Bot12",
+		L"Bot13", L"Bot14", L"Bot15", L"Bot16"
+	};
+	long team_counts[2] = { 0, 0 };
+	long team_fillers[2] = { 0, 0 };
+	long humans = 0;
+	long fillers = 0;
+	long controller_index = MAXIMUM_LOCAL_PLAYERS;
+	long player_index;
+	long next_name = 0;
+	int team_size = 0;
+	int other_team_only = 0;
+	int want;
+	short host_machine;
+	boolean added = FALSE;
+
+	if (!server->game.variant.universal_variant.teams)
+		return FALSE;
+	host_machine = network_game_client_get_local_machine_index();
+	if (!VALID_INDEX(host_machine, MAXIMUM_NETWORK_MACHINE_COUNT))
+		return FALSE;
+
+	for (player_index = 0; player_index < MAXIMUM_NETWORK_PLAYER_COUNT; player_index++)
+	{
+		struct network_player *player = &server->game.players[player_index];
+		int is_filler;
+
+		if (!network_player_is_valid(player))
+			continue;
+		is_filler = bot_controller_is_bot(player->machine_index, player->controller_index) ||
+			(player->machine_index == host_machine && player->controller_index >= MAXIMUM_LOCAL_PLAYERS);
+		if (player->team_index >= 0 && player->team_index < 2)
+			team_counts[player->team_index]++;
+		if (is_filler)
+		{
+			fillers++;
+			if (player->team_index >= 0 && player->team_index < 2)
+				team_fillers[player->team_index]++;
+			if (ustrncmp(player->name, L"Bot", 3) == 0)
+				next_name++;
+		}
+		else
+			humans++;
+		if (player->machine_index == host_machine && player->controller_index >= controller_index)
+			controller_index = player->controller_index + 1;
+	}
+
+	want = matchmaking_filler_count(final, (int)humans, &team_size, &other_team_only);
+	if (want < 0)
+		return FALSE;
+	if (other_team_only)
+	{
+		int room = team_size - (int)(team_counts[1] - team_fillers[1]);
+
+		if (room < 0)
+			room = 0;
+		if (want > room)
+			want = room;
+		if ((int)team_fillers[1] >= want)
+			return FALSE;
+	}
+	else if ((int)fillers >= want)
+		return FALSE;
+
+	if (next_name > (long)NUMBEROF(filler_names))
+		next_name = (long)NUMBEROF(filler_names);
+
+	while (controller_index < BOT_CONTROLLER_LIMIT && next_name < (long)NUMBEROF(filler_names))
+	{
+		struct network_player filler;
+		long team_index;
+		long skill;
+		int seated;
+
+		if (server->game.maximum_players > 0 &&
+			server->game.player_count >= server->game.maximum_players)
+			break;
+		if (other_team_only)
+		{
+			if ((int)team_fillers[1] >= want)
+				break;
+			if (team_counts[1] >= team_size)
+				break;
+			team_index = 1;
+		}
+		else
+		{
+			if ((int)fillers >= want)
+				break;
+			team_index = team_counts[1] < team_counts[0] ? 1 : 0;
+		}
+
+		csmemset(&filler, 0, sizeof(filler));
+		filler.machine_index = (char)host_machine;
+		filler.controller_index = (char)controller_index;
+		filler.player_list_index = NONE;
+		filler.team_index = (char)team_index;
+		ustrncpy(filler.name, filler_names[next_name], NETWORK_PLAYER_NAME_LENGTH - 1);
+		filler.name[NETWORK_PLAYER_NAME_LENGTH - 1] = 0;
+		get_unique_random_color(server, &filler);
+		skill = config_integer("network.bot_skill");
+		if (skill < 0)
+			skill = 0;
+		if (skill > BOT_SKILL_IMPOSSIBLE)
+			skill = BOT_SKILL_IMPOSSIBLE;
+		bot_controller_set(host_machine, (short)controller_index, skill);
+		seated = network_game_add_player(&server->game, &filler);
+		if (!seated)
+		{
+			bot_controller_clear(host_machine, (short)controller_index);
+			break;
+		}
+		team_counts[team_index]++;
+		team_fillers[team_index]++;
+		fillers++;
+		controller_index++;
+		next_name++;
+		added = TRUE;
+		network_event("added a player on controller #%ld, team %ld",
+			controller_index - 1, team_index);
+	}
+
+	if (added)
+		p2p_set_game_player_counts(server->game.player_count, server->game.maximum_players);
+	return added;
 }
 
 void get_unique_random_name(
@@ -5253,10 +5439,25 @@ static boolean network_game_server_idle_pregame_tasks(
 	{
 		long itr;
 
+		/* a matchmaking party is put back on its team, and the other team's
+		empty seats are filled. the balance below is for an ordinary lobby. */
+		if (matchmaking_game_port() && server->game.variant.universal_variant.teams)
+		{
+			int changed = FALSE;
+
+			if (network_game_server_reseat_matchmaking(server))
+				changed = TRUE;
+			if (network_game_server_fill_matchmaking(server, FALSE))
+				changed = TRUE;
+			if (changed)
+				network_game_server_send_game_data_pregame(server);
+		}
+
 		/* port: the gametype's auto team balance (game_variant_options):
 		the lobby's teams kept within a player of each other, the bigger
 		team's last player moved */
-		if (server->game.variant.universal_variant.teams && server->game.variant_options.auto_team_balance)
+		if (!matchmaking_game_port() &&
+			server->game.variant.universal_variant.teams && server->game.variant_options.auto_team_balance)
 		{
 			for (;;)
 			{
@@ -5330,15 +5531,28 @@ static boolean network_game_server_idle_pregame_tasks(
 			}
 			else
 			{
-				/* full means start. the wait is for seats that are still open. */
-				if (matchmaking_game_port() && server->game.maximum_players > 0 &&
-					server->game.player_count >= server->game.maximum_players)
-					countdown_timer_set_time_remaining(&server->countdown_state.timer, 0);
+				/* full means start. so does an offer that says the roster is final.
+				a shorter wait from the offer replaces the long one. */
+				if (matchmaking_game_port())
+				{
+					unsigned long wanted = matchmaking_countdown_ms();
+					long remaining;
+
+					if (server->game.maximum_players > 0 &&
+						server->game.player_count >= server->game.maximum_players)
+						wanted = 0;
+					remaining = countdown_timer_get_time_remaining(&server->countdown_state.timer);
+					if (remaining > (long)wanted)
+						countdown_timer_set_time_remaining(&server->countdown_state.timer, (long)wanted);
+				}
 			if (countdown_timer_get_time_remaining(
 				&server->countdown_state.timer) == 0 &&
 				network_game_server_have_all_machines_have_precached(server) &&
 				server->countdown_state.paused == FALSE)
 			{
+				/* the remaining seats, once the people who are here are loaded */
+				if (matchmaking_game_port())
+					network_game_server_fill_matchmaking(server, TRUE);
 				/* (the game stays open: a machine may join it in progress,
 				network_game_server_start_late_joiner) */
 				if ((success = network_game_server_start_network_game(server)) != TRUE)

@@ -581,15 +581,98 @@ static void offer_names(struct matchmaking_offer *offer, const char *payload)
 	}
 }
 
+static int offer_name_slot(struct matchmaking_offer *offer, const char *text)
+{
+	int index;
+
+	for (index = 0; index < offer->name_count; index++)
+	{
+		if (!strcmp(offer->names[index], text))
+			return index;
+	}
+	if (offer->name_count >= MATCHMAKING_LOBBY_NAMES)
+		return -1;
+	index = offer->name_count++;
+	snprintf(offer->names[index], MATCHMAKING_LOBBY_NAME_LENGTH, "%s", text);
+	return index;
+}
+
+/* "parties": [["Alice", "Bob"], ["Carol", "Dave"]]. each inner array shares a team. */
+static void offer_parties(struct matchmaking_offer *offer, const char *payload)
+{
+	const char *list;
+	const char *list_end;
+	char stored[2048];
+	int length;
+	int party;
+
+	if (!object_field(payload, "parties", &list, &list_end))
+		return;
+	length = (int)(list_end - list);
+	if (length < 0 || length >= (int)sizeof(stored))
+		return;
+	memcpy(stored, list, (size_t)length);
+	stored[length] = 0;
+	for (party = 0; party < 4; party++)
+	{
+		const char *item;
+		const char *item_end;
+		char inner[512];
+		int inner_length;
+		int member;
+		int counted = 0;
+
+		if (!array_item(stored, party, &item, &item_end))
+			break;
+		inner_length = (int)(item_end - item);
+		if (inner_length < 0 || inner_length >= (int)sizeof(inner))
+			break;
+		memcpy(inner, item, (size_t)inner_length);
+		inner[inner_length] = 0;
+		for (member = 0; member < MATCHMAKING_LOBBY_NAMES; member++)
+		{
+			const char *name;
+			const char *name_end;
+			char text[MATCHMAKING_LOBBY_NAME_LENGTH];
+			int slot;
+
+			if (!array_item(inner, member, &name, &name_end))
+				break;
+			if (!copy_json_string(name, name_end, text, (int)sizeof(text)))
+				continue;
+			offer_name_keep(text);
+			if (!text[0])
+				continue;
+			slot = offer_name_slot(offer, text);
+			if (slot < 0)
+				break;
+			offer->name_party[slot] = party;
+			counted = 1;
+		}
+		if (counted)
+			offer->party_count = party + 1;
+	}
+}
+
+static void offer_clear(struct matchmaking_offer *offer)
+{
+	int index;
+
+	memset(offer, 0, sizeof(*offer));
+	offer->joined = -1;
+	offer->wait_seconds = -1;
+	offer->bots = -1;
+	for (index = 0; index < MATCHMAKING_LOBBY_NAMES; index++)
+		offer->name_party[index] = -1;
+}
+
 static void offer_read(struct matchmaking_offer *offer, const char *payload, const char *playlist)
 {
 	char word[32];
 	long number;
 	int teams;
 
-	memset(offer, 0, sizeof(*offer));
-	offer->joined = -1;
-	offer->wait_seconds = -1;
+	offer_clear(offer);
 	offer->local_max = 4;
 	snprintf(offer->playlist, sizeof(offer->playlist), "%s", playlist);
 	if (!json_string(payload, "playlist", offer->playlist, sizeof(offer->playlist)))
@@ -620,6 +703,9 @@ static void offer_read(struct matchmaking_offer *offer, const char *payload, con
 	if (json_number(payload, "local_max", &number) && number >= 1 && number <= 4)
 		offer->local_max = (int)number;
 	offer_names(offer, payload);
+	offer_parties(offer, payload);
+	if (json_number(payload, "bots", &number) && number >= 0 && number <= 16)
+		offer->bots = (int)number;
 	if (json_bool(payload, "teams", &teams))
 		offer->rules.teams = teams ? 1 : 0;
 	offer->teams = offer->rules.teams;
@@ -1537,7 +1623,7 @@ void matchmaking_queue(const char *playlist, const char *name)
 	matchmaking.hosted_sent = 0;
 	matchmaking.want_clear = 0;
 	matchmaking.offer_ready = 0;
-	memset(&matchmaking.offer, 0, sizeof(matchmaking.offer));
+	offer_clear(&matchmaking.offer);
 	matchmaking.accept_offers = 0;
 	matchmaking.search++;
 	pthread_mutex_unlock(&matchmaking_lock);
@@ -1692,7 +1778,7 @@ void matchmaking_party_offer(struct matchmaking_offer *offer, const struct match
 
 	if (!offer || !row || !row->id[0])
 		return;
-	memset(offer, 0, sizeof(*offer));
+	offer_clear(offer);
 	offer->role = MATCHMAKING_ROLE_HOST;
 	offer->phase = MATCHMAKING_PHASE_PARTY;
 	copy_short(offer->playlist, sizeof(offer->playlist), row->id, 15);
@@ -1795,4 +1881,107 @@ void matchmaking_set_game_port(unsigned short port)
 	if (!port_ok(port))
 		port = 0;
 	matchmaking.game_port = port;
+}
+
+static int offer_name_matches(const wchar_t *player_name, const char *offer_name)
+{
+	int index;
+
+	if (!player_name || !offer_name)
+		return 0;
+	for (index = 0; index < MATCHMAKING_LOBBY_NAME_LENGTH - 1; index++)
+	{
+		wchar_t left = player_name[index];
+		wchar_t right = (wchar_t)(unsigned char)offer_name[index];
+
+		if (left >= L'A' && left <= L'Z')
+			left = (wchar_t)(left - L'A' + L'a');
+		if (right >= L'A' && right <= L'Z')
+			right = (wchar_t)(right - L'A' + L'a');
+		if (left != right)
+			return 0;
+		if (!left)
+			return 1;
+	}
+	return 1;
+}
+
+int matchmaking_join_team(const wchar_t *name)
+{
+	struct matchmaking_offer offer;
+	int index;
+
+	if (!matchmaking_game_port() || !matchmaking_offer_copy(&offer) || !offer.teams)
+		return -1;
+	/* no parties listed: the people in this hosted game share a team */
+	if (offer.party_count <= 0)
+		return 0;
+	for (index = 0; index < offer.name_count && index < MATCHMAKING_LOBBY_NAMES; index++)
+	{
+		if (!offer_name_matches(name, offer.names[index]))
+			continue;
+		if (offer.name_party[index] >= 0)
+			return offer.name_party[index] & 1;
+		return 0;
+	}
+	/* a second party exists and this name was not on it. the open team is 1.
+	one listed party and a late friend stays with that party. */
+	if (offer.party_count >= 2)
+		return 1;
+	return 0;
+}
+
+unsigned long matchmaking_countdown_ms(void)
+{
+	struct matchmaking_offer offer;
+	int wait;
+
+	if (!matchmaking_offer_copy(&offer) || offer.wait_seconds < 0)
+		return 100000UL;
+	wait = offer.wait_seconds;
+	if (wait > 100)
+		wait = 100;
+	return (unsigned long)wait * 1000UL;
+}
+
+int matchmaking_filler_count(int final, int humans, int *team_size, int *other_team_only)
+{
+	struct matchmaking_offer offer;
+	int seats;
+	int size;
+
+	if (team_size)
+		*team_size = 0;
+	if (other_team_only)
+		*other_team_only = 0;
+	if (!matchmaking_game_port() || !matchmaking_offer_copy(&offer) || !offer.teams)
+		return -1;
+	seats = offer.players > 1 ? offer.players : 8;
+	if (seats > 16)
+		seats = 16;
+	size = offer.team_size > 0 ? offer.team_size : seats / 2;
+	if (size < 1)
+		size = 1;
+	if (size * 2 > seats)
+		size = seats / 2;
+	if (size < 1)
+		size = 1;
+	if (team_size)
+		*team_size = size;
+	/* the lobby is still open. fill the other team and leave this party's seats. */
+	if (!final && offer.wait_seconds != 0)
+	{
+		int count = size;
+
+		if (offer.bots >= 0 && offer.bots < count)
+			count = offer.bots;
+		if (other_team_only)
+			*other_team_only = 1;
+		return count;
+	}
+	if (offer.bots >= 0)
+		return offer.bots;
+	if (humans >= seats)
+		return 0;
+	return seats - humans;
 }

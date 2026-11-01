@@ -22,6 +22,12 @@ The next number on that line waits until all three files are on the current tag.
 
 A main release is a normal release and is marked Latest. A testing release is a prerelease and is not marked Latest. Android stays where it is unless `halo-android-release.zip` is attached on purpose.
 
+## Title
+
+The version is `0.3.0` for the oldest published release. Each release after that, on main or on testing, is one higher in the last place. The next release is one higher than the highest version already used. A late file on an existing tag keeps that tag's version.
+
+The title is the version, the platforms whose file is on the tag, and the tag. Mac, Windows, and Linux are named in that order, and only when that platform's file is attached. Android is named only when its zip is attached. A testing release is `0.3.5 Mac, Windows, Linux testing-41`. A main release is `0.3.1 Windows build-30`. An installed client does not read the title. It reads the tag and its own file name.
+
 ## Stamp
 
 Windows and Linux release builds set `HALO_BUILD_NUMBER` to that tag's number, `HALO_BUILD_CHANNEL` to `main` or `testing`, and `HALO_UPDATE_REPOSITORY` to `mastercheese-dev/CoreCE`. Those zip names come from a release build. A debug build looks for a different zip and is not a published update.
