@@ -1570,16 +1570,20 @@ def _lobby() -> list:
                                                  ("color", "#FF2896FF")], [])
     lines += _widget(f"{base}/lobby_button_bar", [("type", "column_list"), ("width", 640), ("height", 28),
                                                   ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
-                     # (SWITCH TEAM first: hidden in a game without teams, which
-                     # moves the focus to the first shown, START NOW; at the end
-                     # it traps none)
-                     [f'<child widget="{base}/lobby_button_team" x="120" y="1"/>',
+                     # (SWITCH TEAM first among the ones a LAN lobby shows: hidden in a
+                     # game without teams, which moves the focus to the first shown,
+                     # START NOW. PASTE LINK shares that slot and is shown on a
+                     # matchmaking party, before Find Game.)
+                     [f'<child widget="{base}/lobby_button_paste" x="120" y="1"/>',
+                      f'<child widget="{base}/lobby_button_team" x="120" y="1"/>',
                       f'<child widget="{base}/lobby_button_start" x="250" y="1"/>',
                       f'<child widget="{base}/lobby_button_add" x="380" y="1"/>',
                       f'<child widget="{base}/lobby_button_leave" x="510" y="1"/>'])
     for key, caption, handlers in (
         ("add", "ADD PLAYER", ['<on event="a" run="port lobby add player"/>',
                                '<on event="start" run="port lobby add player"/>']),
+        ("paste", "PASTE LINK", ['<on event="a" run="port lobby paste link"/>',
+                                 '<on event="start" run="port lobby paste link"/>']),
         ("team", "SWITCH TEAM", ['<on event="a" run="swap player team"/>', '<on event="start" run="swap player team"/>']),
         ("start", "START NOW", ['<on event="a" run="net game speed start"/>',
                                 '<on event="start" run="net game speed start"/>']),

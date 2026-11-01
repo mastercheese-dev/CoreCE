@@ -2846,6 +2846,9 @@ static void mm_fill_party_link(struct widget_instance *help, char const *invite)
 
 /* "3wide player profile list update": the rows, and the profile chosen:
 its name, colour, current level, best difficulty and controls */
+static int mm_lobby_is_party(void);
+static void mm_invite_with_port(char *out, int size, char const *invite, unsigned short port);
+
 static void profile_list_update(struct widget_instance *list)
 {
 	struct widget_instance *description = list->parameters.list.extended_description;
@@ -2875,15 +2878,19 @@ static void profile_list_update(struct widget_instance *list)
 		int party_link = FALSE;
 
 		/* matchmaking's Add Player shows the server's join link. a friend
-		who uses it is in this party and does not publish a queue. */
+		who uses it is in this party and does not publish a queue. the port
+		on the link is this lobby's game port. */
 		if (screen && screen->name && !strcmp(screen->name, "player_profile_screen") &&
-			matchmaking_queue_active())
+			mm_lobby_is_party())
 		{
 			struct matchmaking_offer offer;
 
 			if (matchmaking_offer_copy(&offer) && offer.invite[0])
 			{
-				mm_fill_party_link(help, offer.invite);
+				char shared[160];
+
+				mm_invite_with_port(shared, (int)sizeof(shared), offer.invite, offer.port);
+				mm_fill_party_link(help, shared);
 				party_link = TRUE;
 			}
 		}
@@ -4959,6 +4966,25 @@ static void focus_off_hidden(struct widget_instance *bar)
 	}
 }
 
+/* the bar's focus on one of its buttons */
+static void focus_button(struct widget_instance *bar, struct widget_instance *button)
+{
+	struct widget_instance *child;
+	short index = 0;
+
+	if (!bar || !button)
+		return;
+	for (child = bar->child; child; child = child->next, index++)
+	{
+		if (child == button)
+		{
+			bar->focused_child = button;
+			bar->parameters.list.selected_index = index;
+			return;
+		}
+	}
+}
+
 /* whether the browser's list's child can take focus (once visible) */
 static boolean browser_item_usable(struct widget_instance *child)
 {
@@ -6062,6 +6088,12 @@ static boolean lobby_join_reset(void)
 party onto another invite. defined with the matchmaking menu. */
 static void mm_lobby_abandoned(void);
 static int mm_lobby_switch(struct widget_instance *list);
+static void mm_paste_reset(void);
+static void mm_invite_with_port(char *out, int size, char const *invite, unsigned short port);
+static int mm_paste_poll(struct widget_instance *list);
+static void mm_party_focus(struct widget_instance *list, int party);
+static void mm_share_party_link(char const *invite, unsigned short port);
+static boolean lobby_paste_link(struct widget_instance *widget);
 static void mm_ascii(wchar_t *text, int size, char const *ascii);
 
 /* local players this matchmaking party may still seat. locals only reserves
@@ -6142,6 +6174,7 @@ static boolean lobby_open(struct widget_instance *screen)
 {
 	(void)screen;
 	lobby_join_reset();
+	mm_paste_reset();
 	return TRUE;
 }
 
@@ -6216,12 +6249,17 @@ static boolean lobby_add_player(struct widget_instance *widget, boolean *widget_
 	boolean lan_lobby = root && root->name && !strcmp(root->name, "lobby_screen") &&
 		(multiplayer.mode == _multiplayer_mode_host_lan || multiplayer.mode == _multiplayer_mode_lan);
 
-	if (matchmaking_queue_active())
+	if (mm_lobby_is_party())
 	{
 		struct matchmaking_offer offer;
 
 		if (matchmaking_offer_copy(&offer) && offer.invite[0])
-			platform_clipboard_set(offer.invite);
+		{
+			char shared[160];
+
+			mm_invite_with_port(shared, (int)sizeof(shared), offer.invite, offer.port);
+			platform_clipboard_set(shared);
+		}
 	}
 	if (!lobby_seat_available())
 		return FALSE;
@@ -6847,7 +6885,12 @@ static void lobby_update(struct widget_instance *list)
 	short index;
 	short rows = LOBBY_ROWS;
 	int party = matchmaking_queue_active();
+	int show_paste = mm_lobby_is_party();
 
+	/* a link pasted here leaves this party and joins that lobby. the screen
+	goes away with that join. */
+	if (mm_paste_poll(list))
+		return;
 	/* a search that combined this party with another leaves this lobby and
 	joins the new invite. the screen goes away with that join. */
 	if (mm_lobby_switch(list))
@@ -6881,9 +6924,11 @@ static void lobby_update(struct widget_instance *list)
 		lobby_icons.updated_at = system_milliseconds();
 	}
 	lobby_join_help(list);
-	/* the server assigns teams. this lobby does not send a team change. */
+	/* the server assigns teams. this lobby does not send a team change.
+	PASTE LINK takes that slot while this is still a private party. */
+	visible_set(named(list, "lobby_button_paste", 0), show_paste);
 	visible_set(named(list, "lobby_button_team", 0),
-		game && game->variant.universal_variant.teams && !party);
+		game && game->variant.universal_variant.teams && !party && !show_paste);
 	{
 		struct widget_instance *start = named(list, "lobby_button_start", 0);
 
@@ -6893,6 +6938,14 @@ static void lobby_update(struct widget_instance *list)
 			if (start)
 				start->disabled = FALSE;
 		}
+		else if (matchmaking_game_port() && !global_network_game_server_get())
+		{
+			/* a friend who joined by link waits in this lobby. the host
+			starts it. */
+			label_set(start, L"WAITING");
+			if (start)
+				start->disabled = TRUE;
+		}
 		else if (start && start->parameters.text_box.string_list_index == HALO_CUSTOM_MAP_TEXT)
 		{
 			start->parameters.text_box.string_list_index = 0;
@@ -6901,6 +6954,7 @@ static void lobby_update(struct widget_instance *list)
 	}
 	/* (the buttons' focus, off Switch Team when it is hidden) */
 	focus_off_hidden(named(list, "lobby_button_bar", 0));
+	mm_party_focus(list, show_paste);
 	visible_set(named(description, "lobby_right_item", 0), game != NULL && state >= _client_state_pregame);
 	if (!game || state < _client_state_pregame)
 	{
@@ -6913,10 +6967,12 @@ static void lobby_update(struct widget_instance *list)
 		char link[TEXT_FIELD_LENGTH];
 		wchar_t gametype[NUMBEROF(game->variant.human_readable_game_description) + 1];
 		struct matchmaking_offer offer;
-		int have_offer = party && matchmaking_offer_copy(&offer);
+		int have_offer = (party || show_paste) && matchmaking_offer_copy(&offer);
 
 		ustrncpy(gametype, game->variant.human_readable_game_description, NUMBEROF(gametype) - 1);
 		gametype[NUMBEROF(gametype) - 1] = 0;
+		if (show_paste && have_offer && offer.invite[0])
+			mm_share_party_link(offer.invite, offer.port);
 		if (party && !matchmaking_is_ready() && have_offer)
 		{
 			int count = lobby_view_player_count();
@@ -6928,7 +6984,7 @@ static void lobby_update(struct widget_instance *list)
 				count = cap;
 			matchmaking_set_locals(count);
 		}
-		if (have_offer)
+		if (party && have_offer)
 		{
 			wchar_t status[64];
 			int joined = offer.joined >= 0 ? offer.joined : offer.name_count;
@@ -9171,6 +9227,16 @@ static int mm_switch_started;
 static int mm_switch_join;
 static int mm_switch_posts;
 
+/* a join link pasted on the party lobby, before Find Game */
+static int mm_paste_waiting;
+static int mm_paste_join;
+static int mm_paste_posts;
+static int mm_paste_frames;
+static int mm_party_focus_set;
+static unsigned short mm_paste_port;
+static char mm_paste_invite[160];
+static char mm_party_shared[160];
+
 /* searching, joining, or already in the match: the offer's port stays */
 static int mm_holds_port(void)
 {
@@ -9656,16 +9722,286 @@ static struct advertised_game *mm_peer_game(void)
 	return NULL;
 }
 
+/* the link this lobby hands out. a friend pastes it from their own party
+lobby. the port is this game's, after the invite, so a different gametype
+still reaches it. an older link has no port: the friend's own party port
+is used, which matches when both chose the same gametype. */
+static void mm_invite_with_port(char *out, int size, char const *invite, unsigned short port)
+{
+	if (!out || size <= 0)
+		return;
+	out[0] = 0;
+	if (!invite || !invite[0])
+		return;
+	if (port > 0 && port < 65536 && port != 5150 && port != 5151 && !strstr(invite, "port="))
+		snprintf(out, (size_t)size, "%s?port=%u", invite, (unsigned)port);
+	else
+		snprintf(out, (size_t)size, "%s", invite);
+}
+
+static unsigned short mm_link_port(char const *text)
+{
+	char const *mark = text ? strstr(text, "port=") : NULL;
+	unsigned long port = 0;
+
+	if (!mark)
+		return 0;
+	mark += 5;
+	if (*mark < '0' || *mark > '9')
+		return 0;
+	for (; *mark >= '0' && *mark <= '9'; mark++)
+	{
+		port = port * 10u + (unsigned long)(*mark - '0');
+		if (port >= 65536)
+			return 0;
+	}
+	if (port == 0 || port == 5150 || port == 5151)
+		return 0;
+	return (unsigned short)port;
+}
+
+static int mm_text_has_invite(char const *text)
+{
+	static char const prefix[] = "halo://join/";
+	int length = (int)sizeof(prefix) - 1;
+
+	for (; text && *text; text++)
+	{
+		int index;
+
+		for (index = 0; index < length && text[index] && (text[index] | 0x20) == prefix[index]; index++)
+			;
+		if (index == length)
+			return 1;
+	}
+	return 0;
+}
+
+static void mm_trim_copy(char *out, int size, char const *text)
+{
+	int length;
+
+	if (!out || size <= 0)
+		return;
+	out[0] = 0;
+	if (!text)
+		return;
+	while (*text == ' ' || *text == '\t' || *text == '\r' || *text == '\n')
+		text++;
+	snprintf(out, (size_t)size, "%s", text);
+	length = (int)strlen(out);
+	while (length > 0 && (out[length - 1] == ' ' || out[length - 1] == '\t' ||
+		out[length - 1] == '\r' || out[length - 1] == '\n'))
+		out[--length] = 0;
+}
+
+static void mm_paste_reset(void)
+{
+	mm_paste_waiting = 0;
+	mm_paste_join = 0;
+	mm_paste_posts = 0;
+	mm_paste_frames = 0;
+	mm_paste_port = 0;
+	mm_paste_invite[0] = 0;
+	mm_party_shared[0] = 0;
+	mm_party_focus_set = 0;
+}
+
+static void mm_share_party_link(char const *invite, unsigned short port)
+{
+	char shared[160];
+	char current[160];
+
+	mm_invite_with_port(shared, (int)sizeof(shared), invite, port);
+	if (!shared[0])
+		return;
+	current[0] = 0;
+	platform_clipboard_get(current, (int)sizeof(current));
+	if (!strcmp(current, shared))
+	{
+		snprintf(mm_party_shared, sizeof(mm_party_shared), "%s", shared);
+		return;
+	}
+	/* a friend's link is already there. this lobby's own link is replaced
+	when the clipboard still holds it, including the copy made as the game
+	started hosting. */
+	if (mm_party_shared[0] && strcmp(current, invite) && strcmp(current, mm_party_shared))
+		return;
+	platform_clipboard_set(shared);
+	snprintf(mm_party_shared, sizeof(mm_party_shared), "%s", shared);
+}
+
+/* the party lobby, before a search. the host has stopped publishing a queue.
+a friend the service sent here is still publishing. */
+static int mm_lobby_is_party(void)
+{
+	struct matchmaking_offer offer;
+
+	if (matchmaking_is_ready())
+		return 0;
+	if (matchmaking_queue_active())
+		return 1;
+	/* the host still has this lobby's server. a friend who already joined
+	someone else's link does not, so the old offer must not keep this button. */
+	if (!matchmaking_game_port() || !global_network_game_server_get() || !matchmaking_offer_copy(&offer))
+		return 0;
+	return offer.phase != MATCHMAKING_PHASE_SEARCH && offer.invite[0];
+}
+
+/* FIND GAME or START stays focused when the party opens. PASTE LINK is to its left. */
+static void mm_party_focus(struct widget_instance *list, int show_paste)
+{
+	struct widget_instance *bar;
+	struct widget_instance *start;
+
+	if (!show_paste)
+	{
+		mm_party_focus_set = 0;
+		return;
+	}
+	if (mm_party_focus_set || mm_paste_waiting)
+		return;
+	bar = named(list, "lobby_button_bar", 0);
+	start = named(list, "lobby_button_start", 0);
+	focus_button(bar, start);
+	mm_party_focus_set = 1;
+}
+
+/* 1 while this lobby is leaving for a pasted link. the join replaces the
+screen and has to run from a button, not from this draw. */
+static int mm_paste_poll(struct widget_instance *list)
+{
+	struct advertised_game *game;
+	struct widget_instance *bar;
+	struct widget_instance *start;
+
+	if (!mm_paste_waiting)
+		return 0;
+	mm_paste_frames++;
+	/* a menu frame. 2700 is about 45 seconds at 60, inside the invite's own wait. */
+	if (mm_paste_frames > 2700)
+	{
+		mm_paste_reset();
+		matchmaking_set_game_port(0);
+		dispose_global_network_game_client();
+		dispose_global_network_game_server();
+		display_error_text_deferred(L"That lobby could not be reached.", NONE);
+		return 0;
+	}
+	matchmaking_set_game_port(mm_paste_port);
+	bar = named(list, "lobby_button_bar", 0);
+	start = named(list, "lobby_button_start", 0);
+	if (start)
+		label_set(start, L"JOINING");
+	game = mm_peer_game();
+	if (!game)
+		return 1;
+	mm_paste_join = 1;
+	mm_paste_posts++;
+	if (mm_paste_posts == 1 || mm_paste_posts % 20 == 0)
+	{
+		if (bar && start)
+		{
+			bar->focused_child = start;
+			start->disabled = FALSE;
+			list->focused_child = bar;
+		}
+		ui_widget_port_post_button(controller_of(list), BUTTON_A);
+	}
+	return 1;
+}
+
+/* "port lobby paste link": leave this party and join the link on the clipboard. */
+static boolean lobby_paste_link(struct widget_instance *widget)
+{
+	char raw[256];
+	char link[160];
+	unsigned short port;
+	struct matchmaking_offer offer;
+	int have;
+
+	if (mm_paste_waiting)
+		return TRUE;
+	if (!mm_lobby_is_party())
+		return FALSE;
+	if (!platform_clipboard_get(raw, (int)sizeof(raw)) || !raw[0])
+	{
+		display_error_text_deferred(L"Copy a join link first.", NONE);
+		return campaign_fail();
+	}
+	mm_trim_copy(link, (int)sizeof(link), raw);
+	if (!mm_text_has_invite(link))
+	{
+		display_error_text_deferred(L"Copy a join link first.", NONE);
+		return campaign_fail();
+	}
+	have = matchmaking_offer_copy(&offer);
+	if (have && offer.invite[0] && strstr(link, offer.invite))
+	{
+		display_error_text_deferred(L"That is this party's link.", NONE);
+		return campaign_fail();
+	}
+	port = mm_link_port(link);
+	if (!port && have)
+		port = offer.port;
+	if (!port)
+	{
+		display_error_text_deferred(L"That link has no game port.", NONE);
+		return campaign_fail();
+	}
+	if (!multiplayer_player(controller_of(widget)))
+		return FALSE;
+	/* a friend still publishing stops. the host has already stopped, and
+	drops the lobby it was publishing. */
+	if (matchmaking_queue_active())
+		matchmaking_yield_to_invite(link);
+	else
+		matchmaking_reset();
+	mm_paste_port = port;
+	snprintf(mm_paste_invite, sizeof(mm_paste_invite), "%s", link);
+	mm_paste_frames = 0;
+	mm_paste_posts = 0;
+	mm_paste_join = 0;
+	mm_paste_waiting = 1;
+	dispose_global_network_game_client();
+	dispose_global_network_game_server();
+	matchmaking_set_game_port(port);
+	if (!p2p_join_invite(link) || !ui_widget_port_browse(widget, NULL, NULL))
+	{
+		mm_paste_reset();
+		matchmaking_set_game_port(0);
+		dispose_global_network_game_client();
+		dispose_global_network_game_server();
+		display_error_text_deferred(L"That lobby could not be reached.", NONE);
+		return campaign_fail();
+	}
+	return TRUE;
+}
+
 /* the machine's last player left the lobby before the match. the queue ends. */
 static void mm_lobby_abandoned(void)
 {
+	int pasted = mm_paste_waiting || mm_paste_port != 0;
+	unsigned short port = matchmaking_game_port();
+
 	mm_switching = 0;
 	mm_switch_started = 0;
 	mm_switch_join = 0;
 	mm_switch_posts = 0;
 	mm_joined_invite[0] = 0;
+	mm_paste_reset();
+	if (pasted)
+	{
+		dispose_global_network_game_client();
+		dispose_global_network_game_server();
+	}
 	if (!matchmaking_queue_active())
+	{
+		/* a friend who joined by link is not publishing. leaving drops the port. */
+		if (port)
+			matchmaking_reset();
 		return;
+	}
 	mm_menu.state = MM_MENU_CHOOSE;
 	matchmaking_reset();
 }
@@ -9738,6 +10074,32 @@ int menu_matchmaking_rejoin(struct widget_instance *widget, boolean *widget_dele
 	struct advertised_game *game;
 	boolean deleted = FALSE;
 
+	if (mm_paste_waiting && widget)
+	{
+		unsigned short port = mm_paste_port;
+
+		/* the lobby is already leaving. a start press must not count down. */
+		if (!mm_paste_join)
+			return 1;
+		game = mm_peer_game();
+		if (!game)
+			return 1;
+		mm_paste_join = 0;
+		mm_paste_waiting = 0;
+		mm_paste_posts = 0;
+		matchmaking_set_game_port(port);
+		matchmaking_commit_join();
+		snprintf(mm_joined_invite, sizeof(mm_joined_invite), "%s", mm_paste_invite);
+		if (!widget_deleted)
+			widget_deleted = &deleted;
+		if (!ui_widget_port_join(widget, game, LOBBY_NAME, widget_deleted))
+		{
+			mm_paste_reset();
+			matchmaking_reset();
+			display_error_text_deferred(L"That lobby could not be reached.", NONE);
+		}
+		return 1;
+	}
 	if (!mm_switch_join || !widget)
 		return 0;
 	game = mm_peer_game();
@@ -10468,6 +10830,10 @@ boolean pc_menu_event_function_invoke(
 		else if (!strcmp(name, "port lobby add player"))
 		{
 			return lobby_add_player(widget, widget_deleted);
+		}
+		else if (!strcmp(name, "port lobby paste link"))
+		{
+			return lobby_paste_link(widget);
 		}
 		else if (!strcmp(name, "port lobby join"))
 		{
