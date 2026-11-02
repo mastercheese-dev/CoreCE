@@ -53,6 +53,9 @@ short network_chat_host_mute_minutes(short player_index);
 their lines and their voice, for /mute's minutes when it gives none (every
 machine told), or unmuted */
 void network_chat_host_mute(short player_index, boolean mute);
+/* (the host: the lobby) a player's name muted for everyone, or unmuted, as
+the scoreboard's mute is. The network game's names, the lobby's too */
+void network_chat_host_mute_name(wchar_t const *name, boolean mute);
 /* (the host: network_voice.c) whether a player's name (the network game's,
 in the lobby too; at most 12 characters, ended or not) is muted for everyone:
 their machine's voice goes no further */

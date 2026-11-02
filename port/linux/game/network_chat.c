@@ -1395,6 +1395,28 @@ void network_chat_host_mute(
 		chat_host_unmute_name(name);
 }
 
+void network_chat_host_mute_name(
+	wchar_t const *name,
+	boolean mute)
+{
+	char ascii[CHAT_NAME_SIZE];
+	short index;
+	boolean held;
+
+	if (!chat_host() || !name)
+		return;
+	for (index = 0; index < CHAT_NAME_SIZE - 1 && name[index]; index++)
+		ascii[index] = player_name_character_ascii(name[index]);
+	ascii[index] = 0;
+	if (!index)
+		return;
+	held = chat_mute_find(chat_mutes, NUMBEROF(chat_mutes), ascii, system_milliseconds()) != NULL;
+	if (mute && !held)
+		chat_host_mute_name(ascii, CHAT_MUTE_DEFAULT_MINUTES);
+	else if (!mute && held)
+		chat_host_unmute_name(ascii);
+}
+
 boolean network_chat_host_name_muted(
 	wchar_t const *name)
 {

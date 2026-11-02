@@ -853,6 +853,49 @@ void rasterizer_text_set_scale(
 	return;
 }
 
+void rasterizer_text_get_scale(
+	real *scale,
+	real *origin_x,
+	real *origin_y)
+{
+	if (scale)
+		*scale = text_scale;
+	if (origin_x)
+		*origin_x = text_scale_origin_x;
+	if (origin_y)
+		*origin_y = text_scale_origin_y;
+
+	return;
+}
+
+/* P goes to C + (P - C) * extra, then through the scale already set.
+that is one scale about a new point, so the clip math still matches */
+void rasterizer_text_scale_extra(
+	real extra,
+	real center_x,
+	real center_y)
+{
+	real scale;
+	real denom;
+
+	if (!(extra > 0.0f))
+		return;
+	scale = text_scale * extra;
+	denom = 1.0f - scale;
+	if (denom > -0.0001f && denom < 0.0001f)
+	{
+		text_scale = scale;
+		return;
+	}
+	text_scale_origin_x = (text_scale_origin_x * (1.0f - text_scale) +
+		center_x * (1.0f - extra) * text_scale) / denom;
+	text_scale_origin_y = (text_scale_origin_y * (1.0f - text_scale) +
+		center_y * (1.0f - extra) * text_scale) / denom;
+	text_scale = scale;
+
+	return;
+}
+
 void rasterizer_screen_fit_begin(
 	real scale,
 	real origin_x,

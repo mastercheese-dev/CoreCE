@@ -1280,6 +1280,7 @@ reached, and (map_data) a saved game on the level */
 #define MAXIMUM_PROFILES 32
 #define SOUND_ERROR 4
 #define SOUND_CURSOR 1
+#define SOUND_CURSOR 1
 #define SOUND_FORWARD 2
 #define SOUND_BACK 3
 
@@ -3942,6 +3943,7 @@ short network_game_client_get_local_machine_index(void);
 boolean network_game_client_add_player(void *client, short local_player_index);
 boolean network_game_client_add_named_player(void *client, short controller_index,
 	wchar_t const *name, short color_index);
+boolean network_game_client_request_remove_player(void *client, struct network_player *player);
 short network_game_client_get_seconds_to_game_start(void *client);
 boolean network_player_is_valid(struct network_player *player);
 boolean playlist_profile_get(long index, struct game_variant *variant);
@@ -4965,21 +4967,37 @@ boolean pc_menu_text_color(struct widget_instance *widget, real_argb_color *colo
 	return TRUE;
 }
 
-/* a bar of buttons' focus, off one hidden: on its first one shown */
+/* a bar of buttons' focus, off one hidden or disabled: on its first one
+shown that can be pressed */
 static void focus_off_hidden(struct widget_instance *bar)
 {
 	struct widget_instance *button;
+	struct widget_instance *fallback = NULL;
 	short button_index = 0;
+	short fallback_index = 0;
 
-	for (button = bar && bar->focused_child && !bar->focused_child->visible ? bar->child : NULL; button;
-		button = button->next, button_index++)
+	if (!bar || !bar->focused_child || (bar->focused_child->visible && !bar->focused_child->disabled))
+		return;
+	for (button = bar->child; button; button = button->next, button_index++)
 	{
-		if (button->visible)
+		if (!button->visible)
+			continue;
+		if (!fallback)
+		{
+			fallback = button;
+			fallback_index = button_index;
+		}
+		if (!button->disabled)
 		{
 			bar->focused_child = button;
 			bar->parameters.list.selected_index = button_index;
-			break;
+			return;
 		}
+	}
+	if (fallback)
+	{
+		bar->focused_child = fallback;
+		bar->parameters.list.selected_index = fallback_index;
 	}
 }
 
@@ -5049,6 +5067,35 @@ static void browser_focus(struct widget_instance *list, short chosen_row)
 	}
 }
 
+/* a column title's sort. none is the list's own order. one click is
+ascending, the next descending, the third that own order again */
+enum
+{
+	BROWSER_SORT_NONE = 0,
+	BROWSER_SORT_LOCKED,
+	BROWSER_SORT_NAME,
+	BROWSER_SORT_MAP,
+	BROWSER_SORT_TYPE,
+	BROWSER_SORT_PLAYERS,
+	BROWSER_SORT_PING
+};
+
+enum
+{
+	BROWSER_SORT_DEFAULT = 0,
+	BROWSER_SORT_ASCENDING,
+	BROWSER_SORT_DESCENDING
+};
+
+static short browser_sort_column;
+static short browser_sort_direction;
+/* the game under the title when it was clicked, found again after the
+list is read back in its own order */
+static boolean browser_sort_sticky;
+static boolean browser_sort_keep;
+static unsigned char browser_sort_keep_id[6];
+static struct advertised_game *browser_sort_keep_game;
+
 /* (the server browser's: below) */
 static void lobby_browser_begin(void);
 static void lobby_browser_update(struct widget_instance *list);
@@ -5076,7 +5123,8 @@ static boolean browser_initialize(struct widget_instance *screen, struct event_r
 		struct widget_instance *list = named(screen, "join_game_items_list", 0);
 		struct widget_instance *child;
 
-		/* (only the games' rows and the buttons take focus: not the column titles, which sort nothing, nor the ticker) */
+		/* (only the games' rows and the buttons take focus: not the column
+		titles, which a click sorts, nor the ticker) */
 		for (child = list ? list->child : NULL; child; child = child->next)
 			child->disabled = !browser_item_usable(child);
 		if (list)
@@ -5089,7 +5137,12 @@ static boolean browser_initialize(struct widget_instance *screen, struct event_r
 	visible_set(named(screen, "ticker_player_info_label", 0), FALSE);
 	visible_set(named(screen, "ticker_rules_info_label", 0), FALSE);
 	/* (the columns' sort arrows, both of each over its title: the list is
-	not sorted) */
+	in its own order until a title is clicked) */
+	browser_sort_column = BROWSER_SORT_NONE;
+	browser_sort_direction = BROWSER_SORT_DEFAULT;
+	browser_sort_sticky = FALSE;
+	browser_sort_keep = FALSE;
+	browser_sort_keep_game = NULL;
 	for (index = 0; named(screen, "header_sort_arrows", index); index++)
 		visible_set(named(screen, "header_sort_arrows", index), FALSE);
 	multiplayer.game_chosen = 0;
@@ -5284,10 +5337,16 @@ static void lobby_browser_begin(void)
 	p2p_lobby_browse(TRUE);
 }
 
+/* Direct Link's PASTE LINK is reaching that host. The list stays empty
+until the game is advertised, or the wait ends as the party's does. */
+static int direct_link_connecting;
+static unsigned long direct_link_connecting_until;
+
 /* "gamespy screen dispose" */
 static void lobby_browser_end(void)
 {
 	lobby_browser.joining = lobby_browser.ready = FALSE;
+	direct_link_connecting = 0;
 	p2p_lobby_browse(FALSE);
 }
 
@@ -5366,6 +5425,317 @@ static void lobby_browser_focus_row(struct widget_instance *list, short row)
 	}
 }
 
+static short browser_sort_column_of(struct widget_instance *widget)
+{
+	for (; widget; widget = widget->parent)
+	{
+		char const *name = widget->name;
+		char const *suffix;
+
+		if (!name)
+			continue;
+		if (!strncmp(name, "op_sort_header_", 15))
+			suffix = name + 15;
+		else if (!strncmp(name, "sort_header_", 12))
+			suffix = name + 12;
+		else
+			continue;
+		if (!strcmp(suffix, "server_name"))
+			return BROWSER_SORT_NAME;
+		if (!strcmp(suffix, "map"))
+			return BROWSER_SORT_MAP;
+		if (!strcmp(suffix, "type"))
+			return BROWSER_SORT_TYPE;
+		if (!strcmp(suffix, "players"))
+			return BROWSER_SORT_PLAYERS;
+		if (!strcmp(suffix, "ping"))
+			return BROWSER_SORT_PING;
+		if (!strcmp(suffix, "locked"))
+			return BROWSER_SORT_LOCKED;
+	}
+	return BROWSER_SORT_NONE;
+}
+
+static int browser_text_cmp(char const *left, char const *right)
+{
+	while (*left && *right)
+	{
+		unsigned char first = (unsigned char)*left++;
+		unsigned char second = (unsigned char)*right++;
+
+		if (first >= 'A' && first <= 'Z')
+			first = (unsigned char)(first - 'A' + 'a');
+		if (second >= 'A' && second <= 'Z')
+			second = (unsigned char)(second - 'A' + 'a');
+		if (first != second)
+			return first < second ? -1 : 1;
+	}
+	if (*left)
+		return 1;
+	if (*right)
+		return -1;
+	return 0;
+}
+
+static int browser_wide_cmp(wchar_t const *left, wchar_t const *right)
+{
+	while (*left && *right)
+	{
+		wchar_t first = *left++;
+		wchar_t second = *right++;
+
+		if (first >= 'A' && first <= 'Z')
+			first = (wchar_t)(first - 'A' + 'a');
+		if (second >= 'A' && second <= 'Z')
+			second = (wchar_t)(second - 'A' + 'a');
+		if (first != second)
+			return first < second ? -1 : 1;
+	}
+	if (*left)
+		return 1;
+	if (*right)
+		return -1;
+	return 0;
+}
+
+static int browser_sort_flip(int cmp)
+{
+	if (!cmp || browser_sort_direction != BROWSER_SORT_DESCENDING)
+		return cmp;
+	return -cmp;
+}
+
+static int listing_players_shown(struct p2p_listing const *game)
+{
+	if (mm_browser_playlist(game) && game->maximum_player_count)
+		return game->maximum_player_count;
+	return game->player_count;
+}
+
+/* negative when left belongs above right. a ping that is not known stays
+under the ones that are, in either direction */
+static int browser_listing_rank(struct p2p_listing const *left, struct p2p_listing const *right)
+{
+	wchar_t left_text[ROW_TEXT_LENGTH];
+	wchar_t right_text[ROW_TEXT_LENGTH];
+	int cmp = 0;
+
+	switch (browser_sort_column)
+	{
+	case BROWSER_SORT_LOCKED:
+		cmp = (left->locked != 0) - (right->locked != 0);
+		break;
+	case BROWSER_SORT_NAME:
+		cmp = browser_text_cmp(left->name, right->name);
+		break;
+	case BROWSER_SORT_MAP:
+		map_display_name(left->map, left_text);
+		map_display_name(right->map, right_text);
+		cmp = browser_wide_cmp(left_text, right_text);
+		break;
+	case BROWSER_SORT_TYPE:
+		cmp = browser_wide_cmp(game_type_name(left->engine_type), game_type_name(right->engine_type));
+		break;
+	case BROWSER_SORT_PLAYERS:
+		cmp = listing_players_shown(left) - listing_players_shown(right);
+		break;
+	case BROWSER_SORT_PING:
+		if ((left->failed || left->ping < 0) != (right->failed || right->ping < 0))
+			return (left->failed || left->ping < 0) ? 1 : -1;
+		if (left->failed || left->ping < 0)
+			return 0;
+		cmp = left->ping - right->ping;
+		break;
+	default:
+		return 0;
+	}
+	return browser_sort_flip(cmp);
+}
+
+static void browser_listings_sort(void)
+{
+	short index;
+
+	for (index = 1; index < lobby_browser.count; index++)
+	{
+		struct p2p_listing key = lobby_browser.games[index];
+		short place = index;
+
+		while (place > 0 && browser_listing_rank(&key, &lobby_browser.games[place - 1]) < 0)
+		{
+			lobby_browser.games[place] = lobby_browser.games[place - 1];
+			place--;
+		}
+		lobby_browser.games[place] = key;
+	}
+}
+
+static void lobby_browser_choose_id(unsigned char const *id)
+{
+	short index;
+
+	for (index = 0; index < lobby_browser.count; index++)
+	{
+		if (!memcmp(lobby_browser.games[index].identifier, id, sizeof(lobby_browser.games[index].identifier)))
+		{
+			lobby_browser.chosen = index;
+			return;
+		}
+	}
+}
+
+static int browser_advertised_ping(struct advertised_game const *game)
+{
+	if (multiplayer.mode != _multiplayer_mode_direct_link)
+		return -1;
+	return p2p_peer_ping(game->xnaddr + 2);
+}
+
+static int browser_advertised_rank(struct advertised_game const *left, struct advertised_game const *right)
+{
+	wchar_t left_text[ROW_TEXT_LENGTH];
+	wchar_t right_text[ROW_TEXT_LENGTH];
+	int left_ping;
+	int right_ping;
+	int cmp = 0;
+
+	switch (browser_sort_column)
+	{
+	case BROWSER_SORT_NAME:
+		cmp = browser_wide_cmp(left->game_name, right->game_name);
+		break;
+	case BROWSER_SORT_MAP:
+		game_map_name(left, left_text);
+		game_map_name(right, right_text);
+		cmp = browser_wide_cmp(left_text, right_text);
+		break;
+	case BROWSER_SORT_TYPE:
+		cmp = browser_wide_cmp(game_type_name(left->engine_type), game_type_name(right->engine_type));
+		break;
+	case BROWSER_SORT_PLAYERS:
+		cmp = (int)left->player_count - (int)right->player_count;
+		break;
+	case BROWSER_SORT_PING:
+		left_ping = browser_advertised_ping(left);
+		right_ping = browser_advertised_ping(right);
+		if ((left_ping < 0) != (right_ping < 0))
+			return left_ping < 0 ? 1 : -1;
+		if (left_ping < 0)
+			return 0;
+		cmp = left_ping - right_ping;
+		break;
+	default:
+		return 0;
+	}
+	return browser_sort_flip(cmp);
+}
+
+static void browser_advertised_sort(void)
+{
+	short index;
+
+	for (index = 1; index < multiplayer.game_count; index++)
+	{
+		struct advertised_game *key = multiplayer.games[index];
+		short place = index;
+
+		while (place > 0 && browser_advertised_rank(key, multiplayer.games[place - 1]) < 0)
+		{
+			multiplayer.games[place] = multiplayer.games[place - 1];
+			place--;
+		}
+		multiplayer.games[place] = key;
+	}
+}
+
+static void browser_advertised_choose(struct advertised_game *game)
+{
+	short index;
+
+	if (!game)
+		return;
+	for (index = 0; index < multiplayer.game_count; index++)
+	{
+		if (multiplayer.games[index] == game)
+		{
+			multiplayer.game_chosen = index;
+			return;
+		}
+	}
+}
+
+static void browser_sort_arrows(struct widget_instance *list)
+{
+	struct widget_instance *screen = screen_of(list);
+	struct widget_instance *arrows;
+	short index;
+
+	for (index = 0; (arrows = named(screen, "header_sort_arrows", index)) != NULL; index++)
+	{
+		boolean here = browser_sort_direction != BROWSER_SORT_DEFAULT &&
+			browser_sort_column_of(arrows) == browser_sort_column;
+
+		visible_set(arrows, here);
+		visible_set(named(arrows, "header_sort_up_arrow", 0),
+			here && browser_sort_direction == BROWSER_SORT_ASCENDING);
+		visible_set(named(arrows, "header_sort_down_arrow", 0),
+			here && browser_sort_direction == BROWSER_SORT_DESCENDING);
+	}
+}
+
+static void browser_sort_place(struct widget_instance *list, short focused, short *first, short chosen)
+{
+	if (focused == NONE || chosen < 0)
+		return;
+	if (chosen < *first)
+		*first = chosen;
+	else if (chosen >= *first + BROWSER_ROWS)
+		*first = (short)(chosen - BROWSER_ROWS + 1);
+	if (*first < 0)
+		*first = 0;
+	lobby_browser_focus_row(list, (short)(chosen - *first));
+}
+
+/* "gamespy select header": the title under the pointer. ascending, then
+descending, then the list's own order */
+void browser_sort_header_clicked(struct widget_instance *widget)
+{
+	short column = browser_sort_column_of(widget);
+
+	if (column == BROWSER_SORT_NONE)
+		return;
+	browser_sort_keep = FALSE;
+	browser_sort_keep_game = NULL;
+	if (multiplayer.mode == _multiplayer_mode_server_browser)
+	{
+		if (lobby_browser.chosen >= 0 && lobby_browser.chosen < lobby_browser.count)
+		{
+			csmemcpy(browser_sort_keep_id, lobby_browser.games[lobby_browser.chosen].identifier,
+				sizeof(browser_sort_keep_id));
+			browser_sort_keep = TRUE;
+		}
+	}
+	else if (multiplayer.game_chosen >= 0 && multiplayer.game_chosen < multiplayer.game_count)
+	{
+		browser_sort_keep_game = multiplayer.games[multiplayer.game_chosen];
+		browser_sort_keep = TRUE;
+	}
+	browser_sort_sticky = TRUE;
+	if (browser_sort_column != column || browser_sort_direction == BROWSER_SORT_DEFAULT)
+	{
+		browser_sort_column = column;
+		browser_sort_direction = BROWSER_SORT_ASCENDING;
+	}
+	else if (browser_sort_direction == BROWSER_SORT_ASCENDING)
+		browser_sort_direction = BROWSER_SORT_DESCENDING;
+	else
+	{
+		browser_sort_column = BROWSER_SORT_NONE;
+		browser_sort_direction = BROWSER_SORT_DEFAULT;
+	}
+	ui_play_audio_feedback_sound(SOUND_CURSOR);
+}
+
 /* "gamespy screen update" for the server browser: the rows (scrolled on
 at their ends), the line below them, the counts over the titles */
 static void lobby_browser_update(struct widget_instance *list)
@@ -5376,9 +5746,35 @@ static void lobby_browser_update(struct widget_instance *list)
 	wchar_t text[ROW_TEXT_LENGTH * 2];
 	unsigned long now = system_milliseconds();
 	short chosen;
+	boolean sorting = browser_sort_direction != BROWSER_SORT_DEFAULT || browser_sort_sticky;
+	unsigned char keep_id[6];
+	boolean keep = FALSE;
+	short keep_index;
 
+	if (sorting)
+	{
+		keep_index = lobby_browser.chosen;
+		if (browser_sort_sticky)
+		{
+			csmemcpy(keep_id, browser_sort_keep_id, sizeof(keep_id));
+			keep = browser_sort_keep;
+			browser_sort_sticky = FALSE;
+			browser_sort_keep = FALSE;
+		}
+		else if (focused != NONE && !ui_widget_port_hover_focused())
+			keep_index = (short)(lobby_browser.first + focused);
+		if (!browser_sort_sticky && keep_index >= 0 && keep_index < lobby_browser.count && !keep)
+		{
+			csmemcpy(keep_id, lobby_browser.games[keep_index].identifier, sizeof(keep_id));
+			keep = TRUE;
+		}
+	}
 	lobby_browser.count = lobby_browser_valid_games(lobby_browser.games,
 		(short)p2p_lobby_games(lobby_browser.games, LOBBY_BROWSER_GAMES));
+	if (sorting && browser_sort_direction != BROWSER_SORT_DEFAULT)
+		browser_listings_sort();
+	if (keep)
+		lobby_browser_choose_id(keep_id);
 	menu_window_set(list, &lobby_browser.first, lobby_browser.count, BROWSER_ROWS, 0, TRUE);
 	lobby_browser.first = (short)PIN(lobby_browser.first, 0, MAX(0, lobby_browser.count - BROWSER_ROWS));
 	/* (the first game found takes the focus from the buttons, which had it
@@ -5396,8 +5792,11 @@ static void lobby_browser_update(struct widget_instance *list)
 			lobby_browser.chosen = lobby_browser.first;
 		}
 	}
-	if (focused != NONE && !ui_widget_port_hover_focused())
+	if (!sorting && focused != NONE && !ui_widget_port_hover_focused())
 		lobby_browser.chosen = (short)(lobby_browser.first + focused);
+	else if (sorting && !ui_widget_port_hover_focused())
+		browser_sort_place(list, focused, &lobby_browser.first, lobby_browser.chosen);
+	browser_sort_arrows(list);
 	chosen = lobby_browser.chosen;
 	for (row = list->child; row; row = row->next)
 	{
@@ -5754,15 +6153,43 @@ static void browser_update(struct widget_instance *list)
 	struct widget_instance *row;
 	struct widget_instance *stats = list->parameters.list.extended_description;
 	short focused = browser_row_index(list->focused_child);
+	struct advertised_game *kept = NULL;
+	boolean sorting = browser_sort_direction != BROWSER_SORT_DEFAULT || browser_sort_sticky;
+	short index;
 
 	if (multiplayer.mode == _multiplayer_mode_server_browser)
 	{
 		lobby_browser_update(list);
 		return;
 	}
+	if (sorting)
+	{
+		if (browser_sort_sticky)
+		{
+			kept = browser_sort_keep_game;
+			browser_sort_sticky = FALSE;
+			browser_sort_keep = FALSE;
+		}
+		else
+		{
+			index = multiplayer.game_chosen;
+			if (focused != NONE && focused < multiplayer.game_count && !ui_widget_port_hover_focused())
+				index = focused;
+			if (index >= 0 && index < multiplayer.game_count)
+				kept = multiplayer.games[index];
+		}
+	}
 	browser_games_read();
-	if (focused != NONE && focused < multiplayer.game_count && !ui_widget_port_hover_focused())
+	if (sorting && browser_sort_direction != BROWSER_SORT_DEFAULT)
+		browser_advertised_sort();
+	if (sorting)
+		browser_advertised_choose(kept);
+	if (!sorting && focused != NONE && focused < multiplayer.game_count && !ui_widget_port_hover_focused())
 		multiplayer.game_chosen = focused;
+	else if (sorting && !ui_widget_port_hover_focused() && focused != NONE &&
+		multiplayer.game_chosen >= 0 && multiplayer.game_chosen < BROWSER_ROWS)
+		lobby_browser_focus_row(list, multiplayer.game_chosen);
+	browser_sort_arrows(list);
 	for (row = list->child; row; row = row->next)
 	{
 		short index = browser_row_index(row);
@@ -5800,14 +6227,22 @@ static void browser_update(struct widget_instance *list)
 			text[0] = 0;
 		else if (!multiplayer.game_count)
 		{
+			if (multiplayer.mode == _multiplayer_mode_direct_link && direct_link_connecting &&
+				system_milliseconds() >= direct_link_connecting_until)
+			{
+				direct_link_connecting = 0;
+				display_error_text_deferred(L"That lobby could not be reached.", NONE);
+			}
 			usnprintf(text, NUMBEROF(text) - 1, L"%s", multiplayer.mode == _multiplayer_mode_direct_link ?
-				L"Copy an invite link and PASTE LINK, or accept a Discord invite" :
+				(direct_link_connecting ? L"Connecting..." :
+				L"Copy an invite link and PASTE LINK, or accept a Discord invite") :
 				L"Looking for games on your LAN...");
 		}
 		else
 		{
 			struct advertised_game *game = multiplayer.games[multiplayer.game_chosen];
 
+			direct_link_connecting = 0;
 			usnprintf(text, NUMBEROF(text) - 1, L"%d players of %d, on %d machines%s", game->player_count,
 				game->maximum_player_count, game->machine_count, advertised_in_progress(game) ? L": under way" : L"");
 		}
@@ -5860,6 +6295,8 @@ static boolean direct_link_from_clipboard(void)
 		platform_log("menus: the clipboard has no invite link");
 		return campaign_fail();
 	}
+	direct_link_connecting = 1;
+	direct_link_connecting_until = system_milliseconds() + 45000;
 	return TRUE;
 }
 
@@ -5996,12 +6433,19 @@ gametype, the countdown */
 
 static struct network_player *lobby_players[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
 static short lobby_player_count;
+/* the player the host last had selected, for KICK and MUTE once focus is on
+those buttons. NONE until a row that can be kicked has the focus */
+static short lobby_action_machine = NONE;
+static short lobby_action_controller = NONE;
 
 /* split screen: up to 4 players on this machine. ADD PLAYER opens the profile
 list at once ("port lobby add player"). A profile then asks for START on the
 controller, or ENTER for the keyboard ("port lobby assign"). A bot does not:
 it joins on a free seat and takes no pad. A player's B leaves the game alone
-("port lobby leave"; the machine's last leaves it). In game, a player's pause
+("port lobby leave"; the machine's last leaves it). The host, and only the
+host, has KICK and MUTE for the player row last selected ("port lobby kick",
+"port lobby mute"). KICK drops a remote machine, or a bot seated here. MUTE
+stops that machine's voice for everyone. In game, a player's pause
 menu's QUIT is theirs (the Xbox's "mp game player quit") */
 static struct
 {
@@ -6012,7 +6456,10 @@ static struct
 	short controller;
 	/* the profile chosen, NONE until then */
 	long profile;
-} lobby_join = { FALSE, NONE, NONE };
+	/* this machine's player left, and someone else is still in the lobby.
+	either device can sit back down */
+	boolean reseat;
+} lobby_join = { FALSE, NONE, NONE, FALSE };
 
 /* the previewed game, found again among the client's (NULL: gone). defined
 with the preview screen, below */
@@ -6080,10 +6527,35 @@ co-op, or split screen in a network game (a player who quit keeps their part
 of the screen until the game ends). Then one gamepad is its own controller,
 not sharing player 1's with the keyboard. A bot is not that person, and a
 spare view for one does not take the gamepad. */
+/* a person on a pad of their own (not the keyboard's port) */
+static boolean lobby_pad_apart(void)
+{
+	short controller;
+	short machine = network_game_client_get_local_machine_index();
+
+	for (controller = 1; controller < MAXIMUM_LOCAL_PLAYERS; controller++)
+	{
+		if (bot_controller_is_bot(machine, controller))
+			continue;
+		if (lobby_controller_playing(controller))
+			return TRUE;
+	}
+	return FALSE;
+}
+
 unsigned char pc_menu_split_players(void)
 {
 	return player_spawn_count >= 2 || lobby_join.adding || lobby_join.controller != NONE ||
+		lobby_join.reseat || lobby_pad_apart() ||
 		lobby_view_player_count() >= 2 || players_port_human_local_player_count() >= 2;
+}
+
+/* the lobby and the screens it opens read every pad. the keyboard stays on
+the first, and a controller sits on its own, and either one can move the
+buttons or sit back down */
+unsigned char pc_menu_lobby_hears_all(void)
+{
+	return lobby_join.reseat || lobby_join.adding || lobby_join.controller != NONE || lobby_pad_apart();
 }
 
 /* the lobby's widget that has the focus (the one a press goes to) */
@@ -6102,6 +6574,9 @@ static boolean lobby_join_reset(void)
 	lobby_join.adding = FALSE;
 	lobby_join.controller = NONE;
 	lobby_join.profile = NONE;
+	lobby_join.reseat = FALSE;
+	lobby_action_machine = NONE;
+	lobby_action_controller = NONE;
 	return TRUE;
 }
 
@@ -6285,38 +6760,121 @@ static boolean lobby_add_player(struct widget_instance *widget, boolean *widget_
 		ui_play_audio_feedback_sound(SOUND_FORWARD);
 		return TRUE;
 	}
+	if (lobby_open_named(widget,
+		"pc\\main_menu\\multiplayer_type_select\\lobby\\player_profile_screen", widget_deleted))
+	{
+		ui_play_audio_feedback_sound(SOUND_FORWARD);
+		return TRUE;
+	}
 	return TRUE;
 }
 
-/* "port lobby join" (START on the lobby): a controller not playing opens the
-same list; a player's START is the focused button's */
-static boolean lobby_join_start(struct widget_instance *widget, short controller, boolean *widget_deleted)
+/* a click, not the keyboard's Enter (ui_widget.c posts both as the same button) */
+boolean ui_widget_port_pointer_button(void);
+
+/* sit this device back down on the profile it already had */
+static boolean lobby_reseat_device(short controller)
 {
-	if (lobby_controller_playing(controller))
-	{
-		ui_widget_port_dispatch_event(focused_leaf(widget), BUTTON_START, controller, widget_deleted);
+	long profile = player_ui_get_active_player_profile_index(controller);
+
+	if (profile == NONE)
+		profile = player_ui_get_active_player_profile_index(0);
+	if (profile == NONE || !lobby_seat_available())
 		return FALSE;
+	if (!ui_widget_port_multiplayer_player(controller, profile))
+		return FALSE;
+	lobby_join.reseat = FALSE;
+	lobby_join.adding = FALSE;
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+	return TRUE;
+}
+
+/* "port lobby join" (START, or ENTER on the keyboard): a device that is not
+playing sits back down. START on its controller, ENTER for the keyboard and
+mouse. A player's own press is the focused button's. A click is that button */
+static boolean lobby_join_start(struct widget_instance *widget, struct event_record *event, short controller,
+	boolean *widget_deleted)
+{
+	struct widget_instance *leaf;
+	short button = BUTTON_START;
+	boolean keyboard_enter = FALSE;
+
+	if (event && event->data.button.value == 1)
+		button = event->data.button.index;
+	keyboard_enter = button == BUTTON_A && controller == 0 && !ui_widget_port_pointer_button();
+	if (!lobby_controller_playing(keyboard_enter ? 0 : controller) &&
+		(keyboard_enter || button == BUTTON_START))
+	{
+		short seat = keyboard_enter ? (short)0 : controller;
+
+		if (lobby_join.reseat && lobby_reseat_device(seat))
+			return TRUE;
+		return lobby_add_player(widget, widget_deleted);
 	}
-	return lobby_add_player(widget, widget_deleted);
+	leaf = focused_leaf(widget);
+	if (leaf && leaf != widget_instance_get_topmost_parent(widget))
+		ui_widget_port_dispatch_event(leaf, button, controller, widget_deleted);
+	return TRUE;
+}
+
+/* someone besides this device is still in the game (another player, or a bot) */
+static boolean lobby_others_beside(short controller)
+{
+	void *client = global_network_game_client_get();
+	struct network_game *game = client ? network_game_client_get_game(client) : NULL;
+	short machine = network_game_client_get_local_machine_index();
+	short index;
+
+	for (index = 0; game && index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
+	{
+		struct network_player *player = &game->players[index];
+
+		if (!network_player_is_valid(player) || player->player_list_index == NONE)
+			continue;
+		if ((short)player->machine_index == machine && (short)player->controller_index == controller)
+			continue;
+		return TRUE;
+	}
+	return FALSE;
 }
 
 /* "port lobby leave" (B): a player leaves the game, the machine's last
-leaving it (TRUE: back from the lobby); a controller not playing cancels
-ADD PLAYER */
+leaving it (TRUE: back from the lobby) when nobody else is in it. With other
+players or bots still there, the host stays on the lobby and can sit back
+down. A controller not playing cancels ADD PLAYER */
 static boolean lobby_leave(struct widget_instance *widget, struct event_record *event, short controller,
 	boolean *widget_deleted)
 {
+	boolean others;
 	boolean left;
 
 	if (!lobby_controller_playing(controller))
 	{
-		lobby_join_reset();
+		/* cancel the profile list. a seat that left stays able to sit back down */
+		lobby_join.adding = FALSE;
+		lobby_join.controller = NONE;
+		lobby_join.profile = NONE;
 		return FALSE;
 	}
+	others = lobby_others_beside(controller);
 	left = ui_widget_port_unjoin_player(widget, event, widget_deleted);
+	/* the game is still up. this device is out of it, and the lobby stays
+	so START or ENTER can sit it back down */
+	if (others && global_network_game_client_get())
+	{
+		lobby_join.adding = FALSE;
+		lobby_join.controller = NONE;
+		lobby_join.profile = NONE;
+		lobby_join.reseat = TRUE;
+		if (left && event && event->controller_index >= 0 &&
+			event->controller_index < MAXIMUM_LOCAL_PLAYERS)
+			player_ui_local_player_left_multiplayer_game(event->controller_index);
+		return FALSE;
+	}
 	/* leaving the lobby (the machine's last player). ADD PLAYER and a
 	profile still being chosen would keep this gamepad on its own port, and
 	the screen we return to only reads the first one */
+	lobby_join.reseat = FALSE;
 	if (left)
 	{
 		lobby_join_reset();
@@ -6758,10 +7316,224 @@ static boolean lobby_assign(struct widget_instance *widget, struct event_record 
 		return FALSE;
 	if (!ui_widget_port_multiplayer_player(controller, lobby_join.profile))
 		return campaign_fail();
+	lobby_join.reseat = FALSE;
+	lobby_join.adding = FALSE;
 	lobby_join.controller = controller;
 	ui_play_audio_feedback_sound(SOUND_FORWARD);
 	ui_widget_port_back_skipping_one(widget);
 	*widget_deleted = TRUE;
+	return TRUE;
+}
+
+static void lobby_button_at(struct widget_instance *list, char const *name, short x);
+
+/* the row the list has selected, when that child is one of its player rows */
+static struct network_player *lobby_focused_row(struct widget_instance *list)
+{
+	struct widget_instance *row = list ? list->focused_child : NULL;
+	short index;
+	short slot;
+
+	if (!row || !row->name || strncmp(row->name, "list_item_", 10))
+		return NULL;
+	index = (short)atoi(row->name + 10);
+	slot = (short)(multiplayer.lobby_first + index);
+	if (index < 0 || index >= LOBBY_ROWS || slot < 0 || slot >= lobby_player_count)
+		return NULL;
+	return lobby_players[slot];
+}
+
+/* the player KICK and MUTE act on, still seated */
+static struct network_player *lobby_action_find(void)
+{
+	void *client = global_network_game_client_get();
+	struct network_game *game = client ? network_game_client_get_game(client) : NULL;
+	short index;
+
+	if (!game || lobby_action_machine == NONE)
+		return NULL;
+	for (index = 0; index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
+	{
+		struct network_player *player = &game->players[index];
+
+		if (network_player_is_valid(player) &&
+			(short)player->machine_index == lobby_action_machine &&
+			(short)player->controller_index == lobby_action_controller)
+			return player;
+	}
+	return NULL;
+}
+
+static boolean lobby_is_host(void)
+{
+	return global_network_game_server_get() != NULL;
+}
+
+/* a remote machine, or a bot on this one. The host's own players leave
+with LEAVE */
+static boolean lobby_action_kickable(struct network_player *player)
+{
+	short local;
+
+	if (!lobby_is_host() || !player || !network_player_is_valid(player))
+		return FALSE;
+	local = network_game_client_get_local_machine_index();
+	if ((short)player->machine_index == local &&
+		!bot_controller_is_bot(player->machine_index, player->controller_index))
+		return FALSE;
+	return TRUE;
+}
+
+/* voice is a remote machine's. A bot does not speak */
+static boolean lobby_action_mutable(struct network_player *player)
+{
+	if (!lobby_action_kickable(player))
+		return FALSE;
+	if ((short)player->machine_index == network_game_client_get_local_machine_index())
+		return FALSE;
+	return TRUE;
+}
+
+/* whether anyone on the machine is muted for everyone */
+static boolean lobby_machine_host_muted(long machine_index)
+{
+	short index;
+
+	for (index = 0; index < lobby_player_count; index++)
+	{
+		struct network_player *player = lobby_players[index];
+
+		if (player && (short)player->machine_index == (short)machine_index &&
+			network_chat_host_name_muted(player->name))
+			return TRUE;
+	}
+	return FALSE;
+}
+
+static boolean lobby_player_muted(struct network_player *player)
+{
+	if (!player)
+		return FALSE;
+	return network_voice_machine_muted(player->machine_index) ||
+		lobby_machine_host_muted(player->machine_index);
+}
+
+/* a player row keeps who KICK and MUTE will use. The buttons remember that
+player once focus has moved onto the bar */
+static void lobby_action_track(struct widget_instance *list)
+{
+	struct network_player *row;
+
+	if (!lobby_is_host())
+	{
+		lobby_action_machine = NONE;
+		return;
+	}
+	row = lobby_focused_row(list);
+	if (row)
+	{
+		if (lobby_action_kickable(row))
+		{
+			lobby_action_machine = (short)row->machine_index;
+			lobby_action_controller = (short)row->controller_index;
+		}
+		else
+			lobby_action_machine = NONE;
+		return;
+	}
+	if (!lobby_action_find())
+		lobby_action_machine = NONE;
+}
+
+/* KICK and MUTE sit above the bar, and only while the host has a player
+they apply to */
+static void lobby_host_controls(struct widget_instance *list)
+{
+	struct network_player *player;
+	struct widget_instance *kick;
+	struct widget_instance *mute;
+	boolean show_kick;
+	boolean show_mute;
+
+	lobby_action_track(list);
+	player = lobby_action_find();
+	show_kick = lobby_action_kickable(player);
+	show_mute = lobby_action_mutable(player);
+	kick = named(list, "lobby_button_kick", 0);
+	mute = named(list, "lobby_button_mute", 0);
+	visible_set(kick, show_kick);
+	visible_set(mute, show_mute);
+	if (show_mute)
+		label_set(mute, lobby_player_muted(player) ? L"UNMUTE" : L"MUTE");
+	if (kick)
+		kick->vertical_offset = -24;
+	if (mute)
+		mute->vertical_offset = -24;
+	if (show_kick && show_mute)
+	{
+		lobby_button_at(list, "lobby_button_kick", 120);
+		lobby_button_at(list, "lobby_button_mute", 250);
+	}
+	else if (show_kick)
+		lobby_button_at(list, "lobby_button_kick", 184);
+}
+
+/* "port lobby kick": the host drops the selected player's machine, or the
+bot seated on this one */
+static boolean lobby_kick(void)
+{
+	struct network_player *player;
+	void *client;
+
+	if (!lobby_is_host())
+		return TRUE;
+	player = lobby_action_find();
+	if (!lobby_action_kickable(player))
+		return TRUE;
+	if (bot_controller_is_bot(player->machine_index, player->controller_index))
+	{
+		client = global_network_game_client_get();
+		/* the server drops that seat and clears the bot. clearing it when the
+		request was not written leaves a player who can no longer be kicked */
+		if (!client || !network_game_client_request_remove_player(client, player))
+			return TRUE;
+		bot_controller_clear((short)player->machine_index, (short)player->controller_index);
+	}
+	else if (!network_game_server_kick_machine_of_player(player->machine_index, FALSE))
+		return TRUE;
+	lobby_action_machine = NONE;
+	return TRUE;
+}
+
+/* every name on that machine, so a shared machine mutes and unmutes together */
+static void lobby_machine_set_muted(struct network_player *player, boolean mute)
+{
+	void *client = global_network_game_client_get();
+	struct network_game *game = client ? network_game_client_get_game(client) : NULL;
+	short index;
+
+	network_voice_mute_machine(player->machine_index, mute);
+	for (index = 0; game && index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
+	{
+		struct network_player *other = &game->players[index];
+
+		if (network_player_is_valid(other) && other->machine_index == player->machine_index)
+			network_chat_host_mute_name(other->name, mute);
+	}
+}
+
+/* "port lobby mute": the host stops or restores that machine's voice for
+everyone */
+static boolean lobby_mute(void)
+{
+	struct network_player *player;
+
+	if (!lobby_is_host())
+		return TRUE;
+	player = lobby_action_find();
+	if (!lobby_action_mutable(player))
+		return TRUE;
+	lobby_machine_set_muted(player, (boolean)!lobby_player_muted(player));
 	return TRUE;
 }
 
@@ -6770,9 +7542,15 @@ static void lobby_join_help(struct widget_instance *list)
 {
 	struct widget_instance *help = named(screen_of(list), "lobby_join_help", 0);
 	wchar_t const *text = L"";
+	struct network_player *player = lobby_action_find();
 
 	if (mm_link_just_copied())
 		text = L"Link copied.";
+	else if (lobby_join.reseat)
+		text = L"START sits a controller down. ENTER sits the keyboard and mouse.";
+	else if (named(list, "lobby_button_kick", 0) && lobby_action_kickable(player))
+		text = lobby_action_mutable(player) ?
+			L"KICK removes them. MUTE stops their voice." : L"KICK removes them.";
 	else if (lobby_local_player_count() < MAXIMUM_LOCAL_PLAYERS)
 		text = L"ADD PLAYER adds someone here.";
 	text_set(help, text);
@@ -6888,27 +7666,32 @@ void menu_functions_text_box_drawn(struct widget_instance *widget, rectangle2d c
 
 		if (lobby_icons.texts[row] != widget)
 			continue;
-		if (!network_voice_machine_speaking(machine_index) && !network_voice_machine_muted(machine_index))
-			return;
-		size = (short)MIN(14, bounds->y1 - bounds->y0);
-		icon.x1 = (short)(bounds->x1 - 4);
-		icon.y0 = (short)((bounds->y0 + bounds->y1 - size) / 2);
-		/* (the name's ink: the icon just left of it, centred on its
-		capitals) */
-		if (widget->parameters.text_box.text && widget->parameters.text_box.text[0])
 		{
-			rectangle2d text;
-			rectangle2d cursor;
+			boolean muted = network_voice_machine_muted(machine_index) ||
+				lobby_machine_host_muted(machine_index);
 
-			draw_unicode_string_compute_bounds(bounds, widget->parameters.text_box.text, &text, &cursor);
-			if (text.x0 - size - 6 >= bounds->x0)
-				icon.x1 = (short)(text.x0 - 6);
-			icon.y0 = (short)(draw_unicode_string_capital_middle(bounds, widget->parameters.text_box.text) - size / 2);
+			if (!network_voice_machine_speaking(machine_index) && !muted)
+				return;
+			size = (short)MIN(14, bounds->y1 - bounds->y0);
+			icon.x1 = (short)(bounds->x1 - 4);
+			icon.y0 = (short)((bounds->y0 + bounds->y1 - size) / 2);
+			/* (the name's ink: the icon just left of it, centred on its
+			capitals) */
+			if (widget->parameters.text_box.text && widget->parameters.text_box.text[0])
+			{
+				rectangle2d text;
+				rectangle2d cursor;
+
+				draw_unicode_string_compute_bounds(bounds, widget->parameters.text_box.text, &text, &cursor);
+				if (text.x0 - size - 6 >= bounds->x0)
+					icon.x1 = (short)(text.x0 - 6);
+				icon.y0 = (short)(draw_unicode_string_capital_middle(bounds, widget->parameters.text_box.text) - size / 2);
+			}
+			icon.x0 = (short)(icon.x1 - size);
+			icon.y1 = (short)(icon.y0 + size);
+			network_voice_draw_icon(&icon, muted, 1.0f);
+			return;
 		}
-		icon.x0 = (short)(icon.x1 - size);
-		icon.y1 = (short)(icon.y0 + size);
-		network_voice_draw_icon(&icon, network_voice_machine_muted(machine_index), 1.0f);
-		return;
 	}
 }
 
@@ -6955,6 +7738,8 @@ static void lobby_update(struct widget_instance *list)
 	if (multiplayer.lobby_first > MAX(0, lobby_player_count - rows))
 		multiplayer.lobby_first = (short)MAX(0, lobby_player_count - rows);
 	rows_update(list, (short)MIN(lobby_player_count, rows), lobby_row_text);
+	if (list->focused_child && !list->focused_child->visible)
+		focus_row(list, NONE);
 	/* (the rows' players, for their speaker icons) */
 	{
 		struct widget_instance *row = list->child;
@@ -6970,6 +7755,7 @@ static void lobby_update(struct widget_instance *list)
 		}
 		lobby_icons.updated_at = system_milliseconds();
 	}
+	lobby_host_controls(list);
 	lobby_join_help(list);
 	/* the server assigns teams. this lobby does not send a team change.
 	PASTE LINK takes that slot while this is still a private party. */
@@ -7216,9 +8002,10 @@ static void preview_update(struct widget_instance *list)
 
 /* "port lobby preview add" (START): the same list as ADD PLAYER. A player
 already joining has their START go to the focused button */
-static boolean preview_add(struct widget_instance *widget, short controller, boolean *widget_deleted)
+static boolean preview_add(struct widget_instance *widget, struct event_record *event, short controller,
+	boolean *widget_deleted)
 {
-	return lobby_join_start(widget, controller, widget_deleted);
+	return lobby_join_start(widget, event, controller, widget_deleted);
 }
 
 /* "port lobby preview leave" (B): a joining player stays out, the last of
@@ -10149,6 +10936,22 @@ static boolean mm_paste_finish(struct widget_instance *widget, boolean *widget_d
 	return TRUE;
 }
 
+/* the party screen stays up while the pasted link is reached. the card
+and the line under the players say so, in place of Find Game. */
+static void mm_paste_show_connecting(struct widget_instance *list)
+{
+	struct widget_instance *description;
+
+	if (!list)
+		return;
+	text_set(named(screen_of(list), "lobby_join_help", 0), L"Connecting...");
+	description = list->parameters.list.extended_description;
+	text_set_length(named(description, "lobby_game_data", 0), L"Connecting...", LOBBY_TEXT_LENGTH);
+	/* this machine has left the party it was hosting */
+	visible_set(named(list, "lobby_button_kick", 0), FALSE);
+	visible_set(named(list, "lobby_button_mute", 0), FALSE);
+}
+
 /* 1 while this party lobby is waiting to enter the pasted host's lobby.
 the screen stays here. the search client is underneath it. */
 static int mm_paste_poll(struct widget_instance *list)
@@ -10160,6 +10963,7 @@ static int mm_paste_poll(struct widget_instance *list)
 
 	if (!mm_paste_waiting)
 		return 0;
+	mm_paste_show_connecting(list);
 	mm_paste_frames++;
 	/* a menu frame. 2700 is about 45 seconds at 60, inside the invite's own wait. */
 	if (mm_paste_frames > 2700)
@@ -11038,6 +11842,11 @@ boolean pc_menu_event_function_invoke(
 		{
 			return browser_select(widget, event, controller, widget_deleted);
 		}
+		else if (!strcmp(name, "gamespy select header"))
+		{
+			browser_sort_header_clicked(widget);
+			return TRUE;
+		}
 		else if (!strcmp(name, "gamespy back handler") && text_field_editing(NULL))
 		{
 			text_field_end(FALSE);
@@ -11336,11 +12145,19 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port lobby join"))
 		{
-			return lobby_join_start(widget, controller, widget_deleted);
+			return lobby_join_start(widget, event, controller, widget_deleted);
 		}
 		else if (!strcmp(name, "port lobby leave"))
 		{
 			return lobby_leave(widget, event, controller, widget_deleted);
+		}
+		else if (!strcmp(name, "port lobby kick"))
+		{
+			return lobby_kick();
+		}
+		else if (!strcmp(name, "port lobby mute"))
+		{
+			return lobby_mute();
 		}
 		else if (!strcmp(name, "port lobby player list initialize"))
 		{
@@ -11376,7 +12193,7 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port lobby preview add"))
 		{
-			return preview_add(widget, controller, widget_deleted);
+			return preview_add(widget, event, controller, widget_deleted);
 		}
 		else if (!strcmp(name, "port lobby preview leave"))
 		{

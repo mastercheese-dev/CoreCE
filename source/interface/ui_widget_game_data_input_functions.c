@@ -2060,8 +2060,11 @@ static void netgame_prejoin_players(
 			if (network_player_is_valid(&game->players[(short)state_or_index.index]) &&
 				network_game_player_is_local(&game->players[(short)state_or_index.index]))
 			{
-				local_player_wants_to_join[
-					game->players[(short)state_or_index.index].controller_index] = FALSE;
+				/* a bot's seat is past the four pads. it is not one of them */
+				short pad = game->players[(short)state_or_index.index].controller_index;
+
+				if (pad >= 0 && pad < 4)
+					local_player_wants_to_join[pad] = FALSE;
 			}
 		}
 

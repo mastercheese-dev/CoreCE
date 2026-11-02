@@ -903,6 +903,16 @@ void rasterizer_text_set_scale(
 	real scale,
 	real origin_x,
 	real origin_y);
+void rasterizer_text_get_scale(
+	real *scale,
+	real *origin_x,
+	real *origin_y);
+/* another scale about a point, on top of the one already set. a pane fit
+stays in place, and the label still shrinks toward its own center */
+void rasterizer_text_scale_extra(
+	real extra,
+	real center_x,
+	real center_y);
 /* port: the 640x480 menus drawn into one pane. quads and text shrink
 about the origin, and the pointer is turned back on the next test */
 void rasterizer_screen_fit_begin(

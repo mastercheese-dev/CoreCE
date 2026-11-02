@@ -369,7 +369,7 @@ static char const *const port_function_names[] =
 	"port pause end game", "port coop friendly fire",
 	"port coop begin", "port coop player 2 list initialize", "port coop player 2",
 	"port lobby open", "port lobby add player", "port lobby paste link", "port lobby copy link",
-	"port lobby join", "port lobby leave",
+	"port lobby join", "port lobby leave", "port lobby kick", "port lobby mute",
 	"port lobby download", "port lobby chat", "port profile edit",
 	"port lobby player list initialize", "port lobby player choose",
 	"port lobby player confirm",

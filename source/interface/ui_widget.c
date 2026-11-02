@@ -1385,6 +1385,10 @@ boolean pc_menu_tag(
 split screen, the lobby's (port/linux/game/menu_functions.c) */
 unsigned char pc_menu_split_players(
 	void);
+/* port: the lobby reads every controller while a device can sit back down
+(port/linux/game/menu_functions.c) */
+unsigned char pc_menu_lobby_hears_all(
+	void);
 /* port: local_player_count, 0 before the players' globals are made
 (source/game/players.c) */
 short players_port_local_player_count(
@@ -5878,15 +5882,28 @@ static void widget_instance_render_text_box(
 			(button_bitmap->width == 512 && button_bitmap->height == 128)))
 			button_label = TRUE;
 		if (button_label)
-			rasterizer_text_set_scale(0.75f,
+		{
+			real saved_scale;
+			real saved_x;
+			real saved_y;
+
+			/* the pane fit is already a scale. replacing it parks the
+			label outside the pane, and the buttons along the bottom
+			lose their words */
+			rasterizer_text_get_scale(&saved_scale, &saved_x, &saved_y);
+			rasterizer_text_scale_extra(0.75f,
 				(real)(bounds.x0 + bounds.x1) * 0.5f,
 				(real)(bounds.y0 + bounds.y1) * 0.5f);
-		if (string_has_icons_to_draw(*text))
+			if (string_has_icons_to_draw(*text))
+				draw_string_and_hack_in_icons(&bounds, &clip, NULL, 0, *text, FALSE);
+			else
+				rasterizer_draw_unicode_string(&bounds, &clip, NULL, 0, *text);
+			rasterizer_text_set_scale(saved_scale, saved_x, saved_y);
+		}
+		else if (string_has_icons_to_draw(*text))
 			draw_string_and_hack_in_icons(&bounds, &clip, NULL, 0, *text, FALSE);
 		else
 			rasterizer_draw_unicode_string(&bounds, &clip, NULL, 0, *text);
-		if (button_label)
-			rasterizer_text_set_scale(1.0f, 0.0f, 0.0f);
 	}
 
 	return;
@@ -7018,6 +7035,30 @@ static boolean ui_mouse_widget_has_focus(
 	return TRUE;
 }
 
+/* a server browser column title. passing over it is not a selection, and
+the list takes the focus back, which is the click that sounds every frame */
+static boolean ui_mouse_is_sort_header(
+	struct widget_instance *widget)
+{
+	for (; widget; widget = widget->parent)
+	{
+		if (!widget->name)
+			continue;
+		if (!strncmp(widget->name, "op_sort_header_", 15) ||
+			!strncmp(widget->name, "sort_header_", 12))
+			return TRUE;
+	}
+	return FALSE;
+}
+
+static void ui_mouse_sort_header_click(
+	struct widget_instance *widget)
+{
+	extern void browser_sort_header_clicked(struct widget_instance *widget);
+
+	browser_sort_header_clicked(widget);
+}
+
 /* moves the focus to the widget as the d-pad would, with the selection of
 the column lists on the way (widget_event_function_list_widget_goto_next_item) */
 static void ui_mouse_give_focus(
@@ -7335,6 +7376,14 @@ are: one posted while the widgets update or draw would be overwritten by the
 next frame's events (queue_event keeps the latest) */
 static short ui_widget_port_press_controller = NONE;
 static short ui_widget_port_press_button;
+/* a button this frame came from the pointer, not the keyboard */
+static boolean ui_widget_port_pointer_press;
+
+boolean ui_widget_port_pointer_button(
+	void)
+{
+	return ui_widget_port_pointer_press;
+}
 
 void ui_widget_port_post_button(
 	short controller_index,
@@ -7391,6 +7440,7 @@ static void ui_widgets_process_mouse(
 	boolean keyboard_active;
 
 	ui_debug_frame++;
+	ui_widget_port_pointer_press = FALSE;
 	pointer_active = halo_ui_pointer_update(ui_mouse_menus_active(), &pointer) != 0;
 	if (pointer_active)
 		ui_mouse_pointer_is_touch = pointer.touch != 0;
@@ -7489,6 +7539,10 @@ static void ui_widgets_process_mouse(
 				{
 				case _ui_mouse_target_item:
 				case _ui_mouse_target_value:
+					/* a column title sorts on a click. passing over it
+					does not take the focus or play the cursor sound */
+					if (ui_mouse_is_sort_header(target->widget))
+						break;
 					/* (a selection list's row is chosen by a click, not
 					by passing over it on the way to its buttons) */
 					if (!ui_mouse_selection_row(target->widget))
@@ -7521,6 +7575,11 @@ static void ui_widgets_process_mouse(
 				switch (target->kind)
 				{
 				case _ui_mouse_target_item:
+					if (ui_mouse_is_sort_header(target->widget))
+					{
+						ui_mouse_sort_header_click(target->widget);
+						break;
+					}
 					/* (a selection list's row: chosen by a click, used by
 					a click on it chosen) */
 					if (ui_mouse_selection_row(target->widget) && target->widget->parent &&
@@ -7594,6 +7653,7 @@ static void ui_widgets_process_mouse(
 		}
 		if (ui_mouse_press_count)
 		{
+			ui_widget_port_pointer_press = TRUE;
 			event_manager_post_button(controller_index, ui_mouse_presses[0]);
 			csmemmove(ui_mouse_presses, ui_mouse_presses + 1, --ui_mouse_press_count * sizeof(ui_mouse_presses[0]));
 		}
@@ -8043,8 +8103,10 @@ static void pause_menu_fit_begin(
 	definition = ui_widget_definition_get(widget->definition_tag_index);
 	design_w = definition->bounds.x1 - definition->bounds.x0;
 	design_h = definition->bounds.y1 - definition->bounds.y0;
-	/* a teammate pane, or the forced empty pane, shows the single screen pause menu */
-	if (hardcore_views_split() || hardcore_views_blank_split())
+	/* a teammate pane, a forced empty pane, or a LAN split screen shows
+	the single screen pause menu, scaled into the pane */
+	if (hardcore_views_split() || hardcore_views_blank_split() ||
+		(network_game_is_active() && local_player_count() > 1))
 	{
 		design_w = 640;
 		design_h = 480;
@@ -8481,9 +8543,36 @@ picks up whichever pad is at hand. Its screens read every controller's
 events (process_ui_widgets), and take them
 (widget_takes_events_of_controller). With two or more players, each
 controller keeps to its own player's menus */
+/* the lobby, and the screens it opens over itself */
+static boolean widget_is_lobby_flow(
+	struct widget_instance const *widget)
+{
+	static char const *const names[] =
+	{
+		"lobby_screen", "player_profile_screen", "lan_add_player_screen",
+		"player_assign_screen", "preview_screen", "bot_screen"
+	};
+
+	for (; widget; widget = widget->parent)
+	{
+		long index;
+
+		if (!widget->name)
+			continue;
+		for (index = 0; index < (long)NUMBEROF(names); index++)
+		{
+			if (!strcmp(widget->name, names[index]))
+				return TRUE;
+		}
+	}
+	return FALSE;
+}
+
 static boolean widget_takes_any_controller(
 	struct widget_instance const *widget)
 {
+	if (pc_menu_lobby_hears_all() && widget_is_lobby_flow(widget))
+		return TRUE;
 	return widget->local_player_index == 0 && !pc_menu_split_players() &&
 		(we_are_at_the_main_menu || players_port_local_player_count() <= 1);
 }
@@ -8508,6 +8597,8 @@ static boolean widget_takes_events_of_controller(
 	short player;
 
 	if (widget->local_player_index == NONE || widget->local_player_index == controller_index)
+		return TRUE;
+	if (pc_menu_lobby_hears_all() && widget_is_lobby_flow(widget))
 		return TRUE;
 	if (controller_index > 0 && controller_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS &&
 		widget_takes_any_controller(widget))
@@ -9147,7 +9238,6 @@ static boolean ui_check_for_pause_game(
 	}
 	if (pause_pressed)
 	{
-		boolean pressed_by_first_local_player = TRUE;
 		short local_player_count = 0;
 		short pressing_local_player_index = NONE;
 		short local_player_index;
@@ -9157,11 +9247,7 @@ static boolean ui_check_for_pause_game(
 			local_player_index = local_player_get_next(local_player_index))
 		{
 			if (local_player_index == controller_index)
-			{
 				pressing_local_player_index = controller_index;
-				if (local_player_count >= 1)
-					pressed_by_first_local_player = FALSE;
-			}
 			local_player_count++;
 		}
 		if (network_game)
@@ -9171,49 +9257,16 @@ static boolean ui_check_for_pause_game(
 			{
 				if (!widget_globals.active_widgets[controller_index])
 				{
-					struct network_game_client *client = global_network_game_client_get();
-					struct network_game *network_game_data =
-						network_game_client_get_game(client);
-					short machine_index =
-						network_game_client_get_machine_index(client);
 					char const *widget_name;
-					short panes = hardcore_views_window_count();
 
-					/* port: a campaign map has only the campaign's pause screen */
+					/* port: a campaign map has only the campaign's pause screen.
+					a match uses the one player pause, LAN split screen
+					included. the pane scales that screen to fit */
 					if (network_coop_active())
 						widget_name = "ui\\shell\\solo_game\\pause_game\\pause_game";
-					/* port: teammate panes are not local players, so the
-					pause screen would stay the full one. the single
-					screen menu is drawn into this pane, scaled to fit */
-					else if (local_player_count == 1 && panes > 1)
+					else
 						widget_name =
 							"ui\\shell\\multiplayer_game\\pause_game\\1p_pause_game";
-					else switch (local_player_count)
-					{
-					case 1:
-						widget_name =
-							"ui\\shell\\multiplayer_game\\pause_game\\1p_pause_game";
-						break;
-					case 2:
-						widget_name =
-							"ui\\shell\\multiplayer_game\\pause_game\\2p_pause_game";
-						break;
-					case 3:
-						widget_name = pressed_by_first_local_player == TRUE
-							? "ui\\shell\\multiplayer_game\\pause_game\\2p_pause_game"
-							: "ui\\shell\\multiplayer_game\\pause_game\\4p_pause_game";
-						break;
-					case 4:
-						widget_name =
-							"ui\\shell\\multiplayer_game\\pause_game\\4p_pause_game";
-						break;
-					default:
-						error(
-							_error_silent,
-							"invalid local player count for multiplayer game");
-						widget_name = NULL;
-						break;
-					}
 					if (widget_name &&
 						!ui_widget_load_by_name_or_tag(
 							widget_name,

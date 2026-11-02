@@ -1169,6 +1169,13 @@ struct bot_state
 	long strafe_ticks;
 	/* one hop when a strafe period starts, the beta's strafe_turn roll */
 	boolean strafe_jump;
+	/* one lob per cover break, until the shot is open again */
+	boolean flush_used;
+	/* ticks on their floor with the shot still blocked */
+	long cover_close_ticks;
+	/* 0 dodge, 1 tuck into cover, 2 step back out, 3 wait out this pause,
+	4 the step out already failed for this cover break */
+	short peek_mode;
 	real wander_yaw;
 	long look_ticks;
 	long stuck_ticks;
@@ -1480,6 +1487,20 @@ static boolean bot_combat_visible(real_point3d const *eye, long ignore_object_in
 		return TRUE;
 	unit_get_camera_position(target_unit_index, &head);
 	return bot_can_see(eye, &head, ignore_object_index);
+}
+
+/* the map is between the eye and this body. A clear ray, camouflage
+included, is not cover. */
+static boolean bot_target_in_cover(long self_unit, real_point3d const *eye, long player_index)
+{
+	struct player_datum *target;
+
+	if (player_index == NONE)
+		return FALSE;
+	target = player_try_and_get(player_index);
+	if (!target || target->unit_index == NONE)
+		return FALSE;
+	return !bot_combat_visible(eye, self_unit, target->unit_index);
 }
 
 /* camouflage. A clear line still counts through a normal fight. Past this,
@@ -3693,6 +3714,101 @@ static boolean bot_throw_hurts_self(real_point3d const *feet, real_point3d const
 	dy = landing.y - feet->y;
 	dz = landing.z - feet->z;
 	return square_root(dx * dx + dy * dy + dz * dz) <= bot_grenade_danger(type);
+}
+
+/* one lofted line over the cover. The first thing it hits has to sit
+on the hidden body, and the blast has to miss the thrower. */
+static boolean bot_cover_flush_lob(real_point3d const *feet, real_point3d const *eye,
+	real_point3d const *enemy_feet, short type, long self_unit, long enemy_unit,
+	real *yaw_out, real *pitch_out)
+{
+	static real const rise[4] = { 0.45f, 1.20f, 2.20f, 3.20f };
+	unsigned long flags;
+	real dx;
+	real dy;
+	real flat;
+	real bearing;
+	real danger;
+	long index;
+
+	dx = enemy_feet->x - eye->x;
+	dy = enemy_feet->y - eye->y;
+	flat = square_root(dx * dx + dy * dy);
+	if (flat < 3.5f || flat > 20.0f)
+		return FALSE;
+	danger = bot_grenade_danger(type);
+	bearing = arctangent(dy, dx);
+	flags = FLAG(_collision_test_front_facing_surfaces_bit) |
+		FLAG(_collision_test_back_facing_surfaces_bit) |
+		FLAG(_collision_test_structure_bit) |
+		FLAG(_collision_test_objects_bit) |
+		FLAG(_collision_test_objects_bipeds_bit) |
+		FLAG(_collision_test_objects_vehicles_bit) |
+		FLAG(_collision_test_objects_scenery_bit) |
+		FLAG(_collision_test_objects_machines_bit) |
+		FLAG(_collision_test_objects_controls_bit);
+	for (index = 0; index < 4; index++)
+	{
+		real pitch;
+		real line;
+		real_point3d to;
+		real_point3d landing;
+		struct collision_result collision;
+		real ex;
+		real ey;
+		real ez;
+		real sx;
+		real sy;
+		real sz;
+		real enemy_dist;
+		real self_dist;
+
+		/* a straight line at their feet hits the ground. The samples
+		are the chest, then higher lobs over the cover. A hit on the
+		body is the landing, not a point past it. */
+		to.x = enemy_feet->x;
+		to.y = enemy_feet->y;
+		to.z = enemy_feet->z + rise[index];
+		line = square_root(dx * dx + dy * dy +
+			(to.z - eye->z) * (to.z - eye->z));
+		pitch = line > 0.05f ? arctangent(to.z - eye->z, flat) : 0.0f;
+		if (pitch > 1.0f)
+			pitch = 1.0f;
+		if (pitch < -1.0f)
+			pitch = -1.0f;
+		landing = to;
+		if (collision_test_line(flags, eye, &to, self_unit, &collision) &&
+			collision.t < 1.0f)
+		{
+			landing = collision.point;
+			/* on the body. The blast still has to miss the thrower. */
+			if (enemy_unit != NONE && collision.object_index == enemy_unit &&
+				!bot_throw_hurts_self(feet, eye, &landing, type, self_unit, enemy_unit))
+			{
+				*yaw_out = bearing;
+				*pitch_out = pitch;
+				return TRUE;
+			}
+		}
+		ex = landing.x - enemy_feet->x;
+		ey = landing.y - enemy_feet->y;
+		ez = landing.z - enemy_feet->z;
+		enemy_dist = square_root(ex * ex + ey * ey + ez * ez);
+		if (enemy_dist > danger)
+			continue;
+		sx = landing.x - feet->x;
+		sy = landing.y - feet->y;
+		sz = landing.z - feet->z;
+		self_dist = square_root(sx * sx + sy * sy + sz * sz);
+		if (self_dist <= danger || self_dist <= enemy_dist)
+			continue;
+		if (bot_throw_hurts_self(feet, eye, &landing, type, self_unit, enemy_unit))
+			continue;
+		*yaw_out = bearing;
+		*pitch_out = pitch;
+		return TRUE;
+	}
+	return FALSE;
 }
 
 /* an open heading off the grenade. A wall straight away is not a path:
@@ -7240,9 +7356,256 @@ static void bot_job_maintain(struct bot_state *state, real_point3d const *feet,
 	bot_job_aim(state, feet, unit_index);
 }
 
-/* a point on the ring around the target, at the gun's range, off to the
-open side. The bot looks at the target and walks that ring instead of
-standing on the body. */
+/* half a second to a second. The dodge is a step, not a twitch. */
+static long bot_strafe_hold(void)
+{
+	long hold;
+
+	hold = (long)(TICKS_PER_SECOND / 2);
+	if (hold < 8)
+		hold = 8;
+	return hold + (long)((bot_random() >> 8) % (unsigned long)hold);
+}
+
+/* positive side is to the right */
+static real bot_strafe_yaw(real facing, real side)
+{
+	return facing - side * (_pi * 0.5f);
+}
+
+/* the shoulder still has floor, and a wall is not an arm's length out */
+static boolean bot_strafe_side_safe(real_point3d const *feet, real facing, real side,
+	long unit_index)
+{
+	real yaw;
+	real shoulder;
+
+	if (side == 0.0f)
+		return FALSE;
+	yaw = bot_strafe_yaw(facing, side);
+	if (bot_drop_ahead(feet, yaw))
+		return FALSE;
+	/* ramp_ledge's positive shoulder is the left one */
+	shoulder = side > 0.0f ? -1.0f : 1.0f;
+	if (bot_ramp_ledge(feet, facing, shoulder))
+		return FALSE;
+	if (bot_open_distance(feet, yaw, unit_index) < 1.1f)
+		return FALSE;
+	return TRUE;
+}
+
+/* the eye a short step to that side. TRUE when that step can see the body. */
+static boolean bot_side_step_visible(real_point3d const *eye, real facing, real side,
+	long self_unit, long target_unit)
+{
+	real_point3d stepped;
+	real yaw;
+
+	yaw = bot_strafe_yaw(facing, side);
+	stepped = *eye;
+	stepped.x += cosine(yaw) * 1.0f;
+	stepped.y += sine(yaw) * 1.0f;
+	return bot_combat_visible(&stepped, self_unit, target_unit);
+}
+
+/* a short step that puts the shot back on them, or 0 when neither side does */
+static real bot_peek_open_side(struct bot_state *state, real_point3d const *feet,
+	real_point3d const *eye, long unit_index, long target_unit)
+{
+	real first;
+	real second;
+	real sides[2];
+	long index;
+
+	if (target_unit == NONE)
+		return 0.0f;
+	if (state->strafe != 0.0f &&
+		bot_strafe_side_safe(feet, state->facing_yaw, state->strafe, unit_index) &&
+		bot_side_step_visible(eye, state->facing_yaw, state->strafe, unit_index, target_unit))
+		return state->strafe;
+	first = state->strafe != 0.0f ? state->strafe : 1.0f;
+	second = -first;
+	sides[0] = first;
+	sides[1] = second;
+	for (index = 0; index < 2; index++)
+	{
+		if (!bot_strafe_side_safe(feet, state->facing_yaw, sides[index], unit_index))
+			continue;
+		if (bot_side_step_visible(eye, state->facing_yaw, sides[index], unit_index, target_unit))
+			return sides[index];
+	}
+	return 0.0f;
+}
+
+/* ladders, a floor change, and the Hang 'em High pit keep their own step */
+static boolean bot_fight_strafe_ok(struct bot_state *state, real_point3d const *feet,
+	real_point3d const *target)
+{
+	if (state->climb || state->gap_hold || state->vault != 0 || state->unstick_ticks > 0)
+		return FALSE;
+	if (bot_different_floor(feet, target))
+		return FALSE;
+	if (bot_playing_hangemhigh() && bot_in_pit(feet))
+		return FALSE;
+	return TRUE;
+}
+
+static void bot_strafe_pick(struct bot_state *state, real_point3d const *feet,
+	long unit_index, long skill, boolean allow_jump)
+{
+	real next;
+	real other;
+
+	next = state->strafe == 0.0f ? (((bot_random() >> 8) & 1) ? 1.0f : -1.0f) : -state->strafe;
+	other = -next;
+	if (!bot_strafe_side_safe(feet, state->facing_yaw, next, unit_index))
+	{
+		if (bot_strafe_side_safe(feet, state->facing_yaw, other, unit_index))
+			next = other;
+		else
+			next = 0.0f;
+	}
+	state->strafe = next;
+	state->strafe_ticks = bot_strafe_hold();
+	state->strafe_jump = FALSE;
+	if (allow_jump && next != 0.0f &&
+		(long)((bot_random() >> 8) % 100) < bot_jump_chance[skill])
+		state->strafe_jump = TRUE;
+}
+
+/* the shot is open. Forward holds the range. Left and right are the
+dodge, or a tuck into cover between bursts and the step back out. */
+static void bot_fight_strafe(struct bot_state *state, real_point3d const *feet,
+	real_point3d const *eye, long unit_index, long skill, long target_player,
+	struct player_action *action)
+{
+	struct player_datum *target;
+	struct biped_datum *biped;
+	long target_unit;
+	real side;
+	real other;
+	real j;
+	real motion;
+
+	if (skill < 0)
+		skill = 0;
+	if (skill > BOT_SKILL_IMPOSSIBLE)
+		skill = BOT_SKILL_IMPOSSIBLE;
+	target = player_try_and_get(target_player);
+	target_unit = target ? target->unit_index : NONE;
+	side = state->strafe;
+	if (state->peek_mode == 3 && state->burst_pause <= 0)
+		state->peek_mode = 0;
+	if (state->peek_mode == 1 || state->peek_mode == 2)
+	{
+		if (state->strafe_ticks <= 0 || side == 0.0f ||
+			!bot_strafe_side_safe(feet, state->facing_yaw, side, unit_index))
+		{
+			if (state->peek_mode == 1)
+			{
+				other = -side;
+				if (side != 0.0f &&
+					bot_strafe_side_safe(feet, state->facing_yaw, other, unit_index))
+				{
+					state->strafe = other;
+					state->peek_mode = 2;
+					state->strafe_ticks = bot_strafe_hold();
+					state->strafe_jump = FALSE;
+				}
+				else
+				{
+					state->peek_mode = 0;
+					state->strafe = 0.0f;
+					state->strafe_ticks = 0;
+				}
+			}
+			else
+			{
+				state->peek_mode = state->burst_pause > 0 ? (short)3 : (short)0;
+				state->strafe_ticks = bot_strafe_hold();
+				state->strafe_jump = FALSE;
+			}
+		}
+	}
+	if (state->peek_mode == 0 && target_unit != NONE &&
+		(state->burst_pause > 0 || state->strafe_ticks <= 0))
+	{
+		real tuck;
+		real first;
+		real second;
+
+		tuck = 0.0f;
+		first = state->strafe != 0.0f ? state->strafe : 1.0f;
+		second = -first;
+		if (bot_strafe_side_safe(feet, state->facing_yaw, first, unit_index) &&
+			!bot_side_step_visible(eye, state->facing_yaw, first, unit_index, target_unit))
+			tuck = first;
+		else if (bot_strafe_side_safe(feet, state->facing_yaw, second, unit_index) &&
+			!bot_side_step_visible(eye, state->facing_yaw, second, unit_index, target_unit))
+			tuck = second;
+		if (tuck != 0.0f)
+		{
+			state->strafe = tuck;
+			state->peek_mode = 1;
+			state->strafe_ticks = bot_strafe_hold();
+			state->strafe_jump = FALSE;
+		}
+	}
+	if (state->peek_mode == 0 || state->peek_mode == 3)
+	{
+		if (state->strafe == 0.0f || state->strafe_ticks <= 0)
+			bot_strafe_pick(state, feet, unit_index, skill, TRUE);
+		else if (!bot_strafe_side_safe(feet, state->facing_yaw, state->strafe, unit_index))
+		{
+			other = -state->strafe;
+			if (bot_strafe_side_safe(feet, state->facing_yaw, other, unit_index))
+			{
+				state->strafe = other;
+				state->strafe_ticks = bot_strafe_hold();
+				state->strafe_jump = FALSE;
+			}
+			else
+			{
+				state->strafe = 0.0f;
+				state->strafe_ticks = 8;
+				state->strafe_jump = FALSE;
+			}
+		}
+	}
+	j = 0.0f;
+	if (action->throttle.i != 0.0f)
+	{
+		real ahead;
+
+		/* the range step. A lip in front or behind is not part of the dodge. */
+		ahead = state->facing_yaw;
+		if (action->throttle.i < 0.0f)
+			ahead += _pi;
+		if (bot_drop_ahead(feet, ahead) && !bot_ramp_ahead(feet, ahead))
+			action->throttle.i = 0.0f;
+	}
+	if (state->strafe != 0.0f)
+	{
+		j = state->strafe * state->strafe_strength;
+		motion = state->facing_yaw + arctangent(-j, action->throttle.i);
+		if (bot_drop_ahead(feet, motion) && !bot_ramp_ahead(feet, motion))
+			j = 0.0f;
+	}
+	action->throttle.j = j;
+	if (j == 0.0f)
+		state->strafe_jump = FALSE;
+	if (state->strafe_jump && state->peek_mode == 0 && state->strafe != 0.0f)
+	{
+		biped = biped_try_and_get(unit_index);
+		if (!biped || !TEST_FLAG(biped->biped.flags, _biped_airborne_bit))
+			action->control_flags |= FLAG(_unit_control_jump_bit);
+		state->strafe_jump = FALSE;
+	}
+}
+
+/* a point on the ring around the target, at the gun's range. The fight
+stands on that line and strafes on the stick. The pit still walks the
+ring, which is the step it already had. */
 static void bot_fight_goal(struct bot_state *state, real_point3d const *feet,
 	real_point3d const *target, real near_range, real far_range, long unit_index,
 	long skill, real_point3d *goal)
@@ -7262,6 +7625,14 @@ static void bot_fight_goal(struct bot_state *state, real_point3d const *feet,
 		standoff = far_range;
 	if (standoff < 2.5f)
 		standoff = 2.5f;
+	bearing = bot_yaw_between(target, feet);
+	if (!(bot_playing_hangemhigh() && bot_in_pit(feet)))
+	{
+		goal->x = target->x + cosine(bearing) * standoff;
+		goal->y = target->y + sine(bearing) * standoff;
+		goal->z = feet->z;
+		return;
+	}
 	if (state->strafe == 0.0f || state->strafe_ticks <= 0)
 	{
 		left_clear = bot_open_distance(feet, state->facing_yaw + _pi * 0.5f, unit_index);
@@ -7274,8 +7645,6 @@ static void bot_fight_goal(struct bot_state *state, real_point3d const *feet,
 			state->strafe = ((bot_random() >> 8) & 1) ? 1.0f : -1.0f;
 		else
 			state->strafe = -state->strafe;
-		/* a short step and back. A long hold walks them out of the shots.
-		the hop is rolled once for that step, not on every tick of it. */
 		state->strafe_ticks = 8 + (long)((bot_random() >> 8) % 5);
 		state->strafe_jump = (long)((bot_random() >> 8) % 100) < bot_jump_chance[skill];
 	}
@@ -7293,7 +7662,6 @@ static void bot_fight_goal(struct bot_state *state, real_point3d const *feet,
 			state->strafe_jump = (long)((bot_random() >> 8) % 100) < bot_jump_chance[skill];
 		}
 	}
-	bearing = bot_yaw_between(target, feet);
 	orbit = bearing - state->strafe * 1.15f;
 	goal->x = target->x + cosine(orbit) * standoff;
 	goal->y = target->y + sine(orbit) * standoff;
@@ -8581,6 +8949,26 @@ static void bot_assign_items(void)
 	}
 }
 
+/* the fight is over. Walk to where they were, then look around. */
+static void bot_drop_fight(struct bot_state *state)
+{
+	if (state->last_seen_valid)
+	{
+		state->search_position = state->last_seen;
+		state->search_ticks = 210;
+		state->search_arrived = FALSE;
+		state->look_timer = 0;
+		state->look_valid = FALSE;
+	}
+	state->target_index = NONE;
+	state->target_visible = FALSE;
+	state->last_seen_valid = FALSE;
+	state->flush_used = FALSE;
+	state->cover_close_ticks = 0;
+	state->peek_mode = 0;
+	state->strafe_ticks = 0;
+}
+
 /* the host fills in a player whose name starts with Bot. Skill 0 to 4
 is easy through impossible */
 static void update_server_generate_bot_actions(
@@ -8625,11 +9013,14 @@ static void update_server_generate_bot_actions(
 		long engage;
 		long old_target;
 		long threat_index;
+		long attacker_index;
 		real seen_distance;
 		real seen_flat;
 		real threat_distance;
 		real committed_distance;
+		real covered_flat;
 		boolean committed_visible;
+		boolean covered_commit;
 		boolean called;
 		real_point3d called_point;
 		boolean holding;
@@ -8647,6 +9038,9 @@ static void update_server_generate_bot_actions(
 		holding = FALSE;
 		face_enemy = FALSE;
 		shot_at = FALSE;
+		attacker_index = NONE;
+		covered_commit = FALSE;
+		covered_flat = 1.0e9f;
 
 		player = player_try_and_get(player_index);
 		if (!player || !network_player_is_valid(&player->network_player_data))
@@ -8881,21 +9275,26 @@ static void update_server_generate_bot_actions(
 
 			teams_on = variant && variant->universal_variant.teams;
 			if (bot_damage_attacker(unit, player_index, player->team_index, teams_on,
-					&feet, &attacker, &attacker_flat) &&
-				(seen_index == NONE || attacker_flat + 0.4f < seen_flat))
+					&feet, &attacker, &attacker_flat))
 			{
-				seen_index = attacker;
-				seen_flat = attacker_flat;
-				shot_at = TRUE;
+				attacker_index = attacker;
+				if (seen_index == NONE || attacker_flat + 0.4f < seen_flat)
+				{
+					seen_index = attacker;
+					seen_flat = attacker_flat;
+					shot_at = TRUE;
+				}
 			}
 		}
 		if (seen_index != NONE)
 			state->call_hold = 0;
 		else if (called)
 			seen_index = called_index;
-		else if (state->target_index != NONE && state->unknown_ticks < 60 &&
+		else if (state->target_index != NONE &&
 			bot_enemy_living(player_index, state->target_index,
-				variant && variant->universal_variant.teams, player->team_index))
+				variant && variant->universal_variant.teams, player->team_index) &&
+			(state->unknown_ticks < 60 ||
+				bot_target_in_cover(player->unit_index, &eye, state->target_index)))
 			seen_index = state->target_index;
 		else if (state->call_hold > 0 && state->target_index != NONE)
 		{
@@ -8905,8 +9304,40 @@ static void update_server_generate_bot_actions(
 
 		old_target = state->target_index;
 		/* the current enemy already scored three metres closer. A much
-		closer body, seen or heard, takes the fight. */
+		closer body, seen or heard, takes the fight. A covered target
+		stays unless the new one is in reach, much closer, or shooting. */
+		covered_commit = bot_target_in_cover(player->unit_index, &eye, state->target_index);
+		if (covered_commit)
+		{
+			struct player_datum *held;
+			real_point3d held_point;
+			real hx;
+			real hy;
+
+			held = player_try_and_get(state->target_index);
+			if (held && held->unit_index != NONE)
+			{
+				object_get_origin(held->unit_index, &held_point);
+				hx = held_point.x - feet.x;
+				hy = held_point.y - feet.y;
+				covered_flat = square_root(hx * hx + hy * hy);
+			}
+		}
 		engage = seen_index;
+		if (covered_commit && attacker_index != NONE &&
+			attacker_index != state->target_index)
+			engage = attacker_index;
+		else if (covered_commit && seen_index != state->target_index)
+		{
+			boolean take;
+
+			take = FALSE;
+			if (seen_index != NONE &&
+				(seen_flat < 8.0f || seen_flat + 4.0f < covered_flat))
+				take = TRUE;
+			if (!take)
+				engage = state->target_index;
+		}
 		if (threat_index != NONE && threat_index != engage &&
 			(!committed_visible || committed_distance > 4.0f))
 			engage = threat_index;
@@ -8934,6 +9365,9 @@ static void update_server_generate_bot_actions(
 			state->burst_ticks = 0;
 			state->burst_pause = 0;
 			state->powerup_ready = engage != NONE;
+			state->flush_used = FALSE;
+			state->cover_close_ticks = 0;
+			state->peek_mode = 0;
 			if (engage == NONE)
 			{
 				state->look_ticks = 0;
@@ -8989,6 +9423,13 @@ static void update_server_generate_bot_actions(
 				visible = bot_combat_visible(&eye, player->unit_index,
 					target_player->unit_index) &&
 					!bot_camo_hides(skill, target_player, distance);
+				if (visible)
+				{
+					state->flush_used = FALSE;
+					state->cover_close_ticks = 0;
+					if (state->peek_mode == 4)
+						state->peek_mode = 0;
+				}
 				/* the ray that arms a reaction is every five ticks. Losing
 				them still counts every tick, up to 22, which is what makes
 				the next look wait. */
@@ -9031,33 +9472,59 @@ static void update_server_generate_bot_actions(
 					}
 					else
 					{
-						if (!state->last_seen_valid)
-						{
-							state->last_seen = aim_point;
-							state->last_seen_valid = TRUE;
-						}
-						state->unknown_ticks++;
 						/* still being shot. The forget waits until it stops. */
 						if (shot_at && engage == state->target_index)
 							state->unknown_ticks = 0;
-						if (state->unknown_ticks > 59)
+						if (bot_target_in_cover(player->unit_index, &eye, engage))
 						{
-							/* forgotten. Walk to where they were, and only
-							then look around. The scan is that arrival,
-							not the walk toward the wall in front of it. */
-							if (state->last_seen_valid)
+							real dx;
+							real dy;
+							real flat;
+							boolean arrived;
+
+							/* cover holds the fight. It ends on their floor
+							with the shot still shut, or when the route sticks.
+							the stand while the shot was open is not that stick. */
+							if (state->target_visible)
+								state->stuck_ticks = 0;
+							dx = point.x - feet.x;
+							dy = point.y - feet.y;
+							flat = square_root(dx * dx + dy * dy);
+							arrived = !bot_different_floor(&feet, &point) && flat < 3.0f;
+							if (arrived)
 							{
-								state->search_position = state->last_seen;
-								state->search_ticks = 210;
-								state->search_arrived = FALSE;
-								state->look_timer = 0;
-								state->look_valid = FALSE;
+								if (state->cover_close_ticks < 1000)
+									state->cover_close_ticks++;
 							}
-							engage = NONE;
-							state->target_index = NONE;
-							state->target_visible = FALSE;
-							state->last_seen_valid = FALSE;
-							visible = FALSE;
+							else
+								state->cover_close_ticks = 0;
+							if (state->cover_close_ticks > 2 * TICKS_PER_SECOND ||
+								state->stuck_ticks > 2 * TICKS_PER_SECOND)
+							{
+								bot_drop_fight(state);
+								engage = NONE;
+								visible = FALSE;
+							}
+						}
+						else
+						{
+							if (!state->last_seen_valid)
+							{
+								state->last_seen = aim_point;
+								state->last_seen_valid = TRUE;
+							}
+							state->unknown_ticks++;
+							if (shot_at && engage == state->target_index)
+								state->unknown_ticks = 0;
+							if (state->unknown_ticks > 59)
+							{
+								/* forgotten. Walk to where they were, and only
+								then look around. The scan is that arrival,
+								not the walk toward the wall in front of it. */
+								bot_drop_fight(state);
+								engage = NONE;
+								visible = FALSE;
+							}
 						}
 					}
 				}
@@ -9558,16 +10025,86 @@ static void update_server_generate_bot_actions(
 				real_vector3d direction;
 				real_euler_angles2d angles;
 				real_point3d search;
+				real_point3d enemy_feet;
 				real dx;
 				real dy;
 				real dist;
 				boolean walled;
+				boolean covered;
+				struct player_datum *covered_player;
+				long covered_unit;
 
-				/* lost the sightline. Walk to where they were. A wall
-				between them is a path around it, not a stand against it.
-				impossible already knows where they are. The walk goes
-				there, and the gun stays level on the path. */
-				if (skill == BOT_SKILL_IMPOSSIBLE && !fetching)
+				covered_player = player_try_and_get(engage);
+				covered_unit = covered_player ? covered_player->unit_index : NONE;
+				covered = covered_unit != NONE &&
+					bot_target_in_cover(player->unit_index, &eye, engage);
+				enemy_feet = aim_point;
+				if (covered)
+					object_get_origin(covered_unit, &enemy_feet);
+				/* cover: a short step that sees them, or their live floor.
+				a clear miss, camouflage included, still walks the last spot.
+				impossible with no cover still hunts the nearest body. */
+				if (covered && !fetching)
+				{
+					real peek_side;
+					boolean peeking;
+
+					peek_side = 0.0f;
+					peeking = FALSE;
+					if (state->peek_mode == 2 && state->strafe_ticks <= 0)
+						state->peek_mode = 4;
+					if (state->peek_mode != 4 &&
+						bot_fight_strafe_ok(state, &feet, &enemy_feet))
+						peek_side = bot_peek_open_side(state, &feet, &eye,
+							player->unit_index, covered_unit);
+					if (peek_side != 0.0f && state->peek_mode != 4)
+					{
+						/* the opening can move to the other shoulder
+						without spending the step */
+						if (state->peek_mode != 2)
+						{
+							state->peek_mode = 2;
+							state->strafe_ticks = bot_strafe_hold();
+							state->strafe_jump = FALSE;
+						}
+						state->strafe = peek_side;
+						peeking = TRUE;
+					}
+					else if (state->peek_mode == 2)
+						state->peek_mode = 4;
+					if (peeking)
+					{
+						real yaw;
+
+						yaw = bot_strafe_yaw(state->facing_yaw, state->strafe);
+						move_goal.x = feet.x + cosine(yaw) * 1.1f;
+						move_goal.y = feet.y + sine(yaw) * 1.1f;
+						move_goal.z = feet.z;
+						state->route_tour = FALSE;
+						state->route_floor = FALSE;
+						state->route_surface = NONE;
+						goal_pitch = 0.0f;
+						goal_yaw = bot_yaw_between(&feet, &enemy_feet);
+					}
+					else
+					{
+						real desired;
+						real walk;
+
+						bot_hunt_enemy_goal(state, &feet, &enemy_feet, covered_unit, &move_goal);
+						state->route_tour = TRUE;
+						goal_pitch = 0.0f;
+						desired = bot_yaw_between(&feet, &move_goal);
+						if (bot_open_distance(&feet, desired, player->unit_index) >= 1.6f &&
+							!bot_heading_is_corner(&feet, desired, player->unit_index))
+							goal_yaw = desired;
+						else if (bot_clear_yaw(&feet, desired, player->unit_index, &walk))
+							goal_yaw = walk;
+						else
+							goal_yaw = desired;
+					}
+				}
+				else if (skill == BOT_SKILL_IMPOSSIBLE && !fetching)
 				{
 					real_point3d enemy;
 					long enemy_unit;
@@ -10413,6 +10950,34 @@ static void update_server_generate_bot_actions(
 					throw_to.x = eye.x + cosine(state->facing_yaw) * cosine(state->facing_pitch) * distance;
 					throw_to.y = eye.y + sine(state->facing_yaw) * cosine(state->facing_pitch) * distance;
 					throw_to.z = eye.z + sine(state->facing_pitch) * distance;
+					/* one lob when the shot closes on cover. A step that
+					would see them waits. An unsafe landing is the close. */
+					if (!visible && state->peek_mode != 2 && !state->flush_used &&
+						enemy_unit != NONE &&
+						bot_target_in_cover(player->unit_index, &eye, engage))
+					{
+						real_point3d enemy_feet;
+						real flush_yaw;
+						real flush_pitch;
+
+						object_get_origin(enemy_unit, &enemy_feet);
+						if (bot_cover_flush_lob(&feet, &eye, &enemy_feet, grenade,
+								player->unit_index, enemy_unit, &flush_yaw, &flush_pitch))
+						{
+							action.desired_grenade_index = grenade;
+							action.control_flags |= FLAG(_unit_control_throw_grenade_bit) |
+								FLAG(_unit_control_weapon_secondary_trigger_bit);
+							state->grenade_ticks = 180;
+							state->grenade_yaw = flush_yaw;
+							state->grenade_pitch = flush_pitch;
+							state->grenade_aim = TRUE;
+							state->flush_used = TRUE;
+							state->nade_hold = TICKS_PER_SECOND;
+							threw = TRUE;
+						}
+						else
+							state->flush_used = TRUE;
+					}
 					aimed = visible && bot_gun_clear(player->unit_index, &aim_point) &&
 						distance >= 6.0f && distance <= 18.0f &&
 						yaw_off <= 0.22f && pitch_off <= 0.20f &&
@@ -10420,10 +10985,10 @@ static void update_server_generate_bot_actions(
 					last_ditch = bot_about_to_die(unit) &&
 						!bot_different_floor(&feet, &aim_point) &&
 						bot_grenade_can_finish(distance, grenade);
-					if (last_ditch ||
+					if (!threw && (last_ditch ||
 						(aimed && !bot_throw_hurts_self(&feet, &eye, &throw_to, grenade,
 							player->unit_index, enemy_unit) &&
-							(long)((bot_random() >> 8) % 1000) < bot_grenade_chance[skill]))
+							(long)((bot_random() >> 8) % 1000) < bot_grenade_chance[skill])))
 					{
 						action.desired_grenade_index = grenade;
 						action.control_flags |= FLAG(_unit_control_throw_grenade_bit) |
@@ -10576,6 +11141,21 @@ static void update_server_generate_bot_actions(
 		if (!state->grenade_aim && !state->climb &&
 			unit->object.parent_object_index == NONE)
 		{
+			if (state->job != _bot_job_fetch && state->job_grab <= 0 &&
+				state->wait_ticks <= 0 && engage != NONE &&
+				bot_fight_strafe_ok(state, &feet, &aim_point))
+			{
+				if (visible)
+					bot_fight_strafe(state, &feet, &eye, player->unit_index, skill,
+						engage, &action);
+				else if (state->peek_mode == 2 && state->strafe != 0.0f &&
+					bot_strafe_side_safe(&feet, state->facing_yaw, state->strafe,
+						player->unit_index))
+				{
+					action.throttle.j = state->strafe * state->strafe_strength;
+					action.throttle.i = 0.0f;
+				}
+			}
 			bot_chillout_steer(state, player->unit_index, &feet, &action);
 			bot_respect_grenades(state, player, player->unit_index, &feet, &action);
 		}

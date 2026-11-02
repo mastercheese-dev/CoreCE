@@ -24,6 +24,8 @@ Before a machine uploads, it looks up the highest `testing-` tag. When that tag 
 
 Adding a file leaves the tag on its current commit. After the upload, the title is rebuilt from that tag's number and from every platform file then attached, including files another machine already added. Mac, Windows, and Linux stay in that order. A one platform upload keeps the other platforms in the title when their files are already there.
 
+The notes stay with the tag. They are written when the tag is opened, and they name what changed for every platform whose file belongs on it. A machine that adds its file later does not write the notes again.
+
 A main release is a normal release and is marked Latest. A testing release is a prerelease and is not marked Latest. Android stays where it is unless `halo-android-release.zip` is attached on purpose.
 
 ## Title
@@ -42,4 +44,4 @@ Publishing a main release updates the three download buttons in `README.md` on `
 
 ## Notes
 
-Release notes name the tag, the network protocol, and what changed. They do not use em or en dashes, and they do not put a hyphen where a dash would have been. They do not credit Cursor. They do not say that bots are used in matchmaking, or in a lobby other than LAN.
+Release notes name the tag, the network protocol, and what changed. They cover Mac, Windows, and Linux together. They do not use em or en dashes, and they do not put a hyphen where a dash would have been. They do not credit Cursor. They do not say that bots are used in matchmaking, or in a lobby other than LAN.
