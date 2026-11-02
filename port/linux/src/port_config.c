@@ -625,6 +625,10 @@ static const struct config_setting config_settings[] =
 		"latest main release, and offers it again after a testing release was\n"
 		"installed. Testing releases are published apart from main, so a build\n"
 		"that leaves this false never installs one." },
+	{ "update.notice", _config_boolean, "true", "HALO_UPDATE_NOTICE", _environment_value, _platform_all,
+		"Show the line that a new version is available, and ask when the game\n"
+		"starts. False hides that line and that question. A change between the\n"
+		"main release and testing releases still asks." },
 	{ "streamer.enabled", _config_boolean, "false", "HALO_STREAMER_MODE", _environment_value, _platform_all,
 		"Hide offensive words in names and text from other players, maps and mods\n"
 		"as stars, at the levels below (Settings > Network Setup > Streamer Mode)." },

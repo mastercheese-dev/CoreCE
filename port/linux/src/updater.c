@@ -742,6 +742,9 @@ void updater_poll(SDL_Window *window)
 			config_write_boolean("update.auto", 0);
 		return;
 	}
+	/* the line and the question stay hidden. a change of channel still asks. */
+	if (!updater_switching && !config_boolean("update.notice"))
+		return;
 	/* (a dialog cannot show above a fullscreen game) */
 	fullscreen = window && (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN);
 	if (fullscreen)

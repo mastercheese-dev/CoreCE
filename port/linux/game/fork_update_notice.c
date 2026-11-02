@@ -14,6 +14,7 @@ or pause the game.
 #include "render/render.h"
 #include "text/draw_string.h"
 #include "fork_update_notice.h"
+#include "port_config.h"
 
 #if !defined(HALO_ANDROID) || defined(HALO_MACOS_NATIVE_METAL)
 int halo_fork_update_notice(char *out, unsigned long capacity);
@@ -27,6 +28,8 @@ void fork_update_notice_render(void)
 	real_argb_color color = { 1.0f, 1.0f, 1.0f, 1.0f };
 	rectangle2d bounds;
 
+	if (!config_boolean("update.notice"))
+		return;
 	if (!halo_fork_update_notice(text, sizeof(text)))
 		return;
 	font_tag_index = interface_get_tag_index(_interface_font_terminal);

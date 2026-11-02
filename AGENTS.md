@@ -44,4 +44,4 @@ Publishing a main release updates the three download buttons in `README.md` on `
 
 ## Notes
 
-Release notes name the tag, the network protocol, and what changed. A Mac release writes them once, for Mac, Windows, and Linux together, including how each one is installed. Windows and Linux leave that text alone when they add their files. They do not use em or en dashes, and they do not put a hyphen where a dash would have been. They do not credit Cursor. They do not say that bots are used in matchmaking, or in a lobby other than LAN.
+Release notes name the tag, the network protocol, and what changed. A Mac release writes them once, for Mac, Windows, and Linux together, including how each one is installed. Windows and Linux leave that text alone when they add their files. They do not use em or en dashes, and they do not put a hyphen where a dash would have been. They do not credit Cursor.

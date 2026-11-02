@@ -820,6 +820,11 @@ declining leaves it for the next time the app opens */
             ? [NSString stringWithFormat:@"testing mac %ld", build]
             : [NSString stringWithFormat:@"mac %ld", build];
         if (!announce) return;
+        /* the line and the question stay hidden. a change of channel still asks.
+           Check for Updates asks, because that check is not the quiet one. */
+        if (quiet && [HaloForkUpdateChannelFromTag(tag) isEqual:[strong.forkUpdater channel]] &&
+            ![strong.forkUpdater showNotice])
+            return;
         if (quiet && [answer isEqualToString:@"yes"])
             [strong installForkUpdate:download build:build];
         else

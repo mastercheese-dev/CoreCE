@@ -36,6 +36,9 @@ void HaloForkUpdateRecordInstalledBuild(NSURL *dataDirectory, long build);
 
 /* update.auto in config.toml. Missing means yes, which is the game's default. */
 BOOL HaloConfigAutomaticUpdates(NSString *text);
+/* update.notice in config.toml. Missing means yes, so the line and the
+   question at startup stay on. */
+BOOL HaloConfigShowUpdateNotice(NSString *text);
 NSString *HaloConfigSetAutomaticUpdates(NSString *text, BOOL automatic);
 /* A hidden, timed, or scripted run is not asked. debug.update_answer is not
    one of those: the caller uses that answer instead of a dialog. */
@@ -48,6 +51,8 @@ NSString *HaloConfigUpdateAnswer(NSString *text);
 - (BOOL)automatic;
 - (BOOL)setAutomatic:(BOOL)automatic error:(NSError **)error;
 - (BOOL)testingReleases;
+/* update.notice. Missing means yes. */
+- (BOOL)showNotice;
 /* "testing" when this app was packaged as a testing release, otherwise "main". */
 - (NSString *)channel;
 - (BOOL)suppressesPrompt;

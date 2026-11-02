@@ -333,6 +333,9 @@ int main(int argc, const char **argv) {
         assert(HaloConfigAutomaticUpdates(controlsText));
         assert(HaloConfigAutomaticUpdates(@""));
         assert(!HaloConfigAutomaticUpdates(HaloConfigSetAutomaticUpdates(controlsText, NO)));
+        assert(HaloConfigShowUpdateNotice(@""));
+        assert(HaloConfigShowUpdateNotice(@"[update]\nnotice = true\n"));
+        assert(!HaloConfigShowUpdateNotice(@"[update]\nnotice = false\n"));
         NSString *rewritten = HaloConfigSetAutomaticUpdates(controlsText, NO);
         assert([rewritten containsString:@"menus = \"pc\""]);
         assert([rewritten containsString:@"auto = false"]);

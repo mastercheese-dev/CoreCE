@@ -291,6 +291,12 @@ BOOL HaloConfigAutomaticUpdates(NSString *text) {
     return strcmp(value, "true") == 0;
 }
 
+BOOL HaloConfigShowUpdateNotice(NSString *text) {
+    char value[32];
+    if (!configValue(text, "update", "notice", value, sizeof(value))) return YES;
+    return strcmp(value, "true") == 0;
+}
+
 NSString *HaloConfigSetAutomaticUpdates(NSString *text, BOOL automatic) {
     const char *file = text.UTF8String ?: "";
     const char *replacement = automatic ? "auto = true\n" : "auto = false\n";
@@ -389,6 +395,7 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
     if (!configValue([self configText], "update", "testing", value, sizeof(value))) return NO;
     return strcmp(value, "true") == 0;
 }
+- (BOOL)showNotice { return HaloConfigShowUpdateNotice([self configText]); }
 - (NSString *)channel {
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfURL:
         [_bundleURL URLByAppendingPathComponent:@"Contents/Info.plist"]];
