@@ -27,6 +27,9 @@ long hardcore_views_fov_unit(short slot);
 /* A pane that shows a teammate, not the local player and not the console. */
 boolean hardcore_views_is_teammate_window(short window_index);
 
+/* The player a teammate pane is showing, or NONE. */
+long hardcore_views_player(short window_index);
+
 /* The pane that is the local player while teammate views split the screen. */
 boolean hardcore_views_is_local_window(short window_index);
 

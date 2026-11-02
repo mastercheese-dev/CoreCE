@@ -433,6 +433,13 @@ short hardcore_views_window_count(void)
 	return view_count;
 }
 
+long hardcore_views_player(short window_index)
+{
+	if (!hardcore_views_is_teammate_window(window_index))
+		return NONE;
+	return view_player[window_index];
+}
+
 boolean hardcore_views_is_teammate_window(short window_index)
 {
 	/* a classic split and the campaign still have the last match's pane

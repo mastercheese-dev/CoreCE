@@ -108,6 +108,7 @@ symbols in this file:
 #include "map_share.h" /* port: port/linux/game/map_share.c */
 #include "hardcore_views.h" /* port: a teammate pane still gets the weapon mask */
 #include "fork_update_notice.h" /* port: port/linux/game/fork_update_notice.c */
+#include "clips.h" /* port: the clip bar, on the full screen */
 
 /* ---------- constants */
 
@@ -396,6 +397,8 @@ void interface_draw_fullscreen_overlays(
 	terminal_draw();
 	main_framerate_render();
 	render_debug_profile();
+	/* the clip bar is the screen's, under every pane */
+	clips_draw(0, &render.camera.viewport_bounds);
 
 	return;
 }

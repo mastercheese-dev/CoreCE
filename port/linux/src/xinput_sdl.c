@@ -116,7 +116,7 @@ worn stick's drift */
 #define STICK_AIMING_DEFLECTION 8000
 
 /* the menu's 0 to 10. the controller uses that number as the Xbox rate.
-the mouse uses a tenth of it, so 10 turns as fast as 1 used to, and 0 is
+the mouse uses half of it, so 10 turns as fast as 5 used to, and 0 is
 still the step below that. a vertical below 0 uses the horizontal setting. */
 static float mouse_axis(float sensitivity)
 {
@@ -129,12 +129,12 @@ static float mouse_axis(float sensitivity)
 
 static float mouse_yaw_scale(float sensitivity)
 {
-	return (60.f + 20.f * mouse_axis(sensitivity) * 0.1f) / 120.f;
+	return (60.f + 20.f * mouse_axis(sensitivity) * 0.5f) / 120.f;
 }
 
 static float mouse_pitch_scale(float sensitivity)
 {
-	return (30.f + 10.f * mouse_axis(sensitivity) * 0.1f) / 60.f;
+	return (30.f + 10.f * mouse_axis(sensitivity) * 0.5f) / 60.f;
 }
 
 static float mouse_config_axis(const char *name)
@@ -1398,6 +1398,32 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	if (port >= 0 && port < PORT_COUNT)
 		clips_pad[port] = state->Gamepad;
 	return ERROR_SUCCESS;
+}
+
+/* the clip viewer's keys, read beside the controller rather than through it.
+   the debug keyboard is quiet during a match, and a plugged-in pad is what
+   the game's own key poll then sees */
+unsigned long halo_linux_theatre_keys(void)
+{
+	struct platform_input_state input;
+	unsigned long mask = 0;
+
+	platform_input_read(&input, FALSE);
+	if (input.keys[SDL_SCANCODE_SPACE])
+		mask |= 1UL;
+	if (input.keys[SDL_SCANCODE_LEFT])
+		mask |= 2UL;
+	if (input.keys[SDL_SCANCODE_RIGHT])
+		mask |= 4UL;
+	if (input.keys[SDL_SCANCODE_LEFTBRACKET])
+		mask |= 8UL;
+	if (input.keys[SDL_SCANCODE_RIGHTBRACKET])
+		mask |= 16UL;
+	if (input.keys[SDL_SCANCODE_V])
+		mask |= 32UL;
+	if (input.keys[SDL_SCANCODE_ESCAPE])
+		mask |= 64UL;
+	return mask;
 }
 
 void halo_linux_pad_sample(short port, short *lx, short *ly, short *rx, short *ry,

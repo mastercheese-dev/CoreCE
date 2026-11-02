@@ -114,7 +114,6 @@ symbols in this file:
 #include "hardcore_timer.h" /* port: the match clock, on each pane */
 #include "hardcore_views.h" /* port: a teammate pane draws that player's HUD */
 #include "network_chat.h" /* port: port/linux/game/network_chat.c */
-#include "clips.h" /* port: the clip viewer's bar */
 #include "text/text_group.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
@@ -1250,8 +1249,6 @@ void hud_draw_screen(
 		{
 			hud_messaging_update(render.local_player_index);
 			network_chat_draw(render.local_player_index);
-			if (render.local_player_index == 0)
-				clips_draw(0, &render.camera.window_bounds);
 		}
 		else if (player->unit_index == NONE)
 			hud_messaging_draw_state(render.local_player_index);

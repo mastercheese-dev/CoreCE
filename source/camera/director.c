@@ -131,7 +131,8 @@ symbols in this file:
 
 #include "editor/editor_stubs.h"
 #include "game/players.h"
-#include "clips.h" /* port: a clip's free camera */
+#include "clips.h" /* port: a clip plays back with the recorded view */
+#include "halo_keyboard.h"
 #include "input/input.h"
 #include "main/console.h"
 #include "saved games/game_state.h"
@@ -912,11 +913,22 @@ static boolean director_update_controls(
 				if (clips_fly)
 				{
 					extern void halo_linux_mouse_sample(short *x, short *y);
+					unsigned long keys = halo_keyboard_actions(0);
 
+					SET_FLAG(control_flags, _camera_control_forward_bit,
+						TEST_FLAG(keys, HALO_KEYBOARD_MOVE_FORWARD));
+					SET_FLAG(control_flags, _camera_control_reverse_bit,
+						TEST_FLAG(keys, HALO_KEYBOARD_MOVE_BACKWARD));
+					SET_FLAG(control_flags, _camera_control_left_bit,
+						TEST_FLAG(keys, HALO_KEYBOARD_STRAFE_LEFT));
+					SET_FLAG(control_flags, _camera_control_right_bit,
+						TEST_FLAG(keys, HALO_KEYBOARD_STRAFE_RIGHT));
 					SET_FLAG(control_flags, _camera_control_up_bit,
-						gamepad->buttons[_gamepad_binary_button_dpad_up] != 0);
+						gamepad->buttons[_gamepad_binary_button_dpad_up] != 0 ||
+						input_key_is_down(_key_r));
 					SET_FLAG(control_flags, _camera_control_down_bit,
-						gamepad->buttons[_gamepad_binary_button_dpad_down] != 0);
+						gamepad->buttons[_gamepad_binary_button_dpad_down] != 0 ||
+						input_key_is_down(_key_f));
 					controls->wheel_delta = 0;
 					halo_linux_mouse_sample(&mouse_x, &mouse_y);
 				}
@@ -952,6 +964,13 @@ static boolean director_update_controls(
 				controls->position_delta.j =
 					(real)gamepad->sticks[_gamepad_stick_left].x *
 						director->debug_input_scale * director_globals.dtime * -0.00005f;
+				if (clips_fly)
+				{
+					controls->position_delta.i +=
+						director->debug_variables[_variable_forward].delta;
+					controls->position_delta.j +=
+						director->debug_variables[_variable_right].delta;
+				}
 				controls->position_delta.k +=
 					director->debug_variables[_variable_height].delta;
 				controls->active = TRUE;
@@ -964,20 +983,24 @@ static boolean director_update_controls(
 	{
 		unsigned long control_flags = 0;
 		struct mouse_state const *mouse = input_get_mouse_state();
+		boolean clips_fly = clips_replaying() &&
+			director->camera_proc == (director_camera_update_proc)flying_camera_update;
 
 		switch_camera = input_key_is_down(_key_backspace) == TRUE;
-		if ((director->camera_proc !=
+		if (clips_fly || (director->camera_proc !=
 				(director_camera_update_proc)first_person_camera_update &&
 			mouse->buttons[1]) || input_key_is_down(_key_tab))
 		{
+			unsigned long keys = clips_fly ? halo_keyboard_actions(0) : 0;
+
 			SET_FLAG(control_flags, _camera_control_forward_bit,
-				input_key_is_down(_key_w));
+				input_key_is_down(_key_w) || TEST_FLAG(keys, HALO_KEYBOARD_MOVE_FORWARD));
 			SET_FLAG(control_flags, _camera_control_reverse_bit,
-				input_key_is_down(_key_s));
+				input_key_is_down(_key_s) || TEST_FLAG(keys, HALO_KEYBOARD_MOVE_BACKWARD));
 			SET_FLAG(control_flags, _camera_control_left_bit,
-				input_key_is_down(_key_a));
+				input_key_is_down(_key_a) || TEST_FLAG(keys, HALO_KEYBOARD_STRAFE_LEFT));
 			SET_FLAG(control_flags, _camera_control_right_bit,
-				input_key_is_down(_key_d));
+				input_key_is_down(_key_d) || TEST_FLAG(keys, HALO_KEYBOARD_STRAFE_RIGHT));
 			SET_FLAG(control_flags, _camera_control_up_bit,
 				input_key_is_down(_key_r));
 			SET_FLAG(control_flags, _camera_control_down_bit,
@@ -989,14 +1012,14 @@ static boolean director_update_controls(
 			director_process_variables(
 				local_player_index,
 				control_flags,
-				(real)mouse->wheel_delta);
+				clips_fly ? 0.0f : (real)mouse->wheel_delta);
 			controls->facing_delta.yaw =
 				(real)mouse->x * -0.0031415927f;
 			controls->facing_delta.pitch =
 				(real)mouse->y * -0.0031415927f;
 			controls->facing_delta.roll +=
 				director->debug_variables[_variable_roll].delta;
-			controls->wheel_delta = (real)mouse->wheel_delta;
+			controls->wheel_delta = clips_fly ? 0.0f : (real)mouse->wheel_delta;
 			controls->position_delta.i +=
 				director->debug_variables[_variable_forward].delta;
 			controls->position_delta.j +=
@@ -1080,6 +1103,19 @@ void director_update(
 			director->inhibited_input = FALSE;
 			switch_camera =
 				director_update_controls(local_player_index, &controls);
+			/* a clip's view is the one that was recorded. the sticks and the
+			   mouse do not steer it, and the camera does not change */
+			if (clips_replaying())
+			{
+				switch_camera = FALSE;
+				controls.active = FALSE;
+				controls.facing_delta.yaw = 0.f;
+				controls.facing_delta.pitch = 0.f;
+				controls.facing_delta.roll = 0.f;
+				controls.position_delta.i = 0.f;
+				controls.position_delta.j = 0.f;
+				controls.position_delta.k = 0.f;
+			}
 			director_choose_camera(
 				local_player_index,
 				director_globals.initialize_camera,

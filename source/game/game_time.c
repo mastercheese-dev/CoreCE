@@ -79,6 +79,7 @@ symbols in this file:
 #include "scenario/scenario_definitions.h"
 #include "profile_sections.h" /* port: port/linux/include/profile_sections.h */
 #include "hardcore_rules.h" /* port: the opening ring holds the match clock */
+#include "clips.h" /* port: a clip scrub names how many ticks this frame may run */
 /* port/linux/game/network_distributed.c's */
 void network_distributed_tick(void);
 
@@ -465,6 +466,30 @@ void game_time_update(
 				ticks_elapsed = connection;
 				if (discard_leftover_time)
 					game_time = ticks_elapsed_real/ticks_per_second;
+			}
+
+			{
+				int exact;
+				long allow;
+
+				exact = 0;
+				allow = clips_tick_allowance(&exact);
+				if (allow >= 0 && exact)
+				{
+					if (allow > connection)
+						allow = connection;
+					ticks_elapsed = allow;
+					ticks_elapsed_real = (real)allow;
+					if (ticks_per_second > 0.f)
+						game_time = ticks_elapsed_real/ticks_per_second;
+				}
+				else if (allow >= 0 && ticks_elapsed > allow)
+				{
+					ticks_elapsed = allow;
+					ticks_elapsed_real = (real)allow;
+					if (discard_leftover_time && ticks_per_second > 0.f)
+						game_time = ticks_elapsed_real/ticks_per_second;
+				}
 			}
 
 			game_time_globals->leftover_dt = game_time - ticks_elapsed_real/ticks_per_second;

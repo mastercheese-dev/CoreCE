@@ -16,6 +16,9 @@ int clips_fill_options(char *map_name, long map_name_size, short *difficulty, un
 void clips_map_started(void);
 void clips_map_ended(void);
 int clips_replaying(void);
+/* -1 when this frame is not limited. otherwise how many ticks it may run.
+*exact is 1 when the clip wants that many, not merely no more than that. */
+long clips_tick_allowance(int *exact);
 void clips_on_actions(struct player_action *actions, int capacity);
 void clips_frame(void);
 void clips_after_director(void);
