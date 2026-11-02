@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Matchmaking: three playlists. The service names the map, the rules, and the port. -->
+<!-- Matchmaking playlists. The service names the map, the rules, and the port. -->
 <menus>
 	<widget name="main_menu/multiplayer_type_select/matchmaking/mm_header" type="text" left="51" width="226" height="20" string_list="main_menu/multiplayer_type_select/matchmaking/header" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>

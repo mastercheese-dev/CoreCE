@@ -521,6 +521,9 @@ static void catalog_store(const char *payload)
 		object[item_end - item] = 0;
 		if (!json_string(object, "id", row->id, sizeof(row->id)) || !row->id[0])
 			continue;
+		/* the chooser keeps ffa and hardcore */
+		if (!strcmp(row->id, "objective"))
+			continue;
 		json_string(object, "name", row->name, sizeof(row->name));
 		if (!row->name[0])
 			snprintf(row->name, sizeof(row->name), "%s", row->id);

@@ -38,7 +38,7 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/horizontal_sensitivity_label" type="text" controller="1" width="300" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/labels" string_index="0" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/horizontal_sensitivity_spinner" type="spinner" left="3" top="0" width="147" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="1|2|3|4|5|6|7|8|9|10" setting="profile.horizontal_sensitivity" values="1|2|3|4|5|6|7|8|9|10" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 150 15 156">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/horizontal_sensitivity_spinner" type="spinner" left="3" top="0" width="147" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="0.00|0.50|1.00|1.50|2.00|2.50|3.00|3.50|4.00|4.50|5.00|5.50|6.00|6.50|7.00|7.50|8.00|8.50|9.00|9.50|10.00" setting="profile.horizontal_sensitivity" values="0.00|0.50|1.00|1.50|2.00|2.50|3.00|3.50|4.00|4.50|5.00|5.50|6.00|6.50|7.00|7.50|8.00|8.50|9.00|9.50|10.00" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 150 15 156">
 		<on event="created" run="port setting load"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/op_vertical_sensitivity" width="512" height="20" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds_short" color="#FF2896FF">
@@ -47,7 +47,7 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/vertical_sensitivity_label" type="text" controller="1" width="300" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/labels" string_index="1" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/vertical_sensitivity_spinner" type="spinner" left="3" top="0" width="147" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="1|2|3|4|5|6|7|8|9|10" setting="profile.vertical_sensitivity" values="1|2|3|4|5|6|7|8|9|10" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 150 15 156">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/vertical_sensitivity_spinner" type="spinner" left="3" top="0" width="147" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="0.00|0.50|1.00|1.50|2.00|2.50|3.00|3.50|4.00|4.50|5.00|5.50|6.00|6.50|7.00|7.50|8.00|8.50|9.00|9.50|10.00" setting="profile.vertical_sensitivity" values="0.00|0.50|1.00|1.50|2.00|2.50|3.00|3.50|4.00|4.50|5.00|5.50|6.00|6.50|7.00|7.50|8.00|8.50|9.00|9.50|10.00" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 150 15 156">
 		<on event="created" run="port setting load"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/op_invert_look" width="512" height="20" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds_short" color="#FF2896FF">
@@ -145,8 +145,8 @@
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/help_strings">
 		<string text=""/>
-		<string text="How fast the view turns left and right. 3 is the\noriginal setting."/>
-		<string text="How fast the view turns up and down. 3 is the\noriginal setting."/>
+		<string text="How fast the view turns left and right. 3.00 is the\noriginal. Arrows step by 0.5. Click the number to type."/>
+		<string text="How fast the view turns up and down. 3.00 is the\noriginal. Arrows step by 0.5. Click the number to type."/>
 		<string text="Pushing the right stick up looks down."/>
 		<string text="Flying vehicles pitch as aircraft do: pushing up\nflies down."/>
 		<string text="Level the view while walking."/>

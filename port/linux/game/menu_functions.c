@@ -122,6 +122,8 @@ char const *pc_menu_game_data_input_name(long function_index);
 void event_manager_post_button(short controller_index, short button_index);
 int config_text(char const *name, char *text, unsigned int size);
 int config_write(char const *name, char const *value);
+/* an old mouse vertical of the whole number 0 still follows horizontal */
+int config_mouse_vertical_follows(void);
 int config_boolean(char const *name);
 int config_default(char const *name, char *text, unsigned int size);
 char const *config_string(char const *name);
@@ -342,24 +344,99 @@ static boolean profile_setting_boolean(short field)
 }
 
 /* horizontal and vertical look, kept beside the profile (player_profile.c
-writes them after the checksum: the profile itself is full). The steps are
-the Xbox look sensitivity (player_ui.c's yaw and pitch tables): 3 is the
-original setting. A profile without this record uses its look sensitivity
-for both axes. */
+writes them after the checksum: the profile itself is full). Hundredths of
+a setting from 0.00 to 10.00. 3.00 is the original (yaw 120, pitch 60).
+Whole numbers 1 through 10 keep those Xbox rates. A profile without this
+record uses its look sensitivity for both axes. */
 #define STICK_SCALE_COUNT 10
 #define STICK_SCALE_DEFAULT 2
 #define STICK_SCALE_MAGIC 0x534C5831ul
+#define SENSITIVITY_HUNDREDTHS_MAX 1000
+#define SENSITIVITY_DEFAULT_HUNDREDTHS 300
+#define SENSITIVITY_FINE_MARK 0x46
 
-/* the same tables as set_local_player_controls_from_player_profile */
-static float const look_yaw_rate[STICK_SCALE_COUNT] = {
-	80.f, 100.f, 120.f, 140.f, 160.f, 180.f, 200.f, 220.f, 240.f, 260.f
-};
-static float const look_pitch_rate[STICK_SCALE_COUNT] = {
-	40.f, 50.f, 60.f, 70.f, 80.f, 90.f, 100.f, 110.f, 120.f, 130.f
-};
-static char const *const stick_scale_text[STICK_SCALE_COUNT] = {
-	"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"
-};
+/* yaw 60 + 20*s and pitch 30 + 10*s: setting 1 is 80 and 40, 3 is 120 and
+60, 10 is 260 and 130, the same as player_ui.c's tables */
+static float sensitivity_yaw(unsigned short hundredths)
+{
+	return 60.f + 20.f * ((float)hundredths / 100.f);
+}
+
+static float sensitivity_pitch(unsigned short hundredths)
+{
+	return 30.f + 10.f * ((float)hundredths / 100.f);
+}
+
+static unsigned short sensitivity_clamp(unsigned short hundredths)
+{
+	if (hundredths > SENSITIVITY_HUNDREDTHS_MAX)
+		return SENSITIVITY_HUNDREDTHS_MAX;
+	return hundredths;
+}
+
+/* the 1 through 10 step an older build stored, nearest to this number */
+static unsigned char sensitivity_legacy_index(unsigned short hundredths)
+{
+	unsigned int step = ((unsigned int)sensitivity_clamp(hundredths) + 50u) / 100u;
+
+	if (step < 1)
+		step = 1;
+	if (step > STICK_SCALE_COUNT)
+		step = STICK_SCALE_COUNT;
+	return (unsigned char)(step - 1);
+}
+
+static unsigned short sensitivity_from_index(unsigned char index)
+{
+	if (index >= STICK_SCALE_COUNT)
+		index = STICK_SCALE_DEFAULT;
+	return (unsigned short)((index + 1) * 100);
+}
+
+static unsigned short sensitivity_from_look(long look_sensitivity)
+{
+	if (look_sensitivity < 1)
+		return SENSITIVITY_DEFAULT_HUNDREDTHS;
+	if (look_sensitivity > STICK_SCALE_COUNT)
+		return SENSITIVITY_HUNDREDTHS_MAX;
+	return (unsigned short)(look_sensitivity * 100);
+}
+
+static unsigned short sensitivity_hundredths_from_text(char const *value)
+{
+	double number;
+	char *end;
+	unsigned short hundredths;
+
+	if (!value || !*value)
+		return SENSITIVITY_DEFAULT_HUNDREDTHS;
+	number = strtod(value, &end);
+	if (end == value)
+		return SENSITIVITY_DEFAULT_HUNDREDTHS;
+	if (number < 0.0)
+		number = 0.0;
+	if (number > 10.0)
+		number = 10.0;
+	hundredths = (unsigned short)(number * 100.0 + 0.5);
+	return sensitivity_clamp(hundredths);
+}
+
+static void sensitivity_format(unsigned short hundredths, char *text, unsigned int size)
+{
+	hundredths = sensitivity_clamp(hundredths);
+	snprintf(text, size, "%u.%02u", (unsigned)(hundredths / 100), (unsigned)(hundredths % 100));
+}
+
+static unsigned short sensitivity_u16(unsigned char const *bytes)
+{
+	return (unsigned short)(bytes[0] | ((unsigned short)bytes[1] << 8));
+}
+
+static void sensitivity_put_u16(unsigned char *bytes, unsigned short value)
+{
+	bytes[0] = (unsigned char)value;
+	bytes[1] = (unsigned char)(value >> 8);
+}
 static struct
 {
 	char const *name;
@@ -373,21 +450,24 @@ static struct
 static struct
 {
 	long profile_index;
-	unsigned char horizontal;
-	unsigned char vertical;
+	/* hundredths, 0 through 1000 */
+	unsigned short horizontal;
+	unsigned short vertical;
 	boolean used;
 	/* mouse look for this player, when they set it in a match. unset
-	follows the machine's config.toml */
+	follows the machine's config.toml. vertical_same: an older vertical
+	of 0, which uses this player's horizontal until they set a number */
 	boolean mouse_set;
-	unsigned char mouse_horizontal;
-	unsigned char mouse_vertical;
+	boolean mouse_vertical_same;
+	unsigned short mouse_horizontal;
+	unsigned short mouse_vertical;
 	boolean mouse_invert;
 	boolean mouse_aim;
 } stick_scale_cache[32];
-static unsigned char stick_edit_horizontal;
-static unsigned char stick_edit_vertical;
-static unsigned char stick_edit_horizontal_saved;
-static unsigned char stick_edit_vertical_saved;
+static unsigned short stick_edit_horizontal;
+static unsigned short stick_edit_vertical;
+static unsigned short stick_edit_horizontal_saved;
+static unsigned short stick_edit_vertical_saved;
 static boolean stick_edit_open;
 /* the local player whose pause menu is editing settings, else NONE (the
 main menu, which edits player 1's profile and the machine's mouse) */
@@ -395,8 +475,9 @@ static short in_game_settings_player = NONE;
 static boolean mouse_edit_open;
 static boolean mouse_edit_set;
 static boolean mouse_edit_dirty;
-static unsigned char mouse_edit_horizontal;
-static unsigned char mouse_edit_vertical;
+static boolean mouse_edit_vertical_same;
+static unsigned short mouse_edit_horizontal;
+static unsigned short mouse_edit_vertical;
 static boolean mouse_edit_invert;
 static boolean mouse_edit_aim;
 
@@ -408,7 +489,9 @@ long player_profile_control_key(short local_player_index, long profile_index)
 	return (long)(0x41000000UL | (unsigned long)(local_player_index & 3));
 }
 
-void halo_linux_mouse_player(int horizontal, int vertical, int invert, int aim_assist);
+/* horizontal below 0 clears the player's mouse and the machine's config is
+used again. vertical below 0 uses horizontal. */
+void halo_linux_mouse_player(float horizontal, float vertical, int invert, int aim_assist);
 
 void input_abstraction_set_look_rates(short controller_index, real yaw_rate, real pitch_rate);
 
@@ -422,29 +505,6 @@ static short stick_scale_which(char const *name)
 			return index;
 	}
 	return -1;
-}
-
-static unsigned char look_step_index(long sensitivity)
-{
-	if (sensitivity < 1)
-		return STICK_SCALE_DEFAULT;
-	if (sensitivity > STICK_SCALE_COUNT)
-		return STICK_SCALE_COUNT - 1;
-	return (unsigned char)(sensitivity - 1);
-}
-
-static unsigned char stick_scale_from_text(char const *value)
-{
-	unsigned char index;
-	double number;
-
-	for (index = 0; index < STICK_SCALE_COUNT; index++)
-	{
-		if (!strcmp(value, stick_scale_text[index]))
-			return index;
-	}
-	number = atof(value);
-	return look_step_index((long)(number + 0.5));
 }
 
 static boolean stick_scale_find(long profile_index, short *slot)
@@ -480,11 +540,12 @@ static short stick_scale_slot(long profile_index)
 	}
 	stick_scale_cache[free_slot].used = TRUE;
 	stick_scale_cache[free_slot].profile_index = profile_index;
-	stick_scale_cache[free_slot].horizontal = STICK_SCALE_DEFAULT;
-	stick_scale_cache[free_slot].vertical = STICK_SCALE_DEFAULT;
+	stick_scale_cache[free_slot].horizontal = SENSITIVITY_DEFAULT_HUNDREDTHS;
+	stick_scale_cache[free_slot].vertical = SENSITIVITY_DEFAULT_HUNDREDTHS;
 	stick_scale_cache[free_slot].mouse_set = FALSE;
-	stick_scale_cache[free_slot].mouse_horizontal = STICK_SCALE_DEFAULT;
-	stick_scale_cache[free_slot].mouse_vertical = 0;
+	stick_scale_cache[free_slot].mouse_vertical_same = TRUE;
+	stick_scale_cache[free_slot].mouse_horizontal = SENSITIVITY_DEFAULT_HUNDREDTHS;
+	stick_scale_cache[free_slot].mouse_vertical = SENSITIVITY_DEFAULT_HUNDREDTHS;
 	stick_scale_cache[free_slot].mouse_invert = FALSE;
 	stick_scale_cache[free_slot].mouse_aim = FALSE;
 	return free_slot;
@@ -502,21 +563,37 @@ void player_profile_stick_scales_remember(long profile_index, void const *paddin
 	long look_sensitivity)
 {
 	unsigned char const *bytes = padding;
-	unsigned char horizontal;
-	unsigned char vertical;
+	unsigned short horizontal;
+	unsigned short vertical;
 	short slot;
+	int fine;
 
-	horizontal = look_step_index(look_sensitivity);
+	horizontal = sensitivity_from_look(look_sensitivity);
 	vertical = horizontal;
 	/* four marker bytes, then the two steps: unsigned long is 8 bytes on
 	the Mac build, so the marker is written a byte at a time. An older
-	multiplier record is ignored, and both axes follow look sensitivity. */
+	multiplier record is ignored, and both axes follow look sensitivity.
+	'F' after the mouse bytes holds hundredths when it still matches the
+	step an older build would have written. */
+	fine = bytes && size >= 21 && bytes[11] == SENSITIVITY_FINE_MARK;
 	if (bytes && size >= 6 && stick_scale_marked(bytes, STICK_SCALE_MAGIC))
 	{
 		if (bytes[4] < STICK_SCALE_COUNT)
-			horizontal = bytes[4];
+			horizontal = sensitivity_from_index(bytes[4]);
 		if (bytes[5] < STICK_SCALE_COUNT)
-			vertical = bytes[5];
+			vertical = sensitivity_from_index(bytes[5]);
+		if (fine)
+		{
+			unsigned short fine_horizontal = sensitivity_u16(bytes + 12);
+			unsigned short fine_vertical = sensitivity_u16(bytes + 14);
+
+			if (fine_horizontal <= SENSITIVITY_HUNDREDTHS_MAX &&
+				sensitivity_legacy_index(fine_horizontal) == bytes[4])
+				horizontal = fine_horizontal;
+			if (fine_vertical <= SENSITIVITY_HUNDREDTHS_MAX &&
+				sensitivity_legacy_index(fine_vertical) == bytes[5])
+				vertical = fine_vertical;
+		}
 	}
 	slot = stick_scale_slot(profile_index);
 	stick_scale_cache[slot].horizontal = horizontal;
@@ -524,13 +601,44 @@ void player_profile_stick_scales_remember(long profile_index, void const *paddin
 	/* 'M', then horizontal index, vertical (0 is the same as horizontal),
 	invert, aim assist. absent: this player uses the machine's mouse */
 	stick_scale_cache[slot].mouse_set = FALSE;
+	stick_scale_cache[slot].mouse_vertical_same = TRUE;
 	if (bytes && size >= 11 && bytes[6] == 0x4D && bytes[7] < STICK_SCALE_COUNT && bytes[8] <= STICK_SCALE_COUNT)
 	{
 		stick_scale_cache[slot].mouse_set = TRUE;
-		stick_scale_cache[slot].mouse_horizontal = bytes[7];
-		stick_scale_cache[slot].mouse_vertical = bytes[8];
+		stick_scale_cache[slot].mouse_horizontal = sensitivity_from_index(bytes[7]);
+		if (bytes[8] == 0)
+		{
+			stick_scale_cache[slot].mouse_vertical_same = TRUE;
+			stick_scale_cache[slot].mouse_vertical = stick_scale_cache[slot].mouse_horizontal;
+		}
+		else
+		{
+			stick_scale_cache[slot].mouse_vertical_same = FALSE;
+			stick_scale_cache[slot].mouse_vertical = (unsigned short)(bytes[8] * 100);
+		}
 		stick_scale_cache[slot].mouse_invert = bytes[9] ? TRUE : FALSE;
 		stick_scale_cache[slot].mouse_aim = bytes[10] ? TRUE : FALSE;
+		if (fine)
+		{
+			unsigned short fine_horizontal = sensitivity_u16(bytes + 16);
+			unsigned short fine_vertical = sensitivity_u16(bytes + 18);
+
+			if (fine_horizontal <= SENSITIVITY_HUNDREDTHS_MAX &&
+				sensitivity_legacy_index(fine_horizontal) == bytes[7])
+				stick_scale_cache[slot].mouse_horizontal = fine_horizontal;
+			if (bytes[8] == 0 && bytes[20])
+			{
+				stick_scale_cache[slot].mouse_vertical_same = TRUE;
+				stick_scale_cache[slot].mouse_vertical = stick_scale_cache[slot].mouse_horizontal;
+			}
+			else if (bytes[8] >= 1 && bytes[8] <= STICK_SCALE_COUNT && !bytes[20] &&
+				fine_vertical <= SENSITIVITY_HUNDREDTHS_MAX &&
+				sensitivity_legacy_index(fine_vertical) == (unsigned char)(bytes[8] - 1))
+			{
+				stick_scale_cache[slot].mouse_vertical_same = FALSE;
+				stick_scale_cache[slot].mouse_vertical = fine_vertical;
+			}
+		}
 	}
 }
 
@@ -545,20 +653,31 @@ void player_profile_stick_scales_store(long profile_index, void *padding, long s
 	bytes[1] = (unsigned char)(STICK_SCALE_MAGIC >> 8);
 	bytes[2] = (unsigned char)(STICK_SCALE_MAGIC >> 16);
 	bytes[3] = (unsigned char)(STICK_SCALE_MAGIC >> 24);
-	bytes[4] = stick_scale_cache[slot].horizontal;
-	bytes[5] = stick_scale_cache[slot].vertical;
+	bytes[4] = sensitivity_legacy_index(stick_scale_cache[slot].horizontal);
+	bytes[5] = sensitivity_legacy_index(stick_scale_cache[slot].vertical);
 	if (size >= 11)
 	{
 		if (stick_scale_cache[slot].mouse_set)
 		{
 			bytes[6] = 0x4D;
-			bytes[7] = stick_scale_cache[slot].mouse_horizontal;
-			bytes[8] = stick_scale_cache[slot].mouse_vertical;
+			bytes[7] = sensitivity_legacy_index(stick_scale_cache[slot].mouse_horizontal);
+			bytes[8] = stick_scale_cache[slot].mouse_vertical_same ? 0 :
+				(unsigned char)(sensitivity_legacy_index(stick_scale_cache[slot].mouse_vertical) + 1);
 			bytes[9] = stick_scale_cache[slot].mouse_invert ? 1 : 0;
 			bytes[10] = stick_scale_cache[slot].mouse_aim ? 1 : 0;
 		}
 		else
 			bytes[6] = 0;
+	}
+	if (size >= 21)
+	{
+		bytes[11] = SENSITIVITY_FINE_MARK;
+		sensitivity_put_u16(bytes + 12, stick_scale_cache[slot].horizontal);
+		sensitivity_put_u16(bytes + 14, stick_scale_cache[slot].vertical);
+		sensitivity_put_u16(bytes + 16, stick_scale_cache[slot].mouse_horizontal);
+		sensitivity_put_u16(bytes + 18, stick_scale_cache[slot].mouse_vertical_same ? 0 :
+			stick_scale_cache[slot].mouse_vertical);
+		bytes[20] = stick_scale_cache[slot].mouse_vertical_same ? 1 : 0;
 	}
 }
 
@@ -566,8 +685,8 @@ void player_profile_stick_scales_begin(long profile_index)
 {
 	short slot;
 
-	stick_edit_horizontal = STICK_SCALE_DEFAULT;
-	stick_edit_vertical = STICK_SCALE_DEFAULT;
+	stick_edit_horizontal = SENSITIVITY_DEFAULT_HUNDREDTHS;
+	stick_edit_vertical = SENSITIVITY_DEFAULT_HUNDREDTHS;
 	if (stick_scale_find(profile_index, &slot))
 	{
 		stick_edit_horizontal = stick_scale_cache[slot].horizontal;
@@ -587,19 +706,14 @@ void player_profile_stick_scales_end(void)
 void player_profile_stick_scales_seed(long key, long look_sensitivity)
 {
 	short slot;
-	unsigned char step;
+	unsigned short hundredths;
 
 	if (stick_scale_find(key, &slot))
 		return;
-	if (look_sensitivity < 1)
-		step = 0;
-	else if (look_sensitivity > STICK_SCALE_COUNT)
-		step = (unsigned char)(STICK_SCALE_COUNT - 1);
-	else
-		step = (unsigned char)(look_sensitivity - 1);
+	hundredths = sensitivity_from_look(look_sensitivity);
 	slot = stick_scale_slot(key);
-	stick_scale_cache[slot].horizontal = step;
-	stick_scale_cache[slot].vertical = step;
+	stick_scale_cache[slot].horizontal = hundredths;
+	stick_scale_cache[slot].vertical = hundredths;
 }
 
 void player_profile_mouse_begin(long key)
@@ -608,8 +722,9 @@ void player_profile_mouse_begin(long key)
 
 	mouse_edit_set = FALSE;
 	mouse_edit_dirty = FALSE;
-	mouse_edit_horizontal = STICK_SCALE_DEFAULT;
-	mouse_edit_vertical = 0;
+	mouse_edit_vertical_same = TRUE;
+	mouse_edit_horizontal = SENSITIVITY_DEFAULT_HUNDREDTHS;
+	mouse_edit_vertical = SENSITIVITY_DEFAULT_HUNDREDTHS;
 	mouse_edit_invert = FALSE;
 	mouse_edit_aim = FALSE;
 	if (stick_scale_find(key, &slot) && stick_scale_cache[slot].mouse_set)
@@ -617,6 +732,7 @@ void player_profile_mouse_begin(long key)
 		mouse_edit_set = TRUE;
 		mouse_edit_horizontal = stick_scale_cache[slot].mouse_horizontal;
 		mouse_edit_vertical = stick_scale_cache[slot].mouse_vertical;
+		mouse_edit_vertical_same = stick_scale_cache[slot].mouse_vertical_same;
 		mouse_edit_invert = stick_scale_cache[slot].mouse_invert;
 		mouse_edit_aim = stick_scale_cache[slot].mouse_aim;
 	}
@@ -631,12 +747,13 @@ void player_profile_mouse_apply(long key, short controller_index)
 	if (controller_index != 0)
 		return;
 	if (stick_scale_find(key, &slot) && stick_scale_cache[slot].mouse_set)
-		halo_linux_mouse_player((int)stick_scale_cache[slot].mouse_horizontal + 1,
-			(int)stick_scale_cache[slot].mouse_vertical,
+		halo_linux_mouse_player((float)stick_scale_cache[slot].mouse_horizontal / 100.f,
+			stick_scale_cache[slot].mouse_vertical_same ? -1.f :
+				(float)stick_scale_cache[slot].mouse_vertical / 100.f,
 			stick_scale_cache[slot].mouse_invert ? 1 : 0,
 			stick_scale_cache[slot].mouse_aim ? 1 : 0);
 	else
-		halo_linux_mouse_player(0, 0, 0, 0);
+		halo_linux_mouse_player(-1.f, -1.f, 0, 0);
 }
 
 boolean player_profile_stick_scales_dirty(void)
@@ -656,17 +773,18 @@ void player_profile_stick_scales_commit(long profile_index)
 	slot = stick_scale_slot(profile_index);
 	stick_scale_cache[slot].horizontal = stick_edit_horizontal;
 	stick_scale_cache[slot].vertical = stick_edit_vertical;
-	/* the profile's own look sensitivity stays the horizontal step, which
-	is what the Xbox used for both axes */
+	/* the profile's own look sensitivity stays the nearest whole step, which
+	is what the Xbox used for both axes. the hundredths are applied after it */
 	profile = player_ui_get_edit_player_profile();
 	if (profile)
-		profile->controller_settings.look_sensitivity = (byte)(stick_edit_horizontal + 1);
+		profile->controller_settings.look_sensitivity =
+			(byte)(sensitivity_legacy_index(stick_edit_horizontal) + 1);
 }
 
 void player_profile_stick_scales_apply(long profile_index, short controller_index)
 {
-	unsigned char horizontal = STICK_SCALE_DEFAULT;
-	unsigned char vertical = STICK_SCALE_DEFAULT;
+	unsigned short horizontal = SENSITIVITY_DEFAULT_HUNDREDTHS;
+	unsigned short vertical = SENSITIVITY_DEFAULT_HUNDREDTHS;
 	short slot;
 
 	if (stick_scale_find(profile_index, &slot))
@@ -674,11 +792,9 @@ void player_profile_stick_scales_apply(long profile_index, short controller_inde
 		horizontal = stick_scale_cache[slot].horizontal;
 		vertical = stick_scale_cache[slot].vertical;
 	}
-	if (horizontal >= STICK_SCALE_COUNT)
-		horizontal = STICK_SCALE_DEFAULT;
-	if (vertical >= STICK_SCALE_COUNT)
-		vertical = STICK_SCALE_DEFAULT;
-	input_abstraction_set_look_rates(controller_index, look_yaw_rate[horizontal], look_pitch_rate[vertical]);
+	horizontal = sensitivity_clamp(horizontal);
+	vertical = sensitivity_clamp(vertical);
+	input_abstraction_set_look_rates(controller_index, sensitivity_yaw(horizontal), sensitivity_pitch(vertical));
 }
 
 /* 0 horizontal, 1 vertical, 2 invert, 3 aim assist, else not a mouse setting */
@@ -704,14 +820,15 @@ static void mouse_edit_capture(void)
 	if (mouse_edit_set)
 		return;
 	mouse_edit_set = TRUE;
-	mouse_edit_horizontal = STICK_SCALE_DEFAULT;
-	mouse_edit_vertical = 0;
+	mouse_edit_horizontal = SENSITIVITY_DEFAULT_HUNDREDTHS;
+	mouse_edit_vertical = SENSITIVITY_DEFAULT_HUNDREDTHS;
+	mouse_edit_vertical_same = config_mouse_vertical_follows() ? TRUE : FALSE;
 	if (config_text("input.mouse_look_horizontal", text, sizeof(text)))
-		mouse_edit_horizontal = stick_scale_from_text(text);
-	if (config_text("input.mouse_look_vertical", text, sizeof(text)))
-		mouse_edit_vertical = (unsigned char)atol(text);
-	if (mouse_edit_vertical > STICK_SCALE_COUNT)
-		mouse_edit_vertical = 0;
+		mouse_edit_horizontal = sensitivity_hundredths_from_text(text);
+	if (mouse_edit_vertical_same)
+		mouse_edit_vertical = mouse_edit_horizontal;
+	else if (config_text("input.mouse_look_vertical", text, sizeof(text)))
+		mouse_edit_vertical = sensitivity_hundredths_from_text(text);
 	mouse_edit_invert = config_boolean("input.invert_mouse") ? TRUE : FALSE;
 	mouse_edit_aim = config_boolean("input.mouse_aim_assist") ? TRUE : FALSE;
 }
@@ -743,6 +860,7 @@ static void mouse_commit(short player)
 	stick_scale_cache[slot].mouse_set = TRUE;
 	stick_scale_cache[slot].mouse_horizontal = mouse_edit_horizontal;
 	stick_scale_cache[slot].mouse_vertical = mouse_edit_vertical;
+	stick_scale_cache[slot].mouse_vertical_same = mouse_edit_vertical_same;
 	stick_scale_cache[slot].mouse_invert = mouse_edit_invert;
 	stick_scale_cache[slot].mouse_aim = mouse_edit_aim;
 	player_profile_mouse_apply(key, controller_for_local_player(player));
@@ -760,17 +878,15 @@ static boolean setting_text(char const *name, char *text, unsigned int size, boo
 {
 	short index;
 	short which;
-	unsigned char scale;
 	int mouse;
 
 	mouse = mouse_setting_which(name);
 	if (in_game_settings_player != NONE && mouse_edit_open && mouse >= 0 && !default_value && mouse_edit_set)
 	{
 		if (mouse == 0)
-			snprintf(text, size, "%s", stick_scale_text[mouse_edit_horizontal < STICK_SCALE_COUNT ?
-				mouse_edit_horizontal : STICK_SCALE_DEFAULT]);
+			sensitivity_format(mouse_edit_horizontal, text, size);
 		else if (mouse == 1)
-			snprintf(text, size, "%u", (unsigned)(mouse_edit_vertical <= STICK_SCALE_COUNT ? mouse_edit_vertical : 0));
+			sensitivity_format(mouse_edit_vertical_same ? mouse_edit_horizontal : mouse_edit_vertical, text, size);
 		else if (mouse == 2)
 			snprintf(text, size, "%s", mouse_edit_invert ? "true" : "false");
 		else
@@ -808,21 +924,20 @@ static boolean setting_text(char const *name, char *text, unsigned int size, boo
 	{
 		short slot;
 		long profile_index;
+		unsigned short hundredths;
 
 		if (default_value)
-			scale = profile_stick_settings[which].default_index;
+			hundredths = SENSITIVITY_DEFAULT_HUNDREDTHS;
 		else if (stick_edit_open)
-			scale = which == 0 ? stick_edit_horizontal : stick_edit_vertical;
+			hundredths = which == 0 ? stick_edit_horizontal : stick_edit_vertical;
 		else
 		{
 			profile_index = player_ui_get_edit_profile_index();
-			scale = STICK_SCALE_DEFAULT;
+			hundredths = SENSITIVITY_DEFAULT_HUNDREDTHS;
 			if (profile_index != NONE && stick_scale_find(profile_index, &slot))
-				scale = which == 0 ? stick_scale_cache[slot].horizontal : stick_scale_cache[slot].vertical;
+				hundredths = which == 0 ? stick_scale_cache[slot].horizontal : stick_scale_cache[slot].vertical;
 		}
-		if (scale >= STICK_SCALE_COUNT)
-			scale = STICK_SCALE_DEFAULT;
-		snprintf(text, size, "%s", stick_scale_text[scale]);
+		sensitivity_format(hundredths, text, size);
 		return TRUE;
 	}
 	for (index = 0; index < NUMBEROF(profile_settings); index++)
@@ -862,12 +977,11 @@ static boolean setting_write(char const *name, char const *value)
 	{
 		mouse_edit_capture();
 		if (mouse == 0)
-			mouse_edit_horizontal = stick_scale_from_text(value);
+			mouse_edit_horizontal = sensitivity_hundredths_from_text(value);
 		else if (mouse == 1)
 		{
-			long number = atol(value);
-
-			mouse_edit_vertical = number < 0 || number > STICK_SCALE_COUNT ? 0 : (unsigned char)number;
+			mouse_edit_vertical = sensitivity_hundredths_from_text(value);
+			mouse_edit_vertical_same = FALSE;
 		}
 		else if (mouse == 2)
 			mouse_edit_invert = !strcmp(value, "true") ? TRUE : FALSE;
@@ -884,9 +998,9 @@ static boolean setting_write(char const *name, char const *value)
 		if (!stick_edit_open)
 			return FALSE;
 		if (which == 0)
-			stick_edit_horizontal = stick_scale_from_text(value);
+			stick_edit_horizontal = sensitivity_hundredths_from_text(value);
 		else
-			stick_edit_vertical = stick_scale_from_text(value);
+			stick_edit_vertical = sensitivity_hundredths_from_text(value);
 		return TRUE;
 	}
 	for (index = 0; index < NUMBEROF(profile_settings); index++)
@@ -909,18 +1023,151 @@ static boolean setting_write(char const *name, char const *value)
 	return FALSE;
 }
 
+/* the four look rows, while their screen is open. hundredths is the number
+OK writes. same is an older mouse vertical that still follows horizontal
+until this screen sets a number. */
+#define SENSITIVITY_EDITS 8
+static struct sensitivity_edit
+{
+	struct widget_instance *widget;
+	unsigned short hundredths;
+	unsigned short loaded;
+	boolean same;
+	boolean loaded_same;
+	boolean used;
+	unsigned long stamp;
+} sensitivity_edits[SENSITIVITY_EDITS];
+static unsigned long sensitivity_stamp;
+static struct widget_instance *sensitivity_field_widget;
+
+static void sensitivity_finish_typing(boolean keep);
+static void sensitivity_follow_focus(struct widget_instance *list);
+static void text_field_insert(char const *text);
+
+static boolean sensitivity_is_name(char const *name)
+{
+	return name && (stick_scale_which(name) >= 0 ||
+		!strcmp(name, "input.mouse_look_horizontal") ||
+		!strcmp(name, "input.mouse_look_vertical"));
+}
+
+static struct sensitivity_edit *sensitivity_find(struct widget_instance *widget)
+{
+	short index;
+
+	if (!widget)
+		return NULL;
+	for (index = 0; index < SENSITIVITY_EDITS; index++)
+	{
+		struct pc_menu_setting *setting;
+
+		if (!sensitivity_edits[index].used || sensitivity_edits[index].widget != widget)
+			continue;
+		/* a later screen can be given this same block. it is a look row
+		only while its setting still is */
+		setting = pc_menu_setting_get(widget->definition_tag_index);
+		if (!setting || !sensitivity_is_name(setting->setting))
+		{
+			sensitivity_edits[index].used = FALSE;
+			sensitivity_edits[index].widget = NULL;
+			return NULL;
+		}
+		return &sensitivity_edits[index];
+	}
+	return NULL;
+}
+
+static struct sensitivity_edit *sensitivity_slot(struct widget_instance *widget)
+{
+	struct sensitivity_edit *found = sensitivity_find(widget);
+	short index;
+	short oldest;
+
+	if (found)
+		return found;
+	oldest = 0;
+	for (index = 0; index < SENSITIVITY_EDITS; index++)
+	{
+		if (!sensitivity_edits[index].used)
+		{
+			oldest = index;
+			break;
+		}
+		if (sensitivity_edits[index].stamp < sensitivity_edits[oldest].stamp)
+			oldest = index;
+	}
+	sensitivity_edits[oldest].used = TRUE;
+	sensitivity_edits[oldest].widget = widget;
+	sensitivity_edits[oldest].stamp = ++sensitivity_stamp;
+	return &sensitivity_edits[oldest];
+}
+
+static unsigned short sensitivity_shown(struct sensitivity_edit *edit)
+{
+	short index;
+
+	if (!edit->same)
+		return edit->hundredths;
+	for (index = 0; index < SENSITIVITY_EDITS; index++)
+	{
+		struct pc_menu_setting *other;
+
+		if (!sensitivity_edits[index].used || sensitivity_edits[index].widget == edit->widget)
+			continue;
+		other = pc_menu_setting_get(sensitivity_edits[index].widget->definition_tag_index);
+		if (other && !strcmp(other->setting, "input.mouse_look_horizontal"))
+			return sensitivity_edits[index].hundredths;
+	}
+	return edit->hundredths;
+}
+
+static void sensitivity_bind(struct widget_instance *widget, unsigned short hundredths, boolean same)
+{
+	struct sensitivity_edit *edit = sensitivity_slot(widget);
+
+	edit->hundredths = hundredths;
+	edit->loaded = hundredths;
+	edit->same = same;
+	edit->loaded_same = same;
+	edit->stamp = ++sensitivity_stamp;
+}
+
+static void sensitivity_select(struct widget_instance *widget, unsigned short hundredths)
+{
+	struct pc_menu_setting *setting = pc_menu_setting_get(widget->definition_tag_index);
+	char text[8];
+
+	if (!setting)
+		return;
+	sensitivity_format(hundredths, text, sizeof(text));
+	widget->parameters.list.selected_index = setting_value_index(setting, text);
+}
+
 static boolean setting_load(struct widget_instance *widget)
 {
 	struct pc_menu_setting *setting = pc_menu_setting_get(widget->definition_tag_index);
 	char current[300];
+	boolean same;
 
 	if (spinner_item(widget))
 		return TRUE;
 	if (!setting || !setting_text(setting->setting, current, sizeof(current), FALSE))
 		return FALSE;
+	same = FALSE;
+	if (!strcmp(setting->setting, "input.mouse_look_vertical"))
+	{
+		if (in_game_settings_player != NONE && mouse_edit_open && mouse_edit_set)
+			same = mouse_edit_vertical_same;
+		else if (in_game_settings_player == NONE && config_mouse_vertical_follows())
+			same = TRUE;
+		if (same && in_game_settings_player == NONE)
+			setting_text("input.mouse_look_horizontal", current, sizeof(current), FALSE);
+	}
 	setting->loaded_index = setting_value_index(setting, current);
 	if (setting->loaded_index < (short)widget->parameters.list.number_of_items)
 		widget->parameters.list.selected_index = setting->loaded_index;
+	if (sensitivity_is_name(setting->setting))
+		sensitivity_bind(widget, sensitivity_hundredths_from_text(current), same);
 	return TRUE;
 }
 
@@ -2160,8 +2407,30 @@ static struct widget_instance *screen_of(struct widget_instance *widget)
 /* "port settings save" (OK): those changed written, and applied */
 static boolean setting_changed_save(struct widget_instance *spinner, struct pc_menu_setting *setting)
 {
+	struct sensitivity_edit *edit = sensitivity_find(spinner);
 	short index = spinner->parameters.list.selected_index;
+	char written[16];
 
+	if (edit)
+	{
+		if (edit->same == edit->loaded_same && (edit->same || edit->hundredths == edit->loaded))
+			return TRUE;
+		/* an unchanged follow stays the old whole number 0 in the file.
+		a number, including 0.00, is written with its decimals */
+		if (edit->same)
+			return TRUE;
+		sensitivity_format(edit->hundredths, written, sizeof(written));
+		if (!setting_write(setting->setting, written))
+		{
+			platform_log("menus: could not set %s", setting->setting);
+			return FALSE;
+		}
+		platform_log("menus: %s = %s", setting->setting, written);
+		edit->loaded = edit->hundredths;
+		edit->loaded_same = FALSE;
+		setting->loaded_index = spinner->parameters.list.selected_index;
+		return TRUE;
+	}
 	if (index < 0 || index >= setting->value_count || index == setting->loaded_index)
 		return TRUE;
 	if (!setting_write(setting->setting, setting->values[index]))
@@ -2178,7 +2447,15 @@ static boolean setting_changed_save(struct widget_instance *spinner, struct pc_m
 static boolean setting_default_show(struct widget_instance *spinner, struct pc_menu_setting *setting)
 {
 	char text[300];
+	struct sensitivity_edit *edit = sensitivity_find(spinner);
 
+	if (edit)
+	{
+		edit->hundredths = SENSITIVITY_DEFAULT_HUNDREDTHS;
+		edit->same = FALSE;
+		sensitivity_select(spinner, edit->hundredths);
+		return TRUE;
+	}
 	if (setting_text(setting->setting, text, sizeof(text), TRUE))
 		spinner->parameters.list.selected_index = setting_value_index(setting, text);
 	return TRUE;
@@ -2192,6 +2469,7 @@ static void settings_help(struct widget_instance *list)
 	struct widget_instance *row = list->focused_child;
 	short index = 0;
 
+	sensitivity_follow_focus(list);
 	if (!help)
 		return;
 	if (row && row->child && row->child->type == 1 && strncmp(row->name, "button", 6))
@@ -3222,7 +3500,10 @@ static boolean controls_load(struct widget_instance *widget, boolean defaults)
 	}
 	controls_screen.capturing_control = NONE;
 	if (defaults)
+	{
+		sensitivity_finish_typing(FALSE);
 		settings_each(screen_of(widget), setting_default_show);
+	}
 	return TRUE;
 }
 
@@ -4082,6 +4363,220 @@ static void text_field_end(boolean keep)
 		snprintf(text_field.text, sizeof(text_field.text), "%s", text_field.before);
 	else if (done)
 		done(text_field.text);
+}
+
+/* a typed look sensitivity. OK is what writes it. Enter keeps the number
+on the row. Escape puts the row's number back. */
+static void sensitivity_typed(char const *text)
+{
+	struct widget_instance *widget = sensitivity_field_widget;
+	struct sensitivity_edit *edit;
+	double number;
+	char *end;
+	unsigned short hundredths;
+
+	sensitivity_field_widget = NULL;
+	edit = sensitivity_find(widget);
+	if (!edit || !text)
+		return;
+	number = strtod(text, &end);
+	while (*end == ' ')
+		end++;
+	if (!text[0] || *end)
+		return;
+	if (number < 0.0)
+		number = 0.0;
+	if (number > 10.0)
+		number = 10.0;
+	hundredths = (unsigned short)(number * 100.0 + 0.5);
+	edit->hundredths = sensitivity_clamp(hundredths);
+	edit->same = FALSE;
+	sensitivity_select(widget, edit->hundredths);
+}
+
+static void sensitivity_finish_typing(boolean keep)
+{
+	if (!text_field.row || !sensitivity_find(text_field.row))
+		return;
+	sensitivity_field_widget = keep ? text_field.row : NULL;
+	text_field_end(keep);
+}
+
+static void sensitivity_follow_focus(struct widget_instance *list)
+{
+	struct widget_instance *row;
+	struct widget_instance *spinner;
+
+	if (!text_field.row || !sensitivity_find(text_field.row))
+		return;
+	row = list ? list->focused_child : NULL;
+	spinner = row ? row->focused_child : NULL;
+	if (spinner != text_field.row && row != text_field.row)
+		sensitivity_finish_typing(TRUE);
+}
+
+static void sensitivity_begin_typing(struct widget_instance *widget)
+{
+	struct sensitivity_edit *edit = sensitivity_find(widget);
+	char text[8];
+
+	if (!edit)
+		return;
+	if (text_field.row && text_field.row != widget)
+		sensitivity_finish_typing(TRUE);
+	if (text_field_editing(widget))
+	{
+		sensitivity_finish_typing(TRUE);
+		return;
+	}
+	sensitivity_format(sensitivity_shown(edit), text, sizeof(text));
+	sensitivity_field_widget = widget;
+	text_field_begin(widget, text, 5, sensitivity_typed);
+}
+
+static void sensitivity_type_keys(void)
+{
+	struct key_stroke key;
+
+	if (!text_field.row || !sensitivity_find(text_field.row))
+		return;
+	text_field_shown_time = system_milliseconds();
+	while (input_get_key(&key))
+	{
+		if (key.key_code == _key_backspace)
+		{
+			size_t length = strlen(text_field.text);
+
+			if (length)
+				text_field.text[length - 1] = 0;
+		}
+		else if (key.key_code == _key_return)
+		{
+			sensitivity_finish_typing(TRUE);
+			break;
+		}
+		else if (key.key_code == _key_escape)
+		{
+			sensitivity_finish_typing(FALSE);
+			break;
+		}
+		else if (key.ascii_code >= '0' && key.ascii_code <= '9')
+		{
+			char character[2];
+
+			character[0] = key.ascii_code;
+			character[1] = 0;
+			text_field_insert(character);
+		}
+		else if (key.ascii_code == '.' && !strchr(text_field.text, '.'))
+			text_field_insert(".");
+	}
+}
+
+boolean menu_sensitivity_step(struct widget_instance *widget, int direction)
+{
+	struct sensitivity_edit *edit = sensitivity_find(widget);
+	int next;
+
+	if (!edit)
+		return FALSE;
+	if (text_field_editing(widget))
+		sensitivity_finish_typing(TRUE);
+	if (edit->same)
+	{
+		edit->hundredths = sensitivity_shown(edit);
+		edit->same = FALSE;
+	}
+	next = (int)edit->hundredths + direction * 50;
+	if (next < 0)
+		next = 0;
+	if (next > SENSITIVITY_HUNDREDTHS_MAX)
+		next = SENSITIVITY_HUNDREDTHS_MAX;
+	edit->hundredths = (unsigned short)next;
+	sensitivity_select(widget, edit->hundredths);
+	return TRUE;
+}
+
+boolean menu_sensitivity_value_click(struct widget_instance *widget, short x, short split_x)
+{
+	short delta;
+
+	if (!sensitivity_find(widget))
+		return FALSE;
+	delta = x > split_x ? (short)(x - split_x) : (short)(split_x - x);
+	/* the number sits in the middle. a click out by the arrows still steps */
+	if (delta > 28)
+		return FALSE;
+	sensitivity_begin_typing(widget);
+	return TRUE;
+}
+
+boolean menu_sensitivity_label(struct widget_instance *widget, wchar_t *text, long count)
+{
+	struct sensitivity_edit *edit = sensitivity_find(widget);
+	char ascii[16];
+	long index;
+	long length;
+
+	if (!edit || !text || count < 2)
+		return FALSE;
+	if (text_field_editing(widget))
+	{
+		sensitivity_type_keys();
+		if (!text_field_editing(widget))
+			edit = sensitivity_find(widget);
+	}
+	if (text_field_editing(widget))
+	{
+		snprintf(ascii, sizeof(ascii), "%s", text_field.text);
+		length = (long)strlen(ascii);
+		if (length < (long)sizeof(ascii) - 1 && (system_milliseconds() / 500) % 2)
+		{
+			ascii[length++] = '_';
+			ascii[length] = 0;
+		}
+	}
+	else if (edit)
+		sensitivity_format(sensitivity_shown(edit), ascii, sizeof(ascii));
+	else
+		return FALSE;
+	for (index = 0; ascii[index] && index < count - 1; index++)
+		text[index] = (wchar_t)(unsigned char)ascii[index];
+	text[index] = 0;
+	return TRUE;
+}
+
+boolean menu_sensitivity_cancel_typing(void)
+{
+	if (!text_field.row || !sensitivity_find(text_field.row))
+		return FALSE;
+	sensitivity_finish_typing(FALSE);
+	return TRUE;
+}
+
+/* the widget is being freed, and a later menu can be given its block */
+void menu_sensitivity_detach(struct widget_instance *widget)
+{
+	short index;
+
+	if (!widget)
+		return;
+	if (text_field.row == widget)
+	{
+		platform_text_field(FALSE, FALSE);
+		text_field.row = NULL;
+		text_field.done = NULL;
+	}
+	if (sensitivity_field_widget == widget)
+		sensitivity_field_widget = NULL;
+	for (index = 0; index < SENSITIVITY_EDITS; index++)
+	{
+		if (sensitivity_edits[index].used && sensitivity_edits[index].widget == widget)
+		{
+			sensitivity_edits[index].used = FALSE;
+			sensitivity_edits[index].widget = NULL;
+		}
+	}
 }
 
 static void text_field_insert(char const *text)
@@ -6383,6 +6878,7 @@ static boolean profile_settings_save(struct widget_instance *widget)
 	long index = player_ui_get_edit_profile_index();
 	short player = in_game_settings_player;
 
+	sensitivity_finish_typing(TRUE);
 	settings_each(screen_of(widget), setting_changed_save);
 	if (!player_ui_get_edit_player_profile() || !player_ui_edit_profile_is_dirty())
 		return TRUE;
@@ -7816,7 +8312,6 @@ static void lobby_update(struct widget_instance *list)
 	lobby_map_show(description, game->map.name);
 	{
 		short seconds = network_game_client_get_seconds_to_game_start(client);
-		char link[TEXT_FIELD_LENGTH];
 		wchar_t gametype[NUMBEROF(game->variant.human_readable_game_description) + 1];
 		struct matchmaking_offer offer;
 		int have_offer = (party || show_paste) && matchmaking_offer_copy(&offer);
@@ -7901,12 +8396,6 @@ static void lobby_update(struct widget_instance *list)
 				size_t length = ustrlen(text);
 
 				usnprintf(text + length, NUMBEROF(text) - 1 - length, L" %d", seconds);
-			}
-			if (!show_paste && global_network_game_server_get() && p2p_invite_link(link, sizeof(link)))
-			{
-				size_t length = ustrlen(text);
-
-				usnprintf(text + length, NUMBEROF(text) - 1 - length, L"\r\n\r\nInvite link copied:\r\npaste it to friends");
 			}
 		}
 		text_set_length(named(description, "lobby_game_data", 0), text, LOBBY_TEXT_LENGTH);
@@ -12074,6 +12563,7 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port settings save"))
 		{
+			sensitivity_finish_typing(TRUE);
 			settings_each(screen_of(widget), setting_changed_save);
 			if (in_game_settings_player != NONE)
 				mouse_commit(in_game_settings_player);
@@ -12081,6 +12571,7 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port settings defaults"))
 		{
+			sensitivity_finish_typing(FALSE);
 			settings_each(screen_of(widget), setting_default_show);
 		}
 		else if (!strcmp(name, "port mods init") || !strcmp(name, "port mods close"))

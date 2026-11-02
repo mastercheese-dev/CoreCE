@@ -291,12 +291,13 @@ static const struct config_setting config_settings[] =
 		"mouse (the bullets' own autoaim stays)." },
 	{ "input.mouse_sensitivity", _config_real, "1.0", "HALO_MOUSE_SENSITIVITY", _environment_value, _platform_desktop,
 		"No longer read. Mouse Settings uses input.mouse_look_horizontal." },
-	{ "input.mouse_look_horizontal", _config_integer, "3", "HALO_MOUSE_LOOK_HORIZONTAL", _environment_value, _platform_desktop,
-		"How fast the mouse turns the view left and right, the Xbox look\n"
-		"sensitivity: 1 through 10, and 3 is the original setting." },
-	{ "input.mouse_look_vertical", _config_integer, "0", "HALO_MOUSE_LOOK_VERTICAL", _environment_value, _platform_desktop,
-		"How fast the mouse turns the view up and down, on the same 1 to 10.\n"
-		"0 uses input.mouse_look_horizontal." },
+	{ "input.mouse_look_horizontal", _config_real, "3", "HALO_MOUSE_LOOK_HORIZONTAL", _environment_value, _platform_desktop,
+		"How fast the mouse turns the view left and right, from 0 to 10.\n"
+		"3 is the original setting. Mouse Settings can set hundredths." },
+	{ "input.mouse_look_vertical", _config_real, "0", "HALO_MOUSE_LOOK_VERTICAL", _environment_value, _platform_desktop,
+		"How fast the mouse turns the view up and down, from 0 to 10.\n"
+		"A whole number 0 left by an older build uses the horizontal setting.\n"
+		"0.00 is a real zero. 3 is the original setting." },
 	{ "input.invert_mouse", _config_boolean, "false", "HALO_MOUSE_INVERT", _environment_set_is_true, _platform_desktop,
 		"Moving the mouse forward looks down." },
 	{ "network.block_mouse_aim_assist", _config_boolean, "false", "HALO_NET_BLOCK_MOUSE_AIM_ASSIST", _environment_value,
@@ -311,10 +312,10 @@ static const struct config_setting config_settings[] =
 		"No longer read. Mouse Settings uses input.mouse_look_vertical." },
 	{ "input.controller_look_sensitivity", _config_real, "1.0", "HALO_CONTROLLER_LOOK_SENSITIVITY", _environment_value, _platform_all,
 		"No longer read. Controls Setup and Gamepads save horizontal look on\n"
-		"the profile, 1 to 10, and 3 is the original setting." },
+		"the profile, from 0 to 10. 3 is the original setting." },
 	{ "input.controller_move_sensitivity", _config_real, "1.0", "HALO_CONTROLLER_MOVE_SENSITIVITY", _environment_value, _platform_all,
 		"No longer read. Controls Setup and Gamepads save vertical look on\n"
-		"the profile, 1 to 10, and 3 is the original setting." },
+		"the profile, from 0 to 10. 3 is the original setting." },
 
 	/* the keyboard and mouse's own controls (port/linux/src/xinput_sdl.c) */
 	{ "controls.move_forward", _config_string, "\"W\"", "HALO_KEY_MOVE_FORWARD", _environment_value, _platform_all,
@@ -458,8 +459,8 @@ static const struct config_setting config_settings[] =
 		"instead of the local network's broadcast address (for VPNs); empty for\n"
 		"the local network." },
 	{ "network.online", _config_boolean, "true", "HALO_NET_ONLINE", _environment_value, _platform_all,
-		"Internet play: hosting makes an invite link (logged, and put on the\n"
-		"clipboard) that lets whoever has it join over the internet; opening a\n"
+		"Internet play: hosting makes an invite link (logged) that lets whoever\n"
+		"has it join over the internet; opening a\n"
 		"link (or copying one before switching to the game) joins. Only people\n"
 		"with the invite can join. Off keeps system link to the local network." },
 	{ "network.join_from_clipboard", _config_boolean, "true", "HALO_NET_JOIN_FROM_CLIPBOARD", _environment_value,
@@ -814,6 +815,9 @@ static int config_loaded = 0;
 or no value. 0 or 1: the file had that boolean, so a true can become
 "voice" once audio.hardcore_timer_voice has been read. */
 static int match_timer_file_boolean = -1;
+/* mouse vertical stored as the whole number 0 follows horizontal. A float,
+including 0.0, is the number itself. The default, and a missing key, follow. */
+static int mouse_vertical_legacy_same = 1;
 static volatile unsigned long config_change_count;
 static pthread_mutex_t config_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -1266,6 +1270,8 @@ static void config_set_from_file(struct config_value *value, const struct config
 			value->real = (double)datum.u.int64;
 		else
 			wrong_type = 1;
+		if (!wrong_type && !strcmp(setting->name, "input.mouse_look_vertical"))
+			mouse_vertical_legacy_same = datum.type == TOML_INT64 && datum.u.int64 == 0;
 		break;
 	case _config_string:
 		if (datum.type == TOML_STRING)
@@ -1339,6 +1345,7 @@ static void config_load(int complete_file)
 	char *text;
 	size_t index;
 
+	mouse_vertical_legacy_same = 1;
 	for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS; index++)
 	{
 		const char *default_value = config_settings[index].default_value;
@@ -1429,6 +1436,8 @@ static void config_load(int complete_file)
 
 		if (!environment || (setting->environment_style != _environment_value && !config_environment_set(environment)))
 			continue;
+		if (!strcmp(setting->name, "input.mouse_look_vertical") && setting->environment_style == _environment_value)
+			mouse_vertical_legacy_same = strcmp(environment, "0") == 0;
 		switch (setting->environment_style)
 		{
 		case _environment_value:
@@ -1791,6 +1800,8 @@ int config_write(const char *name, const char *value)
 	config_value(name, config_settings[index].type);
 	pthread_mutex_lock(&config_lock);
 	config_set_from_text(&config_values[index], config_settings[index].type, value);
+	if (!strcmp(name, "input.mouse_look_vertical"))
+		mouse_vertical_legacy_same = strcmp(value, "0") == 0;
 	snprintf(section, sizeof(section), "%.*s", (int)(dot - name), name);
 	snprintf(key, sizeof(key), "%s", dot + 1);
 	switch (config_settings[index].type)
@@ -1876,6 +1887,11 @@ int config_write(const char *name, const char *value)
 	free(out.buffer);
 	free(file_text);
 	return succeeded;
+}
+
+int config_mouse_vertical_follows(void)
+{
+	return mouse_vertical_legacy_same;
 }
 
 int config_text(const char *name, char *text, size_t size)

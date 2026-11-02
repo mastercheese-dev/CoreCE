@@ -36,6 +36,9 @@ int config_write_boolean(const char *name, int value);
 /* a setting's value as text ("true", "60", "1.5", "all"); 0 if there is no
 such setting */
 int config_text(const char *name, char *text, size_t size);
+/* 1 when mouse vertical is the old whole number 0, which follows horizontal.
+A saved 0.00 is a real zero and returns 0. */
+int config_mouse_vertical_follows(void);
 /* the folder config.toml is in, with its separator */
 void config_folder(char *path, size_t size);
 /* a whole file (a UTF-8 path), NUL terminated, or NULL; free() it (the Android

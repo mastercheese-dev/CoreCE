@@ -2320,6 +2320,8 @@ static void dispose_widget_stack(
 
 /* the scrolling list forgets a widget as it is freed (menu_functions.c) */
 void menu_list_detach(struct widget_instance *widget);
+/* a look-sensitivity row and its typed number, the same way */
+void menu_sensitivity_detach(struct widget_instance *widget);
 
 void ui_widget_delete(
 	struct widget_instance *widget)
@@ -2447,6 +2449,7 @@ void ui_widget_delete(
 	still name it. A deleted handler that already opened the next list is
 	left alone: its widget is a different one. */
 	menu_list_detach(widget);
+	menu_sensitivity_detach(widget);
 	dispose_pointer(widget_memory_pool, widget);
 	for (widget_index = 0;
 		widget_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
@@ -2792,6 +2795,12 @@ up at the last row on screen scrolls that list, so the d-pad and the stick
 reach its real first and last entries. TRUE when it scrolled and the focus
 stays. */
 boolean menu_list_nudge(struct widget_instance *list, boolean forward);
+/* look sensitivity: arrows step by 0.5, a click on the number types, and
+Escape while typing stays on the screen */
+boolean menu_sensitivity_step(struct widget_instance *widget, int direction);
+boolean menu_sensitivity_value_click(struct widget_instance *widget, short x, short split_x);
+boolean menu_sensitivity_label(struct widget_instance *widget, wchar_t *text, long count);
+boolean menu_sensitivity_cancel_typing(void);
 /* the entries still past the rows on screen, in that direction; 0 when this
 is not such a list or the focus is not on its edge */
 short menu_list_past(struct widget_instance *list, boolean forward);
@@ -2815,6 +2824,11 @@ boolean widget_event_function_list_widget_goto_next_item(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
 		1230,
 		widget);
+	if (menu_sensitivity_step(widget, 1))
+	{
+		widget->parameters.list.last_list_tab_direction = 15;
+		return TRUE;
+	}
 	definition = ui_widget_definition_get(widget->definition_tag_index);
 	match_vassert(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
@@ -2960,6 +2974,11 @@ boolean widget_event_function_list_widget_goto_previous_item(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
 		1359,
 		widget);
+	if (menu_sensitivity_step(widget, -1))
+	{
+		widget->parameters.list.last_list_tab_direction = -15;
+		return TRUE;
+	}
 	definition = ui_widget_definition_get(widget->definition_tag_index);
 	match_vassert(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
@@ -3716,10 +3735,18 @@ static void event_handler_dispatch(
 		}
 		if (TEST_FLAG(handler->flags, _event_handler_go_back_to_previous_widget_bit))
 		{
-			widget_instance_go_back_to_previous(widget);
-			if (audio_feedback == _ui_audio_feedback_none)
-				audio_feedback = _ui_audio_feedback_back;
-			widget_deleted = TRUE;
+			if (menu_sensitivity_cancel_typing())
+			{
+				if (audio_feedback == _ui_audio_feedback_none)
+					audio_feedback = _ui_audio_feedback_back;
+			}
+			else
+			{
+				widget_instance_go_back_to_previous(widget);
+				if (audio_feedback == _ui_audio_feedback_none)
+					audio_feedback = _ui_audio_feedback_back;
+				widget_deleted = TRUE;
+			}
 		}
 		if (handler->sound_effect.index != NONE)
 			unspatialized_impulse_sound_new(handler->sound_effect.index, 1.0f);
@@ -6001,7 +6028,10 @@ static void widget_instance_render_spinner_list(
 	if (definition->child_widgets.count == 0)
 	{
 		wchar_t *item_text;
+		wchar_t sensitivity_text[8];
+		boolean sensitivity_override;
 
+		sensitivity_override = FALSE;
 		if (definition->text_label_string_list.index != NONE)
 		{
 			short string_index = widget->parameters.list.selected_index;
@@ -6137,7 +6167,16 @@ static void widget_instance_render_spinner_list(
 						color.alpha;
 				}
 				/* port: a left or right setting's value that does not fit
-				between its arrows slides so the rest of it can be read */
+				between its arrows slides so the rest of it can be read.
+				look sensitivity draws its own hundredths, and a caret
+				while the number is being typed */
+				if (menu_sensitivity_label(widget, sensitivity_text, NUMBEROF(sensitivity_text)))
+				{
+					if (definition->text_label_string_list.index != NONE && item_text)
+						dispose_pointer(widget_memory_pool, item_text);
+					item_text = sensitivity_text;
+					sensitivity_override = TRUE;
+				}
 				menu_value_scroll(
 					widget,
 					item_text,
@@ -6149,7 +6188,7 @@ static void widget_instance_render_spinner_list(
 				rasterizer_draw_unicode_string(&bounds, &clip, NULL, 0, item_text);
 			}
 		}
-		if (definition->text_label_string_list.index != NONE)
+		if (definition->text_label_string_list.index != NONE && !sensitivity_override)
 			dispose_pointer(widget_memory_pool, item_text);
 	}
 
@@ -7603,6 +7642,8 @@ static void ui_widgets_process_mouse(
 					boolean first_half;
 
 					ui_mouse_give_focus(target->widget);
+					if (menu_sensitivity_value_click(target->widget, ui_mouse_click_x, target->split_x))
+						break;
 					ui_mouse_list_directions(target->widget, &back, &forward);
 					first_half = back == _widget_event_dpad_left ?
 						ui_mouse_click_x < target->split_x :

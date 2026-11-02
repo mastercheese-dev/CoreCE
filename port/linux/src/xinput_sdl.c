@@ -115,46 +115,60 @@ static Uint64 touch_aimed_ms = 0;
 worn stick's drift */
 #define STICK_AIMING_DEFLECTION 8000
 
-/* the Xbox look sensitivity, degrees a second (player_ui.c's tables).
-3 is the original setting. The vertical step 0 uses the horizontal one */
-static const float look_yaw_rate[10] = {
-	80.f, 100.f, 120.f, 140.f, 160.f, 180.f, 200.f, 220.f, 240.f, 260.f
-};
-static const float look_pitch_rate[10] = {
-	40.f, 50.f, 60.f, 70.f, 80.f, 90.f, 100.f, 110.f, 120.f, 130.f
-};
+/* yaw 60 + 20*s and pitch 30 + 10*s, divided by the original (120 and 60).
+Setting 3 is 1. Whole numbers 1 through 10 match the Xbox tables. 0 is the
+step below 1. A vertical below 0 uses the horizontal setting. */
+static float mouse_axis(float sensitivity)
+{
+	if (sensitivity < 0.f)
+		sensitivity = 0.f;
+	if (sensitivity > 10.f)
+		sensitivity = 10.f;
+	return sensitivity;
+}
+
+static float mouse_yaw_scale(float sensitivity)
+{
+	return (60.f + 20.f * mouse_axis(sensitivity)) / 120.f;
+}
+
+static float mouse_pitch_scale(float sensitivity)
+{
+	return (30.f + 10.f * mouse_axis(sensitivity)) / 60.f;
+}
+
+static float mouse_config_axis(const char *name)
+{
+	char text[32];
+	float value;
+
+	if (!config_text(name, text, sizeof(text)))
+		return 3.f;
+	value = (float)atof(text);
+	return mouse_axis(value);
+}
 /* radians per pixel at sensitivity 3. mouse_sensitivity() is the Xbox
 rate against that, so the scale is applied once */
 static const float mouse_pixel_scale = 0.0022f;
 static float vertical_sensitivity = 1.f;
-/* a local player's own mouse, set from a match. horizontal 0 uses config */
+/* a local player's own mouse, set from a match. horizontal below 0 uses
+config. vertical below 0 uses that horizontal */
 static struct
 {
 	int on;
-	int horizontal;
-	int vertical;
+	float horizontal;
+	float vertical;
 	int invert;
 	int aim_assist;
 } mouse_player;
 
-/* horizontal 1..10, vertical 0 for the same rate, else 1..10. horizontal 0
-clears it and the machine's config.toml is used again */
-void halo_linux_mouse_player(int horizontal, int vertical, int invert, int aim_assist)
+void halo_linux_mouse_player(float horizontal, float vertical, int invert, int aim_assist)
 {
-	mouse_player.on = horizontal >= 1;
+	mouse_player.on = horizontal >= 0.f;
 	mouse_player.horizontal = horizontal;
 	mouse_player.vertical = vertical;
 	mouse_player.invert = invert;
 	mouse_player.aim_assist = aim_assist;
-}
-
-static int look_step(long sensitivity)
-{
-	if (sensitivity < 1)
-		return 2;
-	if (sensitivity > 10)
-		return 9;
-	return (int)sensitivity - 1;
 }
 
 static float mouse_sensitivity(void)
@@ -165,12 +179,11 @@ static float mouse_sensitivity(void)
 
 	if (mouse_player.on)
 	{
-		int yaw_step = look_step(mouse_player.horizontal);
-		int pitch_step = mouse_player.vertical <= 0 ? yaw_step : look_step(mouse_player.vertical);
+		float pitch = mouse_player.vertical < 0.f ? mouse_player.horizontal : mouse_player.vertical;
 
 		was_player = 1;
-		sensitivity = look_yaw_rate[yaw_step] / 120.f;
-		vertical_sensitivity = look_pitch_rate[pitch_step] / 60.f;
+		sensitivity = mouse_yaw_scale(mouse_player.horizontal);
+		vertical_sensitivity = mouse_pitch_scale(pitch);
 		return sensitivity;
 	}
 	if (was_player != 0)
@@ -180,14 +193,14 @@ static float mouse_sensitivity(void)
 	}
 	if (read_at != config_changes())
 	{
-		long horizontal = config_integer("input.mouse_look_horizontal");
-		long vertical = config_integer("input.mouse_look_vertical");
-		int yaw_step = look_step(horizontal);
-		int pitch_step = vertical <= 0 ? yaw_step : look_step(vertical);
+		float horizontal = mouse_config_axis("input.mouse_look_horizontal");
+		float vertical = mouse_config_axis("input.mouse_look_vertical");
 
 		read_at = config_changes();
-		sensitivity = look_yaw_rate[yaw_step] / 120.f;
-		vertical_sensitivity = look_pitch_rate[pitch_step] / 60.f;
+		if (config_mouse_vertical_follows())
+			vertical = horizontal;
+		sensitivity = mouse_yaw_scale(horizontal);
+		vertical_sensitivity = mouse_pitch_scale(vertical);
 	}
 	return sensitivity;
 }

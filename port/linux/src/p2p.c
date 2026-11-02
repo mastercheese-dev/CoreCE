@@ -9,8 +9,8 @@ link games as if they were on one LAN, without a server of this project's.
   other key can be found to have; the first 6 are the machine's identifier,
   which its XNADDR also carries) and a random 16-byte token. A machine
   makes one when its game starts hosting (the game listens for
-  connections), logs it, puts it on the clipboard, and offers it through
-  Discord (p2p_discord.c). Nothing about a game is published anywhere else:
+  connections), logs it, and offers it through Discord (p2p_discord.c).
+  The player copies it. Nothing about a game is published anywhere else:
   without an invite there is no way to find or join it.
 - Signalling (p2p_signal.c) goes through public MQTT brokers, on topics
   that are hashes of the token, with messages sealed with a key derived
@@ -378,7 +378,6 @@ static struct
 	private makes a new one */
 	int token_listed;
 	char invite[P2P_LINK_SIZE];
-	int invite_copied;
 	/* the game's players and its most (p2p_set_game_player_counts; 0: not
 	said, and the machines the tunnel reaches are shown), and what Discord
 	was told */
@@ -2903,12 +2902,6 @@ static void update_hosting(void)
 		p2p_signal_host(p2p.token);
 		platform_log("Internet play: hosting. Invite players with this link (it only works while this "
 			"copy of the game runs): %s", p2p.invite);
-		if (!p2p.invite_copied)
-		{
-			memcpy(p2p.clipboard, p2p.invite, sizeof(p2p.clipboard));
-			p2p.has_clipboard = 1;
-			p2p.invite_copied = 1;
-		}
 		p2p.reported_player_count = -1;
 	}
 	else if (!want && p2p.hosting)
