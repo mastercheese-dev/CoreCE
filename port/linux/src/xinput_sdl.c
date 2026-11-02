@@ -115,26 +115,24 @@ static Uint64 touch_aimed_ms = 0;
 worn stick's drift */
 #define STICK_AIMING_DEFLECTION 8000
 
-/* the menu's 0 to 10. the controller uses that number as the Xbox rate.
-the mouse uses half of it, so 10 turns as fast as 5 used to, and 0 is
-still the step below that. a vertical below 0 uses the horizontal setting. */
+/* the menu's 1 to 10. 1000 counts are one inch. 1.00 is 24 inches per
+full turn and 10.00 is 4. each step adds the same turn speed:
+inches = 216 / (5s + 4). a vertical below 0 uses the horizontal setting. */
 static float mouse_axis(float sensitivity)
 {
-	if (sensitivity < 0.f)
-		sensitivity = 0.f;
+	if (sensitivity < 1.f)
+		sensitivity = 1.f;
 	if (sensitivity > 10.f)
 		sensitivity = 10.f;
 	return sensitivity;
 }
 
-static float mouse_yaw_scale(float sensitivity)
+static float mouse_radians_per_count(float sensitivity)
 {
-	return (60.f + 20.f * mouse_axis(sensitivity) * 0.5f) / 120.f;
-}
+	float inches;
 
-static float mouse_pitch_scale(float sensitivity)
-{
-	return (30.f + 10.f * mouse_axis(sensitivity) * 0.5f) / 60.f;
+	inches = 216.f / (5.f * mouse_axis(sensitivity) + 4.f);
+	return 6.28318530718f / (inches * 1000.f);
 }
 
 static float mouse_config_axis(const char *name)
@@ -147,9 +145,7 @@ static float mouse_config_axis(const char *name)
 	value = (float)atof(text);
 	return mouse_axis(value);
 }
-/* radians per pixel at sensitivity 3. mouse_sensitivity() is the Xbox
-rate against that, so the scale is applied once */
-static const float mouse_pixel_scale = 0.0022f;
+/* radians per count for the vertical axis. mouse_sensitivity() fills it */
 static float vertical_sensitivity = 1.f;
 /* a local player's own mouse, set from a match. horizontal below 0 uses
 config. vertical below 0 uses that horizontal */
@@ -182,8 +178,8 @@ static float mouse_sensitivity(void)
 		float pitch = mouse_player.vertical < 0.f ? mouse_player.horizontal : mouse_player.vertical;
 
 		was_player = 1;
-		sensitivity = mouse_yaw_scale(mouse_player.horizontal);
-		vertical_sensitivity = mouse_pitch_scale(pitch);
+		sensitivity = mouse_radians_per_count(mouse_player.horizontal);
+		vertical_sensitivity = mouse_radians_per_count(pitch);
 		return sensitivity;
 	}
 	if (was_player != 0)
@@ -199,8 +195,8 @@ static float mouse_sensitivity(void)
 		read_at = config_changes();
 		if (config_mouse_vertical_follows())
 			vertical = horizontal;
-		sensitivity = mouse_yaw_scale(horizontal);
-		vertical_sensitivity = mouse_pitch_scale(vertical);
+		sensitivity = mouse_radians_per_count(horizontal);
+		vertical_sensitivity = mouse_radians_per_count(vertical);
 	}
 	return sensitivity;
 }
@@ -260,8 +256,8 @@ int halo_linux_mouse_look(short gamepad_index, float *yaw, float *pitch)
 	mouse_sample_y = (short)y;
 	if (x == 0.0f && y == 0.0f)
 		return FALSE;
-	*yaw = -x * mouse_pixel_scale * mouse_sensitivity();
-	*pitch = (invert ? y : -y) * mouse_pixel_scale * vertical_sensitivity;
+	*yaw = -x * mouse_sensitivity();
+	*pitch = (invert ? y : -y) * vertical_sensitivity;
 	return TRUE;
 }
 

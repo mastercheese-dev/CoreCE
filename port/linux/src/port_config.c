@@ -292,12 +292,13 @@ static const struct config_setting config_settings[] =
 	{ "input.mouse_sensitivity", _config_real, "1.0", "HALO_MOUSE_SENSITIVITY", _environment_value, _platform_desktop,
 		"No longer read. Mouse Settings uses input.mouse_look_horizontal." },
 	{ "input.mouse_look_horizontal", _config_real, "3", "HALO_MOUSE_LOOK_HORIZONTAL", _environment_value, _platform_desktop,
-		"How fast the mouse turns the view left and right, from 0 to 10.\n"
-		"10 turns as fast as 5 used to. Mouse Settings can set hundredths." },
+		"How fast the mouse turns the view left and right, from 1 to 10.\n"
+		"At 1000 DPI, 1 is 24 inches per full turn and 10 is 4 inches.\n"
+		"Mouse Settings can set hundredths." },
 	{ "input.mouse_look_vertical", _config_real, "0", "HALO_MOUSE_LOOK_VERTICAL", _environment_value, _platform_desktop,
-		"How fast the mouse turns the view up and down, from 0 to 10.\n"
+		"How fast the mouse turns the view up and down, from 1 to 10.\n"
 		"A whole number 0 left by an older build uses the horizontal setting.\n"
-		"0.00 is a real zero. 10 turns as fast as 5 used to." },
+		"At 1000 DPI, 1 is 24 inches per full turn and 10 is 4 inches." },
 	{ "input.invert_mouse", _config_boolean, "false", "HALO_MOUSE_INVERT", _environment_set_is_true, _platform_desktop,
 		"Moving the mouse forward looks down." },
 	{ "network.block_mouse_aim_assist", _config_boolean, "false", "HALO_NET_BLOCK_MOUSE_AIM_ASSIST", _environment_value,

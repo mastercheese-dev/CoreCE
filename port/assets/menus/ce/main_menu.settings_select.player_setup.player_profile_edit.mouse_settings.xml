@@ -31,7 +31,7 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_look_horizontal_label" type="text" controller="1" width="300" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/labels" string_index="0" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_look_horizontal_spinner" type="spinner" left="3" top="0" width="147" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="0.00|0.50|1.00|1.50|2.00|2.50|3.00|3.50|4.00|4.50|5.00|5.50|6.00|6.50|7.00|7.50|8.00|8.50|9.00|9.50|10.00" setting="input.mouse_look_horizontal" values="0.00|0.50|1.00|1.50|2.00|2.50|3.00|3.50|4.00|4.50|5.00|5.50|6.00|6.50|7.00|7.50|8.00|8.50|9.00|9.50|10.00" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 150 15 156">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_look_horizontal_spinner" type="spinner" left="3" top="0" width="147" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="1.00|1.50|2.00|2.50|3.00|3.50|4.00|4.50|5.00|5.50|6.00|6.50|7.00|7.50|8.00|8.50|9.00|9.50|10.00" setting="input.mouse_look_horizontal" values="1.00|1.50|2.00|2.50|3.00|3.50|4.00|4.50|5.00|5.50|6.00|6.50|7.00|7.50|8.00|8.50|9.00|9.50|10.00" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 150 15 156">
 		<on event="created" run="port setting load"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/op_mouse_look_vertical" width="512" height="20" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds_short" color="#FF2896FF">
@@ -40,7 +40,7 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_look_vertical_label" type="text" controller="1" width="300" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/labels" string_index="1" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_look_vertical_spinner" type="spinner" left="3" top="0" width="147" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="0.00|0.50|1.00|1.50|2.00|2.50|3.00|3.50|4.00|4.50|5.00|5.50|6.00|6.50|7.00|7.50|8.00|8.50|9.00|9.50|10.00" setting="input.mouse_look_vertical" values="0.00|0.50|1.00|1.50|2.00|2.50|3.00|3.50|4.00|4.50|5.00|5.50|6.00|6.50|7.00|7.50|8.00|8.50|9.00|9.50|10.00" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 150 15 156">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_look_vertical_spinner" type="spinner" left="3" top="0" width="147" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="1.00|1.50|2.00|2.50|3.00|3.50|4.00|4.50|5.00|5.50|6.00|6.50|7.00|7.50|8.00|8.50|9.00|9.50|10.00" setting="input.mouse_look_vertical" values="1.00|1.50|2.00|2.50|3.00|3.50|4.00|4.50|5.00|5.50|6.00|6.50|7.00|7.50|8.00|8.50|9.00|9.50|10.00" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 150 15 156">
 		<on event="created" run="port setting load"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/op_invert_mouse" width="512" height="20" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds_short" color="#FF2896FF">
@@ -79,8 +79,8 @@
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/help_strings">
 		<string text=""/>
-		<string text="How fast the view turns left and right. 10.00 turns as\nfast as 1.00 used to. Arrows step by 0.5. Click the number to type."/>
-		<string text="How fast the view turns up and down. 10.00 turns as\nfast as 1.00 used to. Arrows step by 0.5. Click the number to type."/>
+		<string text="How fast the view turns left and right. At 1000 DPI,\n1.00 is 24 inches per turn and 10.00 is 4 inches."/>
+		<string text="How fast the view turns up and down. At 1000 DPI,\n1.00 is 24 inches per turn and 10.00 is 4 inches."/>
 		<string text="Moving the mouse forward looks down."/>
 		<string text="Slow and drag the view along with a target while\naiming with the mouse, as with a controller."/>
 	</strings>

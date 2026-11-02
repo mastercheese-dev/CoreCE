@@ -345,12 +345,14 @@ static boolean profile_setting_boolean(short field)
 
 /* horizontal and vertical look, kept beside the profile (player_profile.c
 writes them after the checksum: the profile itself is full). Hundredths of
-a setting from 0.00 to 10.00. 3.00 is the original (yaw 120, pitch 60).
+a setting from 1.00 to 10.00. 3.00 is the original (yaw 120, pitch 60).
 Whole numbers 1 through 10 keep those Xbox rates. A profile without this
-record uses its look sensitivity for both axes. */
+record uses its look sensitivity for both axes. A saved number under 1.00
+loads as 1.00. */
 #define STICK_SCALE_COUNT 10
 #define STICK_SCALE_DEFAULT 2
 #define STICK_SCALE_MAGIC 0x534C5831ul
+#define SENSITIVITY_HUNDREDTHS_MIN 100
 #define SENSITIVITY_HUNDREDTHS_MAX 1000
 #define SENSITIVITY_DEFAULT_HUNDREDTHS 300
 #define SENSITIVITY_FINE_MARK 0x46
@@ -369,6 +371,8 @@ static float sensitivity_pitch(unsigned short hundredths)
 
 static unsigned short sensitivity_clamp(unsigned short hundredths)
 {
+	if (hundredths < SENSITIVITY_HUNDREDTHS_MIN)
+		return SENSITIVITY_HUNDREDTHS_MIN;
 	if (hundredths > SENSITIVITY_HUNDREDTHS_MAX)
 		return SENSITIVITY_HUNDREDTHS_MAX;
 	return hundredths;
@@ -450,7 +454,7 @@ static struct
 static struct
 {
 	long profile_index;
-	/* hundredths, 0 through 1000 */
+	/* hundredths, 100 through 1000 */
 	unsigned short horizontal;
 	unsigned short vertical;
 	boolean used;
@@ -632,6 +636,10 @@ void player_profile_stick_scales_remember(long profile_index, void const *paddin
 			}
 		}
 	}
+	stick_scale_cache[slot].horizontal = sensitivity_clamp(stick_scale_cache[slot].horizontal);
+	stick_scale_cache[slot].vertical = sensitivity_clamp(stick_scale_cache[slot].vertical);
+	stick_scale_cache[slot].mouse_horizontal = sensitivity_clamp(stick_scale_cache[slot].mouse_horizontal);
+	stick_scale_cache[slot].mouse_vertical = sensitivity_clamp(stick_scale_cache[slot].mouse_vertical);
 }
 
 void player_profile_stick_scales_store(long profile_index, void *padding, long size)
@@ -4300,31 +4308,98 @@ static void text_field_end(boolean keep)
 		done(text_field.text);
 }
 
+/* 1.00 through 10.00, with at most two decimal places. */
+static int sensitivity_decimal_places(char const *text)
+{
+	char const *dot;
+
+	dot = strchr(text, '.');
+	if (!dot)
+		return 0;
+	return (int)strlen(dot + 1);
+}
+
+static int sensitivity_text_final(char const *text, unsigned short *hundredths)
+{
+	double number;
+	char *end;
+	unsigned short value;
+
+	if (!text || !text[0])
+		return 0;
+	number = strtod(text, &end);
+	while (*end == ' ')
+		end++;
+	if (end == text || *end)
+		return 0;
+	if (sensitivity_decimal_places(text) > 2)
+		return 0;
+	if (number < 1.0 || number > 10.0)
+		return 0;
+	value = (unsigned short)(number * 100.0 + 0.5);
+	if (value < SENSITIVITY_HUNDREDTHS_MIN || value > SENSITIVITY_HUNDREDTHS_MAX)
+		return 0;
+	*hundredths = value;
+	return 1;
+}
+
+/* the field holds five characters. a prefix is kept when some completion
+of that length is 1.00 through 10.00. */
+static int sensitivity_complete(char *text, int length)
+{
+	unsigned short hundredths;
+	int digit;
+
+	if (sensitivity_text_final(text, &hundredths))
+		return 1;
+	if (length >= 5 || sensitivity_decimal_places(text) >= 2)
+		return 0;
+	for (digit = 0; digit <= 9; digit++)
+	{
+		text[length] = (char)('0' + digit);
+		text[length + 1] = 0;
+		if (sensitivity_complete(text, length + 1))
+			return 1;
+	}
+	if (!strchr(text, '.'))
+	{
+		text[length] = '.';
+		text[length + 1] = 0;
+		if (sensitivity_complete(text, length + 1))
+			return 1;
+	}
+	text[length] = 0;
+	return 0;
+}
+
+static int sensitivity_text_prefix(char const *text)
+{
+	char trial[8];
+
+	if (!text || !text[0])
+		return 1;
+	if (strlen(text) > 5)
+		return 0;
+	snprintf(trial, sizeof(trial), "%s", text);
+	return sensitivity_complete(trial, (int)strlen(trial));
+}
+
 /* a typed look sensitivity. OK is what writes it. Enter keeps the number
-on the row. Escape puts the row's number back. */
+on the row when it is from 1.00 through 10.00. Escape puts the row's
+number back. */
 static void sensitivity_typed(char const *text)
 {
 	struct widget_instance *widget = sensitivity_field_widget;
 	struct sensitivity_edit *edit;
-	double number;
-	char *end;
 	unsigned short hundredths;
 
 	sensitivity_field_widget = NULL;
 	edit = sensitivity_find(widget);
 	if (!edit || !text)
 		return;
-	number = strtod(text, &end);
-	while (*end == ' ')
-		end++;
-	if (!text[0] || *end)
+	if (!sensitivity_text_final(text, &hundredths))
 		return;
-	if (number < 0.0)
-		number = 0.0;
-	if (number > 10.0)
-		number = 10.0;
-	hundredths = (unsigned short)(number * 100.0 + 0.5);
-	edit->hundredths = sensitivity_clamp(hundredths);
+	edit->hundredths = hundredths;
 	edit->same = FALSE;
 	sensitivity_select(widget, edit->hundredths);
 	sensitivity_mirror(edit);
@@ -4396,16 +4471,22 @@ static void sensitivity_type_keys(void)
 			sensitivity_finish_typing(FALSE);
 			break;
 		}
-		else if (key.ascii_code >= '0' && key.ascii_code <= '9')
+		else if ((key.ascii_code >= '0' && key.ascii_code <= '9') ||
+			(key.ascii_code == '.' && !strchr(text_field.text, '.')))
 		{
+			char trial[8];
 			char character[2];
+			size_t length = strlen(text_field.text);
 
-			character[0] = key.ascii_code;
+			if (length + 1 > (size_t)text_field.maximum || length + 1 >= sizeof(trial))
+				continue;
+			snprintf(trial, sizeof(trial), "%s%c", text_field.text, key.ascii_code);
+			if (!sensitivity_text_prefix(trial))
+				continue;
+			character[0] = (char)key.ascii_code;
 			character[1] = 0;
 			text_field_insert(character);
 		}
-		else if (key.ascii_code == '.' && !strchr(text_field.text, '.'))
-			text_field_insert(".");
 	}
 }
 
@@ -4424,8 +4505,8 @@ boolean menu_sensitivity_step(struct widget_instance *widget, int direction)
 		edit->same = FALSE;
 	}
 	next = (int)edit->hundredths + direction * 50;
-	if (next < 0)
-		next = 0;
+	if (next < SENSITIVITY_HUNDREDTHS_MIN)
+		next = SENSITIVITY_HUNDREDTHS_MIN;
 	if (next > SENSITIVITY_HUNDREDTHS_MAX)
 		next = SENSITIVITY_HUNDREDTHS_MAX;
 	edit->hundredths = (unsigned short)next;

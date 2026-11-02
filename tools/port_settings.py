@@ -27,7 +27,7 @@ QUIT_ITEM_PLACE = (192, 391)
 YES_NO = [("YES", "true"), ("NO", "false")]
 # The Xbox look sensitivity, 1 through 10. 3 is the original setting.
 # Horizontal is the yaw table and vertical the pitch table (player_ui.c).
-LOOK_STEPS = [(f"{step / 2:.2f}", f"{step / 2:.2f}") for step in range(21)]
+LOOK_STEPS = [(f"{step / 2:.2f}", f"{step / 2:.2f}") for step in range(2, 21)]
 BUTTON_LAYOUTS = [("DEFAULT", "0"), ("SWAP TRIGGERS", "1"), ("SWAP A, L TRIGGER", "2"),
                   ("SWAP B, L TRIGGER", "3"), ("SWAP B, R STICK", "4"), ("BUMPER JUMPER", "5"),
                   ("RECON", "6"), ("FISHSTICKS", "7")]
@@ -124,9 +124,9 @@ SCREENS = {
         "mouse_accept": True,
         "rows": [
             ("HORIZONTAL SENSITIVITY:", "input.mouse_look_horizontal", SENSITIVITIES,
-             "How fast the view turns left and right. 10.00 turns as\nfast as 1.00 used to. Arrows step by 0.5. Click the number to type.", None),
+             "How fast the view turns left and right. At 1000 DPI,\n1.00 is 24 inches per turn and 10.00 is 4 inches.", None),
             ("VERTICAL SENSITIVITY:", "input.mouse_look_vertical", SENSITIVITIES,
-             "How fast the view turns up and down. 10.00 turns as\nfast as 1.00 used to. Arrows step by 0.5. Click the number to type.", None),
+             "How fast the view turns up and down. At 1000 DPI,\n1.00 is 24 inches per turn and 10.00 is 4 inches.", None),
             ("INVERT VERTICAL AXIS:", "input.invert_mouse", YES_NO,
              "Moving the mouse forward looks down.", None),
             ("AIM ASSIST:", "input.mouse_aim_assist", ON_OFF,
@@ -194,9 +194,9 @@ SCREENS = {
         "mouse_accept": True,
         "rows": [
             ("RIGHT STICK HORIZONTAL:", "profile.horizontal_sensitivity", LOOK_STEPS,
-             "How fast the view turns left and right. 3.00 is the\noriginal. Arrows step by 0.5. Click the number to type.", None),
+             "How fast the view turns left and right. The range is 1.00\nto 10.00, and 3.00 is the original. Arrows step by 0.5.", None),
             ("RIGHT STICK VERTICAL:", "profile.vertical_sensitivity", LOOK_STEPS,
-             "How fast the view turns up and down. 3.00 is the\noriginal. Arrows step by 0.5. Click the number to type.", None),
+             "How fast the view turns up and down. The range is 1.00\nto 10.00, and 3.00 is the original. Arrows step by 0.5.", None),
             ("INVERT LOOK:", "profile.invert_look", YES_NO, "Pushing the right stick up looks down.", None),
             ("INVERT FLIGHT:", "profile.flight_inversion", YES_NO,
              "Flying vehicles pitch as aircraft do: pushing up\nflies down.", None),
@@ -562,9 +562,9 @@ def _controls_screen() -> list:
     spin_y = 1 if metrics["spin_y"] is None else metrics["spin_y"]
     profile_rows = [
         ("horizontal_sensitivity", "RIGHT STICK HORIZONTAL:", "profile.horizontal_sensitivity",
-         LOOK_STEPS, "How fast the view turns left and right. 3.00 is the\\noriginal. Arrows step by 0.5. Click the number to type."),
+         LOOK_STEPS, "How fast the view turns left and right. The range is 1.00\\nto 10.00, and 3.00 is the original. Arrows step by 0.5."),
         ("vertical_sensitivity", "RIGHT STICK VERTICAL:", "profile.vertical_sensitivity",
-         LOOK_STEPS, "How fast the view turns up and down. 3.00 is the\\noriginal. Arrows step by 0.5. Click the number to type."),
+         LOOK_STEPS, "How fast the view turns up and down. The range is 1.00\\nto 10.00, and 3.00 is the original. Arrows step by 0.5."),
         ("invert_look", "INVERT LOOK:", "profile.invert_look", YES_NO,
          "Pushing the right stick up looks down."),
         ("flight_inversion", "INVERT FLIGHT:", "profile.flight_inversion", YES_NO,

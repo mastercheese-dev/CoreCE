@@ -19,6 +19,9 @@ int clips_replaying(void);
 /* -1 when this frame is not limited. otherwise how many ticks it may run.
 *exact is 1 when the clip wants that many, not merely no more than that. */
 long clips_tick_allowance(int *exact);
+/* 1 when this tick was recorded while the match clock waited, so playback
+keeps the clock on that same tick. */
+int clips_clock_held(void);
 void clips_on_actions(struct player_action *actions, int capacity);
 void clips_frame(void);
 void clips_after_director(void);

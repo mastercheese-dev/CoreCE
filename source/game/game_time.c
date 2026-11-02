@@ -558,7 +558,9 @@ void game_time_update(
 						game_tick();
 						profile_scope(game_time_render_interpolation_tick_section, render_interpolation_tick();)
 						game_time_globals->server_time++;
-						if (!hardcore_rules_opening_hold())
+						/* a clip's opening writes several samples on one tick while
+						the match clock waits. playback keeps that clock. */
+						if (!hardcore_rules_opening_hold() && !clips_clock_held())
 						{
 							game_time_globals->local_time++;
 							advanced++;

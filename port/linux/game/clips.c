@@ -144,6 +144,9 @@ static struct
 	int scrub_limit;
 	int scrub_exact;
 	long scrub_allow;
+	/* the sample on screen, and 1 when the next sample is still that tick */
+	long play_tick;
+	int hold_clock;
 	long scrub_target;
 	unsigned long scrub_mark;
 	unsigned long scrub_clock;
@@ -853,6 +856,8 @@ static void clips_reset_slots(void)
 	clips.spawned = 0;
 	clips.stopped = 0;
 	clips.ended = 0;
+	clips.play_tick = 0;
+	clips.hold_clock = 0;
 	clips.last_count = 0;
 	csmemset(clips.trail_x, 0, sizeof(clips.trail_x));
 	csmemset(clips.trail_y, 0, sizeof(clips.trail_y));
@@ -1271,6 +1276,7 @@ static void clips_idle_actions(struct player_action *actions, int capacity)
 static void clips_stop_mismatch(struct player_action *actions, int capacity)
 {
 	clips.stopped = 1;
+	clips.hold_clock = 0;
 	clips_copy(clips.message, sizeof(clips.message),
 		"This build no longer plays this clip through.");
 	game_time_set_speed(0.0f);
@@ -1282,8 +1288,11 @@ static short clips_stick_from_turn(float turn)
 {
 	float scaled;
 
-	/* a respawn snaps the facing. a stick cannot turn that far in one tick */
+	/* a respawn snaps the facing. a stick cannot turn that far in one tick.
+	a still view jitters by less than a pixel, and that stays centered */
 	if (turn > 0.45f || turn < -0.45f)
+		return 0;
+	if (turn > -0.004f && turn < 0.004f)
 		return 0;
 	scaled = turn / 0.06f * 32767.0f;
 	if (scaled > 32767.0f)
@@ -1347,6 +1356,42 @@ static void clips_remember_sample(struct clip_sample_disk const *sample)
 		clips.trail_n[slot]++;
 }
 
+/* several samples share a tick while the match clock is waiting. the last
+one of that tick is the sample the clock moves on from. */
+static int clips_same_tick_follows(long tick)
+{
+	long mark;
+	unsigned char type;
+	long next;
+	short count;
+	unsigned long hash;
+	int same;
+
+	same = 0;
+	if (!clips.file)
+		return 0;
+	mark = ftell(clips.file);
+	if (mark < 0)
+		return 0;
+	for (;;)
+	{
+		if (!clips_read(&type, 1))
+			break;
+		if (type == 2)
+		{
+			if (!clips_read(&next, sizeof(next)) || !clips_read(&hash, sizeof(hash)))
+				break;
+			continue;
+		}
+		if (type != 1 || !clips_read(&next, sizeof(next)) || !clips_read(&count, sizeof(count)))
+			break;
+		same = next == tick;
+		break;
+	}
+	fseek(clips.file, mark, SEEK_SET);
+	return same;
+}
+
 static void clips_playback_tick(struct player_action *actions, int capacity)
 {
 	unsigned char type;
@@ -1358,6 +1403,7 @@ static void clips_playback_tick(struct player_action *actions, int capacity)
 
 	if (clips.stopped || clips.ended)
 	{
+		clips.hold_clock = 0;
 		clips_idle_actions(actions, capacity);
 		game_time_set_speed(0.0f);
 		return;
@@ -1368,6 +1414,7 @@ static void clips_playback_tick(struct player_action *actions, int capacity)
 		if (!clips_read(&type, 1))
 		{
 			clips.ended = 1;
+			clips.hold_clock = 0;
 			game_time_set_speed(0.0f);
 			clips.seeking = 0;
 			clips_idle_actions(actions, capacity);
@@ -1378,6 +1425,7 @@ static void clips_playback_tick(struct player_action *actions, int capacity)
 			if (!clips_read(&tick, sizeof(tick)) || !clips_read(&hash, sizeof(hash)))
 			{
 				clips.ended = 1;
+				clips.hold_clock = 0;
 				game_time_set_speed(0.0f);
 				clips_idle_actions(actions, capacity);
 				return;
@@ -1395,10 +1443,13 @@ static void clips_playback_tick(struct player_action *actions, int capacity)
 	if (type != 1 || !clips_read(&tick, sizeof(tick)) || !clips_read(&count, sizeof(count)))
 	{
 		clips.ended = 1;
+		clips.hold_clock = 0;
 		game_time_set_speed(0.0f);
 		clips_idle_actions(actions, capacity);
 		return;
 	}
+	clips.play_tick = tick;
+	clips.hold_clock = 0;
 	if (count < 0 || count > CLIPS_PLAYERS)
 	{
 		clips_stop_mismatch(actions, capacity);
@@ -1414,6 +1465,7 @@ static void clips_playback_tick(struct player_action *actions, int capacity)
 		if (!clips_read(&sample, sizeof(sample)))
 		{
 			clips.ended = 1;
+			clips.hold_clock = 0;
 			game_time_set_speed(0.0f);
 			return;
 		}
@@ -1428,6 +1480,7 @@ static void clips_playback_tick(struct player_action *actions, int capacity)
 			continue;
 		actions[absolute] = sample.action;
 	}
+	clips.hold_clock = clips_same_tick_follows(tick);
 }
 
 void clips_on_actions(struct player_action *actions, int capacity)
@@ -1502,6 +1555,7 @@ void clips_map_ended(void)
 	clips.recording = 0;
 	clips.scrub_limit = 0;
 	clips.scrub_exact = 0;
+	clips.hold_clock = 0;
 	clips.replaying = clips.pending[0] ? 1 : 0;
 	clips.spawned = 0;
 	if (!clips.replaying)
@@ -1516,6 +1570,11 @@ void clips_map_ended(void)
 int clips_replaying(void)
 {
 	return clips.replaying;
+}
+
+int clips_clock_held(void)
+{
+	return clips.replaying && clips.hold_clock;
 }
 
 long clips_tick_allowance(int *exact)
@@ -1968,8 +2027,9 @@ static void clips_stick_box(short x, short y, real scale, short sx, short sy, in
 	short kx, ky;
 
 	clips_quad(x, y, (short)(x + box), (short)(y + box), 0xC0101828);
-	kx = (short)(x + box / 2 + (sx * reach) / 32767);
-	ky = (short)(y + box / 2 + ((invert_y ? -sy : sy) * reach) / 32767);
+	/* the dot's middle sits on the box middle when the stick is at rest */
+	kx = (short)(x + (box - stick) / 2 + (sx * reach) / 32767);
+	ky = (short)(y + (box - stick) / 2 + ((invert_y ? -sy : sy) * reach) / 32767);
 	if (kx < x)
 		kx = x;
 	if (ky < y)
@@ -2135,16 +2195,12 @@ void clips_draw(short local_player_index, union rectangle2d const *window)
 
 		font = hud_get_font_index();
 	}
-	tick = game_time_get();
+	/* the sample on screen, not the clock. the opening holds several
+	samples on one tick, and a scrub used to follow the landing tick */
+	tick = clips.play_tick;
 	if (tick < 0)
 		tick = 0;
 	shown = tick;
-	if (clips.scrub_dir < 0)
-		shown = clips.scrub_target;
-	else if (clips.seeking)
-		shown = clips.seek_tick;
-	if (shown < 0)
-		shown = 0;
 	total = clips.header.ticks;
 	if (total < shown)
 		total = shown;
@@ -2159,8 +2215,8 @@ void clips_draw(short local_player_index, union rectangle2d const *window)
 	if (clips.message[0])
 		snprintf(text, sizeof(text), "%s", clips.message);
 	else
-		snprintf(text, sizeof(text), "%ld:%02ld / %ld:%02ld   %s%s",
-			seconds / 60, seconds % 60, length / 60, length % 60, rate,
+		snprintf(text, sizeof(text), "%ld / %ld   %ld:%02ld / %ld:%02ld   %s%s",
+			shown, total, seconds / 60, seconds % 60, length / 60, length % 60, rate,
 			clips.ended ? "   END" : "");
 	clips_widen(line, 160, text);
 	clips_widen(keys_help, 160,
