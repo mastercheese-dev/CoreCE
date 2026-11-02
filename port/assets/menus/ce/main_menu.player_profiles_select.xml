@@ -13,7 +13,7 @@
 	</widget>
 	<widget name="main_menu/player_profiles_select/joystick_controls_label" type="text" controller="1" width="150" height="25" string_list="main_menu/player_profiles_select/profile_description_labels" string_index="2" font="ui\large_ui" color="#FF2896FF">
 	</widget>
-	<widget name="main_menu/player_profiles_select/player_profile_right_data" controller="1" width="150" height="155">
+	<widget name="main_menu/player_profiles_select/player_profile_right_data" controller="1" width="150" height="170">
 		<child widget="main_menu/player_profiles_select/empty_profile_slot_text"/>
 		<child widget="main_menu/player_profiles_select/current_level_label" y="89"/>
 		<child widget="main_menu/player_profiles_select/current_level" x="6" y="111"/>
@@ -22,12 +22,16 @@
 		<child widget="main_menu/player_profiles_select/joystick_controls_label"/>
 		<child widget="main_menu/player_profiles_select/joystick_controls" x="6" y="21"/>
 	</widget>
-	<widget name="main_menu/player_profiles_select/player_profile_right_item" controller="1" left="406" top="75" width="162" height="326" bitmap="bitmaps/spinner_list_3_wide_item_background">
+	<widget flags="nifty_fx" name="main_menu/player_profiles_select/player_profile_right_item" controller="1" left="406" top="75" width="162" height="326" bitmap="bitmaps/spinner_list_3_wide_item_background">
 		<child widget="main_menu/player_profiles_select/player_profile_right_name" x="415" y="83"/>
-		<child widget="main_menu/multiplayer_type_select/connected/4way_profile_select/qtr_screen_profile_color_pic" x="438" y="82"/>
-		<child widget="main_menu/player_profiles_select/player_profile_right_data" x="416" y="242"/>
+		<child widget="main_menu/multiplayer_type_select/connected/4way_profile_select/qtr_screen_profile_color_pic" x="445" y="82"/>
+		<child widget="main_menu/player_profiles_select/player_profile_right_data" x="416" y="212"/>
 	</widget>
-	<widget name="main_menu/player_profiles_select/player_profile_right_name" type="text" controller="1" width="147" height="22" font="ui\large_ui" color="#FF2896FF" align="center">
+	<widget name="main_menu/player_profiles_select/player_profile_clips_button" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="CLIPS" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
+		<on event="left_mouse" run="port clips open"/>
+		<on event="a" run="port clips open"/>
+	</widget>
+	<widget name="main_menu/player_profiles_select/player_profile_right_name" type="text" controller="1" width="147" height="20" font="ui\small_ui" color="#FF2896FF" align="center">
 	</widget>
 	<widget name="main_menu/player_profiles_select/skill_level" type="text" controller="1" width="150" height="25" string_list="main_menu/player_profiles_select/difficulty_names" font="ui\small_ui" color="#FF2896FF">
 	</widget>

@@ -81,6 +81,7 @@ their handlers open opens.
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "hardcore_rules.h"
+#include "clips.h"
 #include "map_share.h"
 #include "network_chat.h"
 #include "cache_file_formats.h"
@@ -1143,8 +1144,9 @@ static void profile_rows_apply(struct widget_instance *list)
 		if (height < 8)
 			continue;
 		/* the offset is added to the row's own top, so this is where it
-		is drawn, whatever offset the tags already gave it */
-		child->vertical_offset = (short)(78 + 33 * place - definition->bounds.y0);
+		is drawn, whatever offset the tags already gave it. 20 is the
+		row height, the same step as the network rows */
+		child->vertical_offset = (short)(78 + 20 * place - definition->bounds.y0);
 		place++;
 	}
 	if (list->focused_child && (!list->focused_child->visible || list->focused_child->disabled))
@@ -2816,6 +2818,15 @@ static boolean profile_list_lan_add(struct widget_instance *list)
 	return screen && screen->name && !strcmp(screen->name, "lan_add_player_screen");
 }
 
+/* the main menu opens the wrapper. a clip's return opens the screen itself */
+static int profile_manager_root(struct widget_instance *screen)
+{
+	if (!screen || !screen->name)
+		return FALSE;
+	return !strcmp(screen->name, "player_profile_manager") ||
+		!strcmp(screen->name, "player_profile_manager_screen");
+}
+
 /* "3wide player profile list update": the rows, and the profile chosen:
 its name, colour, current level, best difficulty and controls */
 static int mm_lobby_is_party(void);
@@ -2838,6 +2849,28 @@ static void profile_list_update(struct widget_instance *list)
 	lobby never shows it, even if that screen were opened */
 	if (!profile_list_lan_add(list) || matchmaking_game_port())
 		profile_list_bot_row = FALSE;
+	{
+		struct widget_instance *screen = screen_of(list);
+		long which;
+
+		if (profile_manager_root(screen) && clips_menu_take_restore(&which))
+		{
+			short i;
+
+			for (i = 0; i < profile_list.count; i++)
+			{
+				if (profile_list.indices[i] == which)
+				{
+					short rows = profile_list_rows();
+
+					profile_list.chosen = i;
+					profile_list.first = (short)(i + 1 > rows ? i + 1 - rows : 0);
+					focus_row(list, (short)(i - profile_list.first));
+					break;
+				}
+			}
+		}
+	}
 	item = list_scroll(list, &profile_list.first, profile_list_slots(), profile_list_rows());
 	if (item != NONE)
 		profile_list.chosen = item;
@@ -2927,6 +2960,16 @@ static void profile_list_update(struct widget_instance *list)
 		}
 	}
 	profile_name_show(description);
+	{
+		struct widget_instance *screen = screen_of(list);
+		int show = profile_manager_root(screen) &&
+			profile && !profile_list_is_duplicate(profile_list.chosen);
+
+		/* the button is a child of this screen, so a click's history is the
+		profile list. the card is shared with the lobby and is not */
+		visible_set(named(screen, "player_profile_clips_bar", 0), show ? TRUE : FALSE);
+		visible_set(named(screen, "player_profile_clips_button", 0), show ? TRUE : FALSE);
+	}
 }
 
 /* "profile manager select": the profile chosen made player 1's (and the
@@ -3804,7 +3847,7 @@ Xbox's networking, run by the engine's port entry points
 #define MAXIMUM_ADVERTISED_GAMES 9
 #define GAMETYPE_ROWS 10
 #define MAXIMUM_GAMETYPES 100
-#define BROWSER_ROWS 15
+#define BROWSER_ROWS 12
 #define LOBBY_ROWS 11
 #define TEXT_FIELD_LENGTH 128
 #define PLAYLIST_READ_ONLY_BIT 0x40000000UL
@@ -4975,10 +5018,10 @@ static void browser_focus(struct widget_instance *list, short chosen_row)
 	struct widget_instance *row;
 	short index;
 
-	/* (the rows' backgrounds, as Custom Edition's: the chosen game's
-	outlined in yellow, the focused one's in blue. The engine shows a list
-	item's focus only on a bitmap of two frames, and theirs has three:
-	normal, focused, selected) */
+	/* (the rows' backgrounds: the chosen game on the filled bar, a row
+	the pointer is over on the outline. The engine shows a list item's
+	focus only on a bitmap of two frames, and this one has three: normal,
+	under the pointer, chosen) */
 	for (row = list->child; row; row = row->next)
 	{
 		short row_index = browser_row_index(row);
@@ -5041,6 +5084,10 @@ static boolean browser_initialize(struct widget_instance *screen, struct event_r
 	}
 	visible_set(named(screen, "scroll_up_button", 0), FALSE);
 	visible_set(named(screen, "scroll_down_button", 0), FALSE);
+	visible_set(named(screen, "op_sort_header_dedicated", 0), FALSE);
+	visible_set(named(screen, "op_sort_header_classic", 0), FALSE);
+	visible_set(named(screen, "ticker_player_info_label", 0), FALSE);
+	visible_set(named(screen, "ticker_rules_info_label", 0), FALSE);
 	/* (the columns' sort arrows, both of each over its title: the list is
 	not sorted) */
 	for (index = 0; named(screen, "header_sort_arrows", index); index++)
@@ -10800,6 +10847,108 @@ static void mm_update(struct widget_instance *list)
 	mm_show(list);
 }
 
+/* ---------- CLIPS: one profile's recordings (port/linux/game/clips.c) */
+
+static int clips_row_index(struct widget_instance *widget)
+{
+	char const *name;
+	int row = 0;
+
+	if (!widget || !widget->name || strncmp(widget->name, "clip_row_", 9))
+		return -1;
+	for (name = widget->name + 9; *name >= '0' && *name <= '9'; name++)
+		row = row * 10 + (*name - '0');
+	return row;
+}
+
+/* "port clips open": the highlighted profile's clips */
+static boolean clips_open_screen(struct widget_instance *widget, boolean *widget_deleted)
+{
+	if (profile_list.picking || profile_list.chosen < 0 || profile_list.chosen >= profile_list.count ||
+		profile_list_is_duplicate(profile_list.chosen))
+		return TRUE;
+	clips_menu_set_profile(profile_list.indices[profile_list.chosen]);
+	menu_open_screen(widget, "pc\\main_menu\\clips\\clips_screen", widget_deleted);
+	return TRUE;
+}
+
+/* "port clips list" */
+static void clips_row_label(struct widget_instance *label, wchar_t const *text, short length)
+{
+	if (!label)
+		return;
+	label->parameters.text_box.string_list_index = HALO_CUSTOM_MAP_TEXT;
+	text_set_length(label, text, length);
+}
+
+static void clips_list_update(struct widget_instance *list)
+{
+	struct widget_instance *help = list ? list->parameters.list.extended_description : NULL;
+	struct widget_instance *focused = list ? list->focused_child : NULL;
+	int count;
+	int i;
+
+	count = clips_menu_count();
+	{
+		struct widget_instance *keep = named(list, "clips_keep", 0);
+		wchar_t keep_text[16];
+
+		usnprintf(keep_text, NUMBEROF(keep_text) - 1, L"KEEP %d", clips_menu_keep());
+		keep_text[NUMBEROF(keep_text) - 1] = 0;
+		clips_row_label(keep, keep_text, 16);
+	}
+	if (focused && focused->name && !strncmp(focused->name, "clip_row_", 9))
+		clips_menu_note_focus(clips_row_index(focused));
+	for (i = 0; i < 8; i++)
+	{
+		char name[16];
+		struct widget_instance *row;
+		wchar_t text[128];
+
+		snprintf(name, sizeof(name), "clip_row_%d", i);
+		row = named(list, name, 0);
+		if (!row)
+			continue;
+		text[0] = 0;
+		if (count > 0)
+			clips_menu_line(i, text, 128);
+		if (count == 0 && i == 0)
+			clips_row_label(row, L"This profile has no clips.", 64);
+		else if (text[0])
+			clips_row_label(row, text, 128);
+		visible_set(row, (count == 0 && i == 0) || text[0] ? TRUE : FALSE);
+		row->disabled = count == 0 ? TRUE : FALSE;
+	}
+	if (focused && focused->name && !strcmp(focused->name, "clips_keep"))
+		clips_row_label(help, L"Left and right set how many clips this profile keeps. Older clips past that are removed.", 160);
+	else if (count == 0)
+		clips_row_label(help, L"This profile has no clips.", 64);
+	else
+		clips_row_label(help, L"A plays the clip. DELETE removes it. KEEP sets how many clips stay.", 160);
+}
+
+/* "port clips play" */
+static boolean clips_play_row(struct widget_instance *widget, short controller)
+{
+	char map[128];
+	short difficulty = 0;
+	struct player_profile profile;
+	long index;
+
+	if (!clips_menu_play(clips_row_index(widget), map, (long)sizeof(map), &difficulty))
+		return FALSE;
+	index = clips_menu_profile();
+	if (player_profile_get(index, &profile))
+	{
+		player_ui_set_active_player_profile(0, index, &profile);
+		player_ui_remember_player1_profile(TRUE);
+	}
+	/* one window. a second local player would take a seat the clip recorded */
+	player_spawn_count = 1;
+	campaign_start(map, difficulty, controller);
+	return TRUE;
+}
+
 /* ---------- public code */
 
 boolean pc_menu_event_function_invoke(
@@ -10964,6 +11113,39 @@ boolean pc_menu_event_function_invoke(
 		else if (!strcmp(name, "port mm launch"))
 		{
 			return mm_launch(widget, event, widget_deleted);
+		}
+		else if (!strcmp(name, "port clips open"))
+		{
+			return clips_open_screen(widget, widget_deleted);
+		}
+		else if (!strcmp(name, "port clips play"))
+		{
+			return clips_play_row(widget, controller);
+		}
+		else if (!strcmp(name, "port clips delete"))
+		{
+			clips_menu_delete(-1);
+			return TRUE;
+		}
+		else if (!strcmp(name, "port clips page up"))
+		{
+			clips_menu_scroll(-8);
+			return TRUE;
+		}
+		else if (!strcmp(name, "port clips page down"))
+		{
+			clips_menu_scroll(8);
+			return TRUE;
+		}
+		else if (!strcmp(name, "port clips keep down"))
+		{
+			clips_menu_keep_adjust(-1);
+			return TRUE;
+		}
+		else if (!strcmp(name, "port clips keep up"))
+		{
+			clips_menu_keep_adjust(1);
+			return TRUE;
 		}
 		else if (!strcmp(name, "port hardcore start"))
 		{
@@ -11350,4 +11532,6 @@ void pc_menu_game_data_function_invoke(
 		hardcore_server_update(widget);
 	else if (!strcmp(name, "port mm update"))
 		mm_update(widget);
+	else if (!strcmp(name, "port clips list"))
+		clips_list_update(widget);
 }

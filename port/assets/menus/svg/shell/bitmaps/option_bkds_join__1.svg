@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="382" height="20" viewBox="0 0 382 20">
+  <!-- round left end at the row's own width, so the cap is not stretched -->
+  <path d="M6,0 H382 V20 H6 A6,6 0 0 1 0,14 V6 A6,6 0 0 1 6,0 Z" fill="#000e23"/>
+  <path d="M382,1 H6 A5,5 0 0 0 1,6 V14 A5,5 0 0 0 6,19 H382" fill="none" stroke="#2995ff" stroke-width="2"/>
+</svg>

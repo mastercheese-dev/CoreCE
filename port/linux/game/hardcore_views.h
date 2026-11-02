@@ -2,6 +2,7 @@
 #define HARDCORE_VIEWS_H
 
 struct observer_result;
+union real_vector3d;
 
 /* How many panes the one local player gets this frame: 1, or up to 4 when
 teammate views are on. */
@@ -60,5 +61,12 @@ boolean hardcore_views_listener(short slot, struct observer_result *camera);
 void hardcore_views_begin(short window_index);
 void hardcore_views_end(void);
 boolean hardcore_views_hides_unit(long object_index);
+
+/* The host moved this unit. A pane on it keeps the place it was drawn and
+glides, the same way the local player's view does. */
+void hardcore_views_correct_unit(long unit_index, union real_vector3d const *offset);
+
+/* One tick of that glide. */
+void hardcore_views_corrections_tick(void);
 
 #endif

@@ -384,6 +384,7 @@ symbols in this file:
 #include "network_chat.h" /* port: port/linux/game/network_chat.c */
 #include "map_share.h" /* port: port/linux/game/map_share.c */
 #include "network_aim_assist.h" /* port: port/linux/game/network_aim_assist.c */
+#include "clips.h" /* port: play a clip with its own seed, and drive its viewer */
 #include "profile_sections.h" /* port: port/linux/include/profile_sections.h */
 #ifdef HALO_PROFILE
 #include "profile_trace.h" /* port: port/linux/src/profile_trace.c */
@@ -1585,7 +1586,8 @@ static void main_new_map(
 	main_globals.load_core = main_globals.load_core_at_startup;
 	main_globals.load_core_at_startup = FALSE;
 
-	if (main_globals.allow_persistent_storage)
+	/* a clip starts the level fresh. a saved campaign would replace the tape */
+	if (main_globals.allow_persistent_storage && !clips_replaying())
 		game_state_try_and_load_from_persistent_storage();
 	ui_widgets_disable_pause_game(30);
 
@@ -1642,16 +1644,23 @@ static void main_change_map_name(
 				NUMBEROF(options.map_name) - 1);
 			options.map_name[NUMBEROF(options.map_name) - 1] = 0;
 			options.difficulty = global_difficulty_level;
+			clips_fill_options(options.map_name, sizeof(options.map_name),
+				&options.difficulty, &options.random_seed);
 			game_dispose_from_old_map();
 			game_precache_new_map(options.map_name, TRUE);
 			game_unload();
 			main_new_map(&options);
 
-			for (local_player_index = 0;
-				local_player_index < player_spawn_count;
-				local_player_index++)
+			/* a clip plays the level it recorded. it does not become this
+			profile's last campaign level */
+			if (!clips_replaying())
 			{
-				player_profile_save_last_level_played(local_player_index);
+				for (local_player_index = 0;
+					local_player_index < player_spawn_count;
+					local_player_index++)
+				{
+					player_profile_save_last_level_played(local_player_index);
+				}
 			}
 		}
 
@@ -2500,6 +2509,9 @@ static void main_won_map_private(
 	}
 	main_globals.want_to_be_at_main_menu = TRUE;
 	main_globals.won_map = FALSE;
+	/* finishing a clip is not finishing the mission */
+	if (clips_replaying())
+		return;
 	level = main_get_solo_level_from_name(main_globals.soloplayer_map_name);
 	/* port: a level not in the campaign (a Custom Edition map's) has no next
 	one, rather than the first */
@@ -3642,6 +3654,8 @@ void main_loop(
 		profile_scope_enter(main_input_section)
 		input_frame_begin();
 		input_update();
+		/* the viewer's keys, before they become the player's */
+		clips_frame();
 		input_abstraction_update();
 		profile_scope_exit(main_input_section)
 		profile_scope_enter(main_platform_events_section)
@@ -3758,6 +3772,7 @@ void main_loop(
 					profile_scope_enter(main_non_deterministic_update_section)
 					collision_log_continue_period(1);
 					director_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
+					clips_after_director();
 					observer_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
 					collision_log_end_period();
 					game_engine_update_non_deterministic((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);

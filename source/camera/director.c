@@ -131,6 +131,7 @@ symbols in this file:
 
 #include "editor/editor_stubs.h"
 #include "game/players.h"
+#include "clips.h" /* port: a clip's free camera */
 #include "input/input.h"
 #include "main/console.h"
 #include "saved games/game_state.h"
@@ -424,6 +425,67 @@ static void director_set_camera(
 		director->camera_change_pause = 1.f;
 
 	return;
+}
+
+void director_clips_hold(
+	boolean hold)
+{
+	*director_camera_scripted = hold;
+}
+
+void director_clips_camera(
+	short local_player_index,
+	short mode,
+	long unit_index)
+{
+	struct director *director = director_get(local_player_index);
+
+	if (unit_index != NONE)
+	{
+		struct dead_camera *dead = (struct dead_camera *)director->camera_data;
+
+		if (director->camera_proc == (director_camera_update_proc)dead_camera_update &&
+			dead->unit_index == unit_index)
+			return;
+		dead_camera_new(dead, local_player_index, unit_index);
+		director_set_camera(
+			local_player_index,
+			(director_camera_update_proc)dead_camera_update,
+			FALSE);
+		return;
+	}
+	if (mode == 1)
+	{
+		if (director->camera_proc == (director_camera_update_proc)following_camera_update)
+			return;
+		following_camera_new((struct following_camera *)director->camera_data);
+		director_set_camera(
+			local_player_index,
+			(director_camera_update_proc)following_camera_update,
+			FALSE);
+		return;
+	}
+	if (mode == 2)
+	{
+		if (director->camera_proc == (director_camera_update_proc)flying_camera_update)
+			return;
+		flying_camera_new_from_point_and_vector(
+			(struct flying_camera *)director->camera_data,
+			&director->command.focus_position,
+			&director->command.forward);
+		director_set_camera(
+			local_player_index,
+			(director_camera_update_proc)flying_camera_update,
+			FALSE);
+		return;
+	}
+	if (director->camera_proc == (director_camera_update_proc)first_person_camera_update)
+		return;
+	first_person_camera_new((struct first_person_camera *)director->camera_data);
+	director_set_camera(
+		local_player_index,
+		(director_camera_update_proc)first_person_camera_update,
+		FALSE);
 }
 
 void director_load_camera(
@@ -834,22 +896,44 @@ static boolean director_update_controls(
 			director->camera_proc !=
 				(director_camera_update_proc)following_camera_update)
 		{
+			/* a clip's free camera flies with the sticks and the mouse.
+			the mouse is not a stick on this port, and the triggers change
+			the clip's speed */
+			boolean clips_fly = clips_replaying() &&
+				director->camera_proc == (director_camera_update_proc)flying_camera_update;
+			short mouse_x = 0;
+			short mouse_y = 0;
+
 			if (gamepad->buttons[_gamepad_binary_button_right_thumb] == 1)
 				director->debug_controls = !director->debug_controls;
-			if (director->debug_controls)
+			if (director->debug_controls || clips_fly)
 			{
 				control_flags = 0;
-				SET_FLAG(
-					control_flags,
-					_camera_control_up_bit,
-					gamepad->buttons[_gamepad_analog_button_right_trigger] != 0);
-				SET_FLAG(
-					control_flags,
-					_camera_control_down_bit,
-					gamepad->buttons[_gamepad_analog_button_left_trigger] != 0);
-				controls->wheel_delta =
-					(real)((gamepad->buttons[_gamepad_binary_button_dpad_up] > 1) -
-						(gamepad->buttons[_gamepad_binary_button_dpad_down] > 1)) * 0.4f;
+				if (clips_fly)
+				{
+					extern void halo_linux_mouse_sample(short *x, short *y);
+
+					SET_FLAG(control_flags, _camera_control_up_bit,
+						gamepad->buttons[_gamepad_binary_button_dpad_up] != 0);
+					SET_FLAG(control_flags, _camera_control_down_bit,
+						gamepad->buttons[_gamepad_binary_button_dpad_down] != 0);
+					controls->wheel_delta = 0;
+					halo_linux_mouse_sample(&mouse_x, &mouse_y);
+				}
+				else
+				{
+					SET_FLAG(
+						control_flags,
+						_camera_control_up_bit,
+						gamepad->buttons[_gamepad_analog_button_right_trigger] != 0);
+					SET_FLAG(
+						control_flags,
+						_camera_control_down_bit,
+						gamepad->buttons[_gamepad_analog_button_left_trigger] != 0);
+					controls->wheel_delta =
+						(real)((gamepad->buttons[_gamepad_binary_button_dpad_up] > 1) -
+							(gamepad->buttons[_gamepad_binary_button_dpad_down] > 1)) * 0.4f;
+				}
 				director_process_variables(
 					local_player_index,
 					control_flags,
@@ -860,6 +944,8 @@ static boolean director_update_controls(
 				controls->facing_delta.pitch =
 					(real)gamepad->sticks[_gamepad_stick_right].y *
 						director_globals.dtime * 0.0000196349538f;
+				controls->facing_delta.yaw += (real)mouse_x * -0.0031415927f;
+				controls->facing_delta.pitch += (real)mouse_y * -0.0031415927f;
 				controls->position_delta.i =
 					(real)gamepad->sticks[_gamepad_stick_left].y *
 						director->debug_input_scale * director_globals.dtime * 0.00005f;

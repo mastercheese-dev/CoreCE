@@ -28,6 +28,8 @@ NONE when that seat is not a bot */
 long bot_controller_skill(
 	short machine_index,
 	short controller_index);
+/* a bot on the impossible skill, including one named Bot with no seat */
+boolean bot_player_is_impossible(long player_index);
 /* kept for the pickup check. This build's bots take every gun, including a needler. */
 boolean bot_refuses_weapon(
 	long unit_index,

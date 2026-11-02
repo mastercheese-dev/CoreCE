@@ -7,6 +7,8 @@
 #include <SDL3/SDL.h>
 #include "host_menu.h"
 #include "xiso.h"
+extern void host_metal_forget_warmup(void);
+extern void halo_update_discard_shader_caches(const char *save_root);
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,6 +45,7 @@
 @property(nonatomic, copy) NSString *availableVersion;
 @property(nonatomic, copy) NSString *launchDataPath;
 - (void)refreshSettings;
+- (void)markResourceCachesForUpdate;
 - (void)refreshFullscreen;
 - (void)updateSystemChrome;
 - (BOOL)chooseFolder;
@@ -926,6 +929,7 @@ declining leaves it for the next time the app opens */
             userInfo:@{NSLocalizedDescriptionKey: @"The update could not be installed."}]);
         return;
     }
+    [self markResourceCachesForUpdate];
     if (self.gameRunning) {
         self.quitting = YES;
         [self closeSettings:nil];
@@ -933,6 +937,23 @@ declining leaves it for the next time the app opens */
         return;
     }
     exit(EXIT_SUCCESS);
+}
+- (void)markResourceCachesForUpdate {
+    NSString *support = self.preferences.supportDirectory.path;
+    NSString *folder, *marker;
+    if (!support.length) return;
+    /* The guest deletes z/cacheNNN.map when it sees this file. Saves stay.
+       While a match is drawing, only the marker is written. The next launch
+       drops the shader files after this process has exited. */
+    folder = [support stringByAppendingPathComponent:@"z"];
+    marker = [folder stringByAppendingPathComponent:@"resource-cache-clear"];
+    [NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
+    if (![@"1" writeToFile:marker atomically:YES encoding:NSUTF8StringEncoding error:nil])
+        return;
+    if (self.gameRunning)
+        return;
+    host_metal_forget_warmup();
+    halo_update_discard_shader_caches(support.UTF8String);
 }
 - (BOOL)supportsGentleScheduledUpdateReminders { return YES; }
 - (BOOL)standardUserDriverShouldHandleShowingScheduledUpdate:(SUAppcastItem *)update andInImmediateFocus:(BOOL)focus {
@@ -946,7 +967,10 @@ declining leaves it for the next time the app opens */
 }
 - (BOOL)updater:(SPUUpdater *)updater shouldPostponeRelaunchForUpdate:(SUAppcastItem *)update untilInvokingBlock:(void (^)(void))install {
     (void)updater; (void)update;
-    if (!self.gameRunning) return NO;
+    if (!self.gameRunning) {
+        [self markResourceCachesForUpdate];
+        return NO;
+    }
     self.pendingInstall = install;
     self.status.button.toolTip = @"CoreCE update ready — quit the game to install";
     return YES;
@@ -1095,6 +1119,7 @@ void host_menu_finish_game(int exit_code) {
         [menu updateSystemChrome];
         if (!exit_code && menu.pendingInstall) {
             menu.waitingForUpdate = YES;
+            [menu markResourceCachesForUpdate];
             menu.pendingInstall();
             menu.pendingInstall = nil;
             /* Sparkle gets a normal Cocoa termination after the guest has saved

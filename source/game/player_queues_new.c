@@ -1106,9 +1106,12 @@ static void update_server_take_local_actions(
 350, 280, 210, 150 ms, turned into 30 Hz ticks as (ms * 30) / 1000 plus a
 roll of 0, 1, or 2. Impossible continues that same step so the lobby's
 fifth skill still climbs. */
-/* radians of aim offset, and the extra cone that still counts as aimed. */
-static real const bot_aim_error[BOT_SKILL_COUNT] = { 0.16f, 0.09f, 0.055f, 0.03f, 0.017f };
-static real const bot_aim_slack[BOT_SKILL_COUNT] = { 0.10f, 0.07f, 0.05f, 0.035f, 0.024f };
+/* radians of aim offset, and the extra cone that still counts as aimed.
+Each skill is one step tighter than the last set, so more of the shots
+land. Impossible combat does not use these: the aim is the head, and the
+shot waits until it is on the head. */
+static real const bot_aim_error[BOT_SKILL_COUNT] = { 0.09f, 0.055f, 0.03f, 0.017f, 0.010f };
+static real const bot_aim_slack[BOT_SKILL_COUNT] = { 0.07f, 0.05f, 0.035f, 0.024f, 0.015f };
 static long const bot_reaction_ms[BOT_SKILL_COUNT] = { 350, 280, 210, 150, 90 };
 /* the player's look sensitivity for that difficulty: easy 3, normal 4,
 heroic 5, legendary 6, impossible 10. The beta writes facing straight from
@@ -1118,6 +1121,9 @@ static long const bot_look_sensitivity[BOT_SKILL_COUNT] = { 3, 4, 5, 6, 10 };
 static long const bot_grenade_chance[BOT_SKILL_COUNT] = { 2, 4, 6, 8, 10 };
 /* rolls out of 100 while a strafe is underway. The beta's four are 0, 2, 4, 6. */
 static long const bot_jump_chance[BOT_SKILL_COUNT] = { 0, 2, 4, 6, 8 };
+/* easy through legendary: how far the aim climbs from the chest to the head.
+Legendary is on the head. Impossible has its own head shot. */
+static real const bot_head_aim[BOT_SKILL_IMPOSSIBLE] = { 0.25f, 0.50f, 0.75f, 1.0f };
 
 /* name, score, style (0 single, 1 automatic, 2 explosive), near, far.
 plasma pistol is listed before pistol so the longer name wins. */
@@ -1236,6 +1242,8 @@ struct bot_state
 	long vault_ticks;
 	short vault_run;
 	real vault_yaw;
+	/* the floor the pit jump left. A landing above it is out. */
+	real vault_floor;
 	/* the source pad of a teleporter that comes out closer to the goal */
 	boolean pad_valid;
 	real_point3d pad_point;
@@ -1417,6 +1425,33 @@ long bot_controller_skill(short machine_index, short controller_index)
 	return seat ? seat->skill : NONE;
 }
 
+/* a seated bot uses that seat's skill. A Bot with no seat uses the
+configured skill, the same way the think loop does. */
+boolean bot_player_is_impossible(long player_index)
+{
+	struct player_datum *player;
+	long skill;
+
+	player = player_try_and_get(player_index);
+	if (!player || !network_player_is_valid(&player->network_player_data))
+		return FALSE;
+	if (!bot_controller_is_bot(player->network_player_data.machine_index,
+			player->network_player_data.controller_index) &&
+		ustrncmp(player->name, L"Bot", 3) != 0)
+		return FALSE;
+	skill = bot_controller_skill(player->network_player_data.machine_index,
+		player->network_player_data.controller_index);
+	if (skill == NONE)
+	{
+		skill = config_integer("network.bot_skill");
+		if (skill < 0)
+			skill = 0;
+		if (skill > BOT_SKILL_IMPOSSIBLE)
+			skill = BOT_SKILL_IMPOSSIBLE;
+	}
+	return skill == BOT_SKILL_IMPOSSIBLE;
+}
+
 /* structure and the objects that block sight. A biped is not one of them,
 so the ray can end on the player it is aimed at */
 static boolean bot_can_see(real_point3d const *from, real_point3d const *to, long ignore_object_index)
@@ -1445,6 +1480,19 @@ static boolean bot_combat_visible(real_point3d const *eye, long ignore_object_in
 		return TRUE;
 	unit_get_camera_position(target_unit_index, &head);
 	return bot_can_see(eye, &head, ignore_object_index);
+}
+
+/* camouflage. A clear line still counts through a normal fight. Past this,
+easy through legendary miss a player who has it on. Impossible does not. */
+static real const bot_camo_sight = 18.0f;
+
+static boolean bot_camo_hides(long skill, struct player_datum *target, real separation)
+{
+	if (skill < 0 || skill >= BOT_SKILL_IMPOSSIBLE)
+		return FALSE;
+	if (!target || target->powerup_durations[_player_powerup_active_camouflage] <= 0)
+		return FALSE;
+	return separation > bot_camo_sight;
 }
 
 /* the line the gun actually fires. A clear head past a lintel is a look,
@@ -1582,8 +1630,9 @@ static boolean bot_enemy_floor(long unit_index, real_point3d *goal, long *surfac
 	return TRUE;
 }
 
-/* Temporary. Off while we check whether knowing a body through a wall
-is the freeze. Set TRUE to track by hearing and to hunt a hidden position. */
+/* Off. Turning this on makes every skill treat a heard body as the
+fight, which is the look through the wall. Impossible hunts from the
+live positions instead, and only aims when the shot is open. */
 static boolean const bot_know_hidden_enemies = FALSE;
 
 /* H1PB within_hearing: 8 on the ground, 2.5 up or down. */
@@ -1808,12 +1857,14 @@ static boolean bot_side_clear(struct unit_datum *unit, real_point3d const *origi
 	return bot_can_see(&from, &to, unit_index);
 }
 
-/* cone is atan(0.30 / range) plus the skill slack, widened by 1.5 while the trigger is down */
+/* cone is atan(0.30 / range) plus the skill slack, widened by 1.5 while the trigger is down.
+Impossible holds fire until the aim is inside the head, and does not widen that. */
 static boolean bot_on_target(real_point3d const *eye, real_point3d const *target,
 	real_vector3d const *aim, long skill, boolean widen)
 {
 	real_vector3d delta;
 	real range;
+	real radius;
 	real cone;
 
 	vector_from_points3d(eye, target, &delta);
@@ -1822,7 +1873,17 @@ static boolean bot_on_target(real_point3d const *eye, real_point3d const *target
 		return TRUE;
 	if (range < 0.5f)
 		range = 0.5f;
-	cone = arctangent(0.30f, range) + bot_aim_slack[skill];
+	radius = 0.30f;
+	if (skill == BOT_SKILL_IMPOSSIBLE)
+	{
+		/* a few inches around the head marker, so the shot is still
+		on the head when the trigger goes down */
+		radius = 0.025f;
+		widen = FALSE;
+	}
+	cone = arctangent(radius, range);
+	if (skill != BOT_SKILL_IMPOSSIBLE)
+		cone += bot_aim_slack[skill];
 	if (widen)
 		cone *= 1.5f;
 	return dot_product3d(&delta, aim) >= cosine(cone);
@@ -4371,6 +4432,365 @@ static void bot_chillout_steer(struct bot_state *state, long unit_index,
 		action->control_flags |= FLAG(_unit_control_jump_bit);
 }
 
+/* Hang 'em High. The center pit is the only crouch jump. A crate or a
+wall somewhere else is not one, so a lip in front is not a reason to jump. */
+static boolean bot_playing_hangemhigh(void)
+{
+	char const *name;
+
+	if (global_scenario_index == NONE)
+		return FALSE;
+	name = tag_get_name(global_scenario_index);
+	return name && strstr(name, "hangemhigh");
+}
+
+/* inside the middle of the map, where the pit is. A base wall is outside. */
+static boolean bot_hangem_center(real_point3d const *feet)
+{
+	struct structure_bsp *bsp;
+	real x0;
+	real x1;
+	real y0;
+	real y1;
+	real cx;
+	real cy;
+	real hx;
+	real hy;
+
+	bsp = global_structure_bsp_get();
+	if (!bsp)
+		return FALSE;
+	x0 = bsp->world_bounds.x0;
+	x1 = bsp->world_bounds.x1;
+	y0 = bsp->world_bounds.y0;
+	y1 = bsp->world_bounds.y1;
+	if (x0 > x1)
+	{
+		real swap = x0;
+
+		x0 = x1;
+		x1 = swap;
+	}
+	if (y0 > y1)
+	{
+		real swap = y0;
+
+		y0 = y1;
+		y1 = swap;
+	}
+	cx = (x0 + x1) * 0.5f;
+	cy = (y0 + y1) * 0.5f;
+	hx = (x1 - x0) * 0.40f;
+	hy = (y1 - y0) * 0.40f;
+	if (hx < 4.0f)
+		hx = 4.0f;
+	if (hy < 4.0f)
+		hy = 4.0f;
+	return feet->x > cx - hx && feet->x < cx + hx &&
+		feet->y > cy - hy && feet->y < cy + hy;
+}
+
+/* the floor around them is lower than the deck past a wall. The main
+floor has no higher deck beside it, so this stays quiet up there. */
+static boolean bot_in_pit(real_point3d const *feet)
+{
+	static real const reach[3] = { 2.4f, 4.2f, 6.5f };
+	long lows;
+	long highs;
+	long dir;
+
+	lows = 0;
+	highs = 0;
+	for (dir = 0; dir < 8; dir++)
+	{
+		real yaw;
+		long step;
+
+		yaw = (real)dir * (_pi * 0.25f);
+		for (step = 0; step < 3; step++)
+		{
+			real ground_z;
+
+			if (!bot_probe_floor(
+					feet->x + cosine(yaw) * reach[step],
+					feet->y + sine(yaw) * reach[step],
+					feet->z, 1.6f, &ground_z))
+				continue;
+			if (ground_z > feet->z + 0.50f)
+				highs++;
+			else if (ground_z > feet->z - 0.40f && step == 0)
+				lows++;
+		}
+	}
+	return lows >= 1 && highs >= 1;
+}
+
+/* the far side of the pit: another lip, not a tower and not open ground. */
+static boolean bot_pit_far_lip(real_point3d const *feet, real yaw, long unit_index)
+{
+	real mantle;
+	real dist;
+	real face;
+
+	mantle = bot_mantle_reach(unit_index);
+	face = -1.0f;
+	for (dist = 1.40f; dist <= 18.0f; dist += 0.50f)
+	{
+		if (!bot_ray_clear_z(feet, yaw, dist, 0.45f, unit_index))
+		{
+			face = dist;
+			break;
+		}
+	}
+	if (face < 0.0f)
+		return FALSE;
+	if (bot_ray_clear_z(feet, yaw, face, 0.62f, unit_index))
+		return FALSE;
+	if (!bot_ray_clear_z(feet, yaw, face, mantle, unit_index) &&
+		!bot_ray_clear_z(feet, yaw, face, 1.05f, unit_index))
+		return FALSE;
+	return TRUE;
+}
+
+/* the lip keeps going along the wall. A crate ends. along is left of yaw. */
+static boolean bot_pit_wall_continues(real_point3d const *feet, real yaw, real face,
+	long unit_index, real along)
+{
+	real_point3d shifted;
+	real side_yaw;
+	real side_face;
+	real ground_z;
+
+	side_yaw = yaw + _pi * 0.5f;
+	shifted.x = feet->x + cosine(side_yaw) * along;
+	shifted.y = feet->y + sine(side_yaw) * along;
+	shifted.z = feet->z;
+	if (!bot_probe_floor(shifted.x, shifted.y, feet->z, 0.80f, &ground_z))
+		return FALSE;
+	if (ground_z < feet->z - 0.45f || ground_z > feet->z + 0.35f)
+		return FALSE;
+	if (!bot_ledge(&shifted, yaw, 2.60f, unit_index, &side_face))
+		return FALSE;
+	if (side_face > face + 0.75f || face > side_face + 0.75f)
+		return FALSE;
+	return TRUE;
+}
+
+/* the heading that meets the wall square. The shortest face is the normal. */
+static real bot_pit_square_yaw(real_point3d const *feet, real yaw, long unit_index, real *face_out)
+{
+	static real const nudge[] = { -0.50f, -0.32f, -0.16f, 0.16f, 0.32f, 0.50f };
+	real best_yaw;
+	real best_face;
+	long index;
+
+	best_yaw = yaw;
+	best_face = *face_out;
+	for (index = 0; index < (long)NUMBEROF(nudge); index++)
+	{
+		real try_yaw;
+		real try_face;
+
+		try_yaw = yaw + nudge[index];
+		if (!bot_ledge(feet, try_yaw, 2.60f, unit_index, &try_face))
+			continue;
+		if (try_face < best_face)
+		{
+			best_face = try_face;
+			best_yaw = try_yaw;
+		}
+	}
+	*face_out = best_face;
+	return best_yaw;
+}
+
+/* the near pit wall. It has to be long, and the other side of the pit
+has to be a lip too. One object in front fails that. */
+static boolean bot_find_pit_wall(real_point3d const *feet, long unit_index, real *yaw_out, real *face_out)
+{
+	real best_yaw;
+	real best_face;
+	long dir;
+	boolean found;
+
+	best_yaw = 0.0f;
+	best_face = 1.0e9f;
+	found = FALSE;
+	for (dir = 0; dir < 16; dir++)
+	{
+		real yaw;
+		real face;
+
+		yaw = (real)dir * (_pi * 2.0f / 16.0f);
+		if (!bot_ledge(feet, yaw, 2.60f, unit_index, &face))
+			continue;
+		if (!bot_pit_far_lip(feet, yaw + _pi, unit_index))
+			continue;
+		if (face < best_face)
+		{
+			best_face = face;
+			best_yaw = yaw;
+			found = TRUE;
+		}
+	}
+	if (!found)
+		return FALSE;
+	best_yaw = bot_pit_square_yaw(feet, best_yaw, unit_index, &best_face);
+	if (!bot_pit_wall_continues(feet, best_yaw, best_face, unit_index, 1.50f) &&
+		!bot_pit_wall_continues(feet, best_yaw, best_face, unit_index, -1.50f))
+		return FALSE;
+	*yaw_out = best_yaw;
+	*face_out = best_face;
+	return TRUE;
+}
+
+static void bot_hangem_face_wall(struct bot_state *state, struct player_datum *player,
+	real_point3d const *feet, real yaw, struct player_action *action)
+{
+	real_point3d eye;
+	real_point3d look;
+
+	state->facing_yaw = yaw;
+	state->facing_pitch = 0.0f;
+	eye = *feet;
+	eye.z += 0.62f;
+	look.x = eye.x + cosine(yaw);
+	look.y = eye.y + sine(yaw);
+	look.z = eye.z;
+	bot_face(player, action, &eye, &look, 0.0f, 0.0f, NULL);
+}
+
+/* line up square on the pit wall, jump, and crouch at the top of the
+jump while the stick stays forward. That is the way out of the pit. */
+static void bot_hangem_steer(struct bot_state *state, struct player_datum *player,
+	long unit_index, real_point3d const *feet, struct player_action *action)
+{
+	struct unit_datum *unit;
+	struct biped_datum *biped;
+	boolean airborne;
+	real body;
+	real wall;
+	real face;
+	real rel;
+	real slide;
+
+	wall = 0.0f;
+	face = 0.0f;
+
+	if (!bot_playing_hangemhigh())
+	{
+		state->vault = 0;
+		return;
+	}
+	unit = unit_try_and_get(unit_index);
+	biped = biped_try_and_get(unit_index);
+	airborne = biped && TEST_FLAG(biped->biped.flags, _biped_airborne_bit);
+	if (state->vault == 2)
+	{
+		if (airborne)
+			state->vault_air = TRUE;
+		bot_hangem_face_wall(state, player, feet, state->vault_yaw, action);
+		action->throttle.i = 1.0f;
+		action->throttle.j = 0.0f;
+		if (!state->vault_air && state->vault_ticks < 4)
+			action->control_flags |= FLAG(_unit_control_jump_bit);
+		if (airborne && biped->object.translational_velocity.k <= 0.02f)
+			action->control_flags |= FLAG(_unit_control_crouch_modifier_bit);
+		state->vault_ticks++;
+		if (state->vault_air && !airborne)
+		{
+			if (feet->z > state->vault_floor + 0.40f)
+				state->vault = 0;
+			else
+			{
+				state->vault = 1;
+				state->vault_air = FALSE;
+				state->vault_ticks = 0;
+			}
+		}
+		else if (state->vault_ticks > 45 && !airborne)
+		{
+			state->vault = 1;
+			state->vault_air = FALSE;
+			state->vault_ticks = 0;
+		}
+		return;
+	}
+	if (!bot_hangem_center(feet) || !bot_in_pit(feet))
+	{
+		state->vault = 0;
+		return;
+	}
+	if (state->stuck_ticks < 45 && state->target_visible && state->last_seen_valid)
+	{
+		real dx;
+		real dy;
+		real dz;
+
+		dx = state->last_seen.x - feet->x;
+		dy = state->last_seen.y - feet->y;
+		dz = state->last_seen.z - feet->z;
+		if (dz < 0.45f && dz > -0.45f && dx * dx + dy * dy < 12.0f * 12.0f)
+		{
+			state->vault = 0;
+			return;
+		}
+	}
+	if (state->vault != 1)
+	{
+		if (state->vault_run > 0)
+		{
+			state->vault_run--;
+			return;
+		}
+	}
+	if (state->vault == 1 && state->vault_ticks < 50 &&
+		bot_ledge(feet, state->vault_yaw, 2.60f, unit_index, &face) &&
+		bot_pit_far_lip(feet, state->vault_yaw + _pi, unit_index))
+		wall = state->vault_yaw;
+	else if (!bot_find_pit_wall(feet, unit_index, &wall, &face))
+	{
+		state->vault = 0;
+		state->vault_run = 8;
+		return;
+	}
+	else
+	{
+		state->vault = 1;
+		state->vault_ticks = 0;
+	}
+	wall = bot_pit_square_yaw(feet, wall, unit_index, &face);
+	state->vault_yaw = wall;
+	state->vault_ticks++;
+	bot_hangem_face_wall(state, player, feet, wall, action);
+	slide = 0.0f;
+	if (!bot_pit_wall_continues(feet, wall, face, unit_index, 0.80f))
+		slide = 0.70f;
+	else if (!bot_pit_wall_continues(feet, wall, face, unit_index, -0.80f))
+		slide = -0.70f;
+	body = unit ? arctangent(unit->object.forward.j, unit->object.forward.i) : wall;
+	rel = bot_angle_delta(body, wall);
+	if (cosine(rel) < 0.96f)
+	{
+		action->throttle.i = 0.0f;
+		action->throttle.j = 0.0f;
+		return;
+	}
+	action->throttle.i = 1.0f;
+	action->throttle.j = slide;
+	action->control_flags &= ~FLAG(_unit_control_jump_bit);
+	if (slide != 0.0f || airborne)
+		return;
+	if (face > 1.05f)
+		return;
+	action->control_flags |= FLAG(_unit_control_jump_bit);
+	state->vault = 2;
+	state->vault_air = FALSE;
+	state->vault_ticks = 0;
+	state->vault_floor = feet->z;
+	state->vault_yaw = wall;
+}
+
 /* side >= 0 is the left shoulder. The ramp is still under the center
 and gone beside it. That is the edge, even when the fall would be short. */
 static boolean bot_ramp_ledge(real_point3d const *feet, real yaw, real side)
@@ -6880,6 +7300,30 @@ static void bot_fight_goal(struct bot_state *state, real_point3d const *feet,
 	goal->z = feet->z;
 }
 
+/* the ground under that body, so the walk is a path and not a line
+through the wall. A different floor takes the stairs. The look stays
+on the path. */
+static void bot_hunt_enemy_goal(struct bot_state *state, real_point3d const *feet,
+	real_point3d const *enemy, long enemy_unit, real_point3d *goal)
+{
+	real_point3d floor_point;
+	long surface;
+
+	floor_point = *enemy;
+	surface = NONE;
+	if (enemy_unit != NONE && bot_enemy_floor(enemy_unit, &floor_point, &surface))
+	{
+		*goal = floor_point;
+		if (bot_different_floor(feet, enemy))
+		{
+			state->route_floor = TRUE;
+			state->route_surface = surface;
+		}
+	}
+	else
+		*goal = *enemy;
+}
+
 /* the closest living enemy, seen or not. With nobody to fight and no
 pickup to fetch, every skill walks toward a shot. A teammate is not one. */
 static boolean bot_nearest_enemy(long self_index, long team, boolean teams,
@@ -7095,6 +7539,21 @@ static boolean bot_called_enemy(long self_index, long team, boolean teams,
 			eye.z += 0.62f;
 			if (!bot_can_see(&mate_eye, &eye, other->unit_index))
 				continue;
+			{
+				long mate_skill = bot_controller_skill(other->network_player_data.machine_index,
+					other->network_player_data.controller_index);
+
+				if (mate_skill == NONE && ustrncmp(other->name, L"Bot", 3) == 0)
+				{
+					mate_skill = config_integer("network.bot_skill");
+					if (mate_skill < 0)
+						mate_skill = 0;
+					if (mate_skill > BOT_SKILL_IMPOSSIBLE)
+						mate_skill = BOT_SKILL_IMPOSSIBLE;
+				}
+				if (bot_camo_hides(mate_skill, enemy, distance3d(&mate_eye, &eye)))
+					continue;
+			}
 			dx = point.x - feet->x;
 			dy = point.y - feet->y;
 			dist = dx * dx + dy * dy;
@@ -8377,7 +8836,8 @@ static void update_server_generate_bot_actions(
 			if (target_player_index == state->target_index)
 				score_dist -= 3.0f;
 			separation = distance3d(&eye, &point_eye);
-			seen = bot_combat_visible(&eye, player->unit_index, target_player->unit_index);
+			seen = bot_combat_visible(&eye, player->unit_index, target_player->unit_index) &&
+				!bot_camo_hides(skill, target_player, separation);
 			heard = bot_know_hidden_enemies && bot_within_hearing(&feet, &point);
 			/* a clear ray on another floor is a shot from this deck.
 			the ring around their column is what the walk refuses. */
@@ -8467,8 +8927,10 @@ static void update_server_generate_bot_actions(
 			state->sight_ticks = 0;
 			state->last_seen_valid = FALSE;
 			state->reaction_ticks = 0;
-			state->yaw_error = bot_random_real() * bot_aim_error[skill];
-			state->pitch_error = bot_random_real() * bot_aim_error[skill];
+			state->yaw_error = skill == BOT_SKILL_IMPOSSIBLE ? 0.0f :
+				bot_random_real() * bot_aim_error[skill];
+			state->pitch_error = skill == BOT_SKILL_IMPOSSIBLE ? 0.0f :
+				bot_random_real() * bot_aim_error[skill];
 			state->burst_ticks = 0;
 			state->burst_pause = 0;
 			state->powerup_ready = engage != NONE;
@@ -8503,13 +8965,30 @@ static void update_server_generate_bot_actions(
 			else
 			{
 				object_get_origin(target_player->unit_index, &point);
-				/* the chest is just under their camera. A fixed height
-				above the feet aims under a crouch and over a stand. */
-				unit_get_camera_position(target_player->unit_index, &aim_point);
-				aim_point.z -= 0.12f;
+				if (skill == BOT_SKILL_IMPOSSIBLE)
+					unit_get_head_position(target_player->unit_index, &aim_point);
+				else
+				{
+					real_point3d chest;
+					real_point3d head;
+					real climb;
+
+					/* the chest is just under their camera. A fixed height
+					above the feet aims under a crouch and over a stand.
+					Easy starts a quarter of the way from that chest to the
+					head, and each skill climbs until legendary is on it. */
+					unit_get_camera_position(target_player->unit_index, &chest);
+					chest.z -= 0.12f;
+					unit_get_head_position(target_player->unit_index, &head);
+					climb = bot_head_aim[skill];
+					aim_point.x = chest.x + (head.x - chest.x) * climb;
+					aim_point.y = chest.y + (head.y - chest.y) * climb;
+					aim_point.z = chest.z + (head.z - chest.z) * climb;
+				}
 				distance = distance3d(&eye, &aim_point);
 				visible = bot_combat_visible(&eye, player->unit_index,
-					target_player->unit_index);
+					target_player->unit_index) &&
+					!bot_camo_hides(skill, target_player, distance);
 				/* the ray that arms a reaction is every five ticks. Losing
 				them still counts every tick, up to 22, which is what makes
 				the next look wait. */
@@ -8810,36 +9289,24 @@ static void update_server_generate_bot_actions(
 			{
 				real_point3d enemy;
 				long enemy_unit;
+				boolean know;
 
-				if (bot_know_hidden_enemies &&
+				/* impossible knows every living enemy, on any map, and
+				walks the mesh to the nearest. The gun stays on the path
+				until a shot is actually open. Other skills still need a
+				sightline, or the hidden-enemy switch. */
+				know = skill == BOT_SKILL_IMPOSSIBLE || bot_know_hidden_enemies;
+				if (know &&
 					bot_nearest_enemy(player_index, player->team_index,
-						variant && variant->universal_variant.teams, &feet, &enemy, &enemy_unit))
+						variant && variant->universal_variant.teams, &feet, &enemy, &enemy_unit) &&
+					(skill == BOT_SKILL_IMPOSSIBLE || bot_different_floor(&feet, &enemy)))
 				{
-					/* their floor. Walk the ground path to it. A peek on
-					this floor looks up through the ceiling and the two of
-					them circle the column. */
-					if (bot_different_floor(&feet, &enemy))
-					{
-						real_point3d floor_point;
-						long surface;
-
-						floor_point = enemy;
-						if (bot_enemy_floor(enemy_unit, &floor_point, &surface))
-						{
-							state->route_floor = TRUE;
-							state->route_surface = surface;
-							state->hunt_goal = floor_point;
-						}
-						else
-							state->hunt_goal = enemy;
-						state->hunt_valid = TRUE;
-						state->hunt_ticks = 45;
-						hunt_point = state->hunt_goal;
-						hunting = TRUE;
-					}
-					/* nobody in sight on this floor. A ring around the
-					nearest body keeps them in one spot. The tour walks
-					the map until someone is actually there. */
+					bot_hunt_enemy_goal(state, &feet, &enemy, enemy_unit, &state->hunt_goal);
+					state->hunt_valid = TRUE;
+					state->hunt_ticks = 45;
+					hunt_point = state->hunt_goal;
+					hunting = TRUE;
+					state->route_tour = TRUE;
 				}
 			}
 			else
@@ -9097,7 +9564,34 @@ static void update_server_generate_bot_actions(
 				boolean walled;
 
 				/* lost the sightline. Walk to where they were. A wall
-				between them is a path around it, not a stand against it. */
+				between them is a path around it, not a stand against it.
+				impossible already knows where they are. The walk goes
+				there, and the gun stays level on the path. */
+				if (skill == BOT_SKILL_IMPOSSIBLE && !fetching)
+				{
+					real_point3d enemy;
+					long enemy_unit;
+					real desired;
+					real walk;
+
+					enemy = aim_point;
+					enemy_unit = NONE;
+					if (!bot_nearest_enemy(player_index, player->team_index,
+							variant && variant->universal_variant.teams,
+							&feet, &enemy, &enemy_unit))
+						enemy = aim_point;
+					bot_hunt_enemy_goal(state, &feet, &enemy, enemy_unit, &move_goal);
+					state->route_tour = TRUE;
+					goal_pitch = 0.0f;
+					desired = bot_yaw_between(&feet, &move_goal);
+					if (bot_open_distance(&feet, desired, player->unit_index) >= 1.6f &&
+						!bot_heading_is_corner(&feet, desired, player->unit_index))
+						goal_yaw = desired;
+					else if (bot_clear_yaw(&feet, desired, player->unit_index, &walk))
+						goal_yaw = walk;
+				}
+				else
+				{
 				if (fetching)
 					move_goal = bot_item_goals[player_index].point;
 				else if (state->last_seen_valid)
@@ -9139,6 +9633,7 @@ static void update_server_generate_bot_actions(
 					}
 				}
 				goal_yaw = bot_yaw_between(&feet, &move_goal);
+				}
 			}
 			else
 			{
@@ -9161,8 +9656,8 @@ static void update_server_generate_bot_actions(
 					if (range < 0.5f)
 						range = 0.5f;
 					cap = (arctangent(0.30f, range) + bot_aim_slack[skill]) * 0.5f;
-					yaw_off = state->yaw_error;
-					pitch_off = state->pitch_error;
+					yaw_off = skill == BOT_SKILL_IMPOSSIBLE ? 0.0f : state->yaw_error;
+					pitch_off = skill == BOT_SKILL_IMPOSSIBLE ? 0.0f : state->pitch_error;
 					if (yaw_off > cap)
 						yaw_off = cap;
 					if (yaw_off < -cap)
@@ -9410,11 +9905,24 @@ static void update_server_generate_bot_actions(
 						if (side_exit && deck + 0.15f < turn_at)
 							turn_at = deck + 0.40f;
 						/* prisoner sniper tops only. The shared dismount
-						stops on the lip. This step is the rifle's floor. */
-						sniper_step = state->climb_up &&
+						stops on the lip. This step is the rifle's floor.
+						The rifle ray can hit that lip, under the opening,
+						so the step waits until the feet reach the top. */
+						sniper_step = FALSE;
+						if (state->climb_up &&
 							bot_prisoner_sniper_deck(&state->climb_face, state->climb_top,
-								&sniper_deck) &&
-							feet.z >= sniper_deck.z - 0.40f;
+								&sniper_deck))
+						{
+							real sniper_floor;
+
+							sniper_floor = sniper_deck.z;
+							if (state->climb_top > sniper_floor)
+							{
+								sniper_floor = state->climb_top;
+								sniper_deck.z = state->climb_top;
+							}
+							sniper_step = feet.z >= sniper_floor - 0.40f;
+						}
 						if (sniper_step)
 							state->climb_exit = sniper_deck;
 						face_yaw = state->climb_yaw;
@@ -10088,6 +10596,9 @@ static void update_server_generate_bot_actions(
 		}
 		bot_shaft_steer(state, &feet, &eye, player->unit_index, skill,
 			player, &action, face_enemy);
+		if (!state->climb && unit->object.parent_object_index == NONE &&
+			(!state->grenade_aim || state->vault == 2))
+			bot_hangem_steer(state, player, player->unit_index, &feet, &action);
 		queue->current_action = action;
 	}
 }

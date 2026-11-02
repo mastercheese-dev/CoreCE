@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="20" viewBox="0 0 512 20">
   <!-- selected short settings row: lines at the edges so the label sits inside them -->
-  <path d="M6,0 H506 A6,6 0 0 1 512,6 V14 A6,6 0 0 1 506,20 H6 A6,6 0 0 1 0,14 V6 A6,6 0 0 1 6,0 Z" fill="#002244"/>
-  <rect x="1" y="1" width="510" height="18" rx="5" fill="none" stroke="#2299ff" stroke-width="2"/>
+  <path d="M6,0 H506 A6,6 0 0 1 512,6 V14 A6,6 0 0 1 506,20 H6 A6,6 0 0 1 0,14 V6 A6,6 0 0 1 6,0 Z" fill="#000e23"/>
+  <rect x="1" y="1" width="510" height="18" rx="5" fill="none" stroke="#2995ff" stroke-width="2"/>
 </svg>

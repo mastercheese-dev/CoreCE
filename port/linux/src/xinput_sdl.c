@@ -82,6 +82,9 @@ struct controller
 };
 
 static struct controller controllers[PORT_COUNT];
+/* the last pad XInputGetState returned, so a clip can draw it without
+reading the pad again (that read pumps events) */
+static struct _XINPUT_GAMEPAD clips_pad[PORT_COUNT];
 static struct controller keyboard_device;
 static DWORD reported_gamepads = 0;
 static BOOL reported_keyboard = FALSE;
@@ -189,6 +192,11 @@ static float mouse_sensitivity(void)
 	return sensitivity;
 }
 
+/* the look halo_linux_mouse_look just took. halo_linux_mouse_sample reads it
+once, so a clip can record it without taking the look away from the player */
+static short mouse_sample_x;
+static short mouse_sample_y;
+
 /* radians of yaw and pitch for the mouse motion since the last call; the
 game adds these to the facing change of the player on gamepad 0 */
 int halo_linux_mouse_look(short gamepad_index, float *yaw, float *pitch)
@@ -227,11 +235,31 @@ int halo_linux_mouse_look(short gamepad_index, float *yaw, float *pitch)
 	mouse_pending_y = 0.0f;
 	mouse_polls_unconsumed = 0;
 	pthread_mutex_unlock(&mouse_lock);
+	if (x > 32767.0f)
+		x = 32767.0f;
+	if (x < -32767.0f)
+		x = -32767.0f;
+	if (y > 32767.0f)
+		y = 32767.0f;
+	if (y < -32767.0f)
+		y = -32767.0f;
+	mouse_sample_x = (short)x;
+	mouse_sample_y = (short)y;
 	if (x == 0.0f && y == 0.0f)
 		return FALSE;
 	*yaw = -x * mouse_pixel_scale * mouse_sensitivity();
 	*pitch = (invert ? y : -y) * mouse_pixel_scale * vertical_sensitivity;
 	return TRUE;
+}
+
+void halo_linux_mouse_sample(short *x, short *y)
+{
+	if (x)
+		*x = mouse_sample_x;
+	if (y)
+		*y = mouse_sample_y;
+	mouse_sample_x = 0;
+	mouse_sample_y = 0;
 }
 
 #ifdef HALO_ANDROID
@@ -429,9 +457,27 @@ static int mouse_is_aim_device(short gamepad_index)
     return aiming;
 }
 
+/* whether this gamepad's aim is the mouse, as the host's block uses it.
+   Port zero is the mouse until a stick or the touch controls aim. */
+int halo_linux_mouse_is_aim_device(short gamepad_index)
+{
+	return mouse_is_aim_device(gamepad_index);
+}
+
+/* the host has blocked mouse aim assist and this gamepad is aiming with
+   the mouse: no view magnetism, and the shot is not pulled onto a target */
+int halo_linux_mouse_blocked_by_host(short gamepad_index)
+{
+	if (!network_aim_assist_block_mouse())
+		return FALSE;
+	return mouse_is_aim_device(gamepad_index);
+}
+
 /* whether the player on the gamepad aims with the mouse (it moved after the
-right stick last did) and input.mouse_aim_assist is off: then the view's
-magnetism leaves them be (player_control.c); the bullets' autoaim stays */
+right stick last did) and input.mouse_aim_assist is off, or the host has
+blocked mouse aim assist: then the view's magnetism leaves them be
+(player_control.c). The player's own off switch leaves the shot's pull.
+The host's block removes that pull too (player_aim_projectile). */
 int halo_linux_mouse_aiming(short gamepad_index)
 {
 	static int aim_assist;
@@ -1336,7 +1382,57 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		controllers[port].previous = state->Gamepad;
 	}
 	state->dwPacketNumber = controllers[port].packet_number;
+	if (port >= 0 && port < PORT_COUNT)
+		clips_pad[port] = state->Gamepad;
 	return ERROR_SUCCESS;
+}
+
+void halo_linux_pad_sample(short port, short *lx, short *ly, short *rx, short *ry,
+	unsigned char *left_trigger, unsigned char *right_trigger, unsigned short *buttons,
+	unsigned char *face)
+{
+	struct _XINPUT_GAMEPAD *pad;
+	unsigned char mask = 0;
+	int i;
+
+	if (lx)
+		*lx = 0;
+	if (ly)
+		*ly = 0;
+	if (rx)
+		*rx = 0;
+	if (ry)
+		*ry = 0;
+	if (left_trigger)
+		*left_trigger = 0;
+	if (right_trigger)
+		*right_trigger = 0;
+	if (buttons)
+		*buttons = 0;
+	if (face)
+		*face = 0;
+	if (port < 0 || port >= PORT_COUNT)
+		return;
+	pad = &clips_pad[port];
+	if (lx)
+		*lx = pad->sThumbLX;
+	if (ly)
+		*ly = pad->sThumbLY;
+	if (rx)
+		*rx = pad->sThumbRX;
+	if (ry)
+		*ry = pad->sThumbRY;
+	if (left_trigger)
+		*left_trigger = pad->bAnalogButtons[XINPUT_GAMEPAD_LEFT_TRIGGER];
+	if (right_trigger)
+		*right_trigger = pad->bAnalogButtons[XINPUT_GAMEPAD_RIGHT_TRIGGER];
+	if (buttons)
+		*buttons = pad->wButtons;
+	for (i = 0; i < 6; i++)
+		if (pad->bAnalogButtons[i] >= 0x80)
+			mask = (unsigned char)(mask | (1 << i));
+	if (face)
+		*face = mask;
 }
 
 DWORD WINAPI XInputSetState(HANDLE device, PXINPUT_FEEDBACK feedback)

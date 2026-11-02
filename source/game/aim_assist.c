@@ -539,6 +539,27 @@ boolean aim_assist(
 	return FALSE;
 }
 
+/* the host blocked mouse aim assist, and this shot is a mouse player's.
+   A bot is left alone. A controller or touch aim is left alone. */
+static boolean player_shot_stays_on_crosshair(struct player_datum *player, long player_index)
+{
+	extern boolean network_aim_assist_block_mouse(void);
+	extern boolean network_aim_assist_mouse_noted(short player_index);
+	extern int halo_linux_mouse_blocked_by_host(short gamepad_index);
+	extern boolean bot_controller_is_bot(short machine_index, short controller_index);
+	short absolute;
+
+	if (!network_aim_assist_block_mouse())
+		return FALSE;
+	if (bot_controller_is_bot(player->network_player_data.machine_index,
+			player->network_player_data.controller_index))
+		return FALSE;
+	if (player->local_player_index != NONE)
+		return halo_linux_mouse_blocked_by_host(player->local_player_index) ? TRUE : FALSE;
+	absolute = (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index);
+	return network_aim_assist_mouse_noted(absolute);
+}
+
 long player_aim_projectile(
 	long player_index,
 	real_point3d const *position,
@@ -613,6 +634,15 @@ long player_aim_projectile(
 			{
 				collision_direction= *direction;
 			}
+		}
+
+		/* The host's block keeps a mouse player's shot on the crosshair.
+		   The camera correction above stays, so the muzzle still meets
+		   where they are looking. */
+		if (player_shot_stays_on_crosshair(player, player_index))
+		{
+			autoaim_level = 0.f;
+			target_object_index = NONE;
 		}
 
 		/* Blend toward the autoaim target, then pin inside the deviation cone. */

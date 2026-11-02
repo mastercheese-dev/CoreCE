@@ -17,7 +17,8 @@ release, and the game asks whether to update:
   (halo-<platform>-<release|debug>.zip) is downloaded next to the executable
   (into update.partial/) and unpacked, its files put in place of the running
   game's (which become <name>.old, deleted at the next start), and the new
-  game started; this one quits.
+  game started; this one quits. The new start rebuilds the resource caches
+  (z:\cacheNNN.map). Saves, profiles, and settings stay.
 - No: nothing, until the next start.
 - Do not ask again: after the player confirms it, update.auto = false is
   written to config.toml.
@@ -599,6 +600,9 @@ static void updater_update(void)
 		if (index == name_count)
 		{
 			update_delete_file(partial);
+			/* The new process drops the cache maps before it opens them.
+			This process still has those files open, so it cannot. */
+			platform_mark_resource_caches_stale();
 			platform_log("update: starting build %ld", updater_latest_build);
 			if (update_launch(updater_executable))
 				exit(EXIT_SUCCESS);

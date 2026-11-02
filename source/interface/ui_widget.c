@@ -647,6 +647,7 @@ struct widget_instance;
 #include "interface/attract_mode.h"
 #include "interface/hud.h"
 #include "hardcore_views.h" /* port: a hardcore pane fits the pause screen */
+#include "clips.h" /* port: leaving a clip returns to that profile's list */
 #include "interface/hud_definitions.h"
 #include "interface/hud_draw.h"
 #include "bitmaps/bitmap_color_conversion.h"
@@ -5224,6 +5225,26 @@ void main_screen_shell_load(
 		if (!widget_globals.main_menu_music_active)
 			ui_start_main_menu_music();
 		reset_last_player1_profile_index();
+		/* a clip's BACK opens that profile's list, then CLIPS on top of it.
+		the second load waits until the profile screen has finished loading,
+		so opening CLIPS does not delete a screen that is still being built */
+		if (clips_return_pending())
+		{
+			extern char const *pc_menus_root_name(void);
+			long root = tag_loaded(UI_WIDGET_DEFINITION_TAG, pc_menus_root_name());
+			long profile_tag = tag_loaded(UI_WIDGET_DEFINITION_TAG,
+				"pc\\main_menu\\profile_manager\\player_profile_manager_screen");
+
+			if (ui_widget_load_by_name_or_tag(
+				"pc\\main_menu\\profile_manager\\player_profile_manager_screen",
+				NONE, NULL, 0, root, NONE, 0))
+			{
+				clips_take_return();
+				ui_widget_load_by_name_or_tag(
+					"pc\\main_menu\\clips\\clips_screen",
+					NONE, NULL, 0, profile_tag, NONE, 0);
+			}
+		}
 	}
 	if (!virtual_keyboard_initialize())
 		error(_error_silent, "failed to initialize the virtual keyboard");
@@ -5844,10 +5865,29 @@ static void widget_instance_render_text_box(
 	{
 		menu_value_scroll(widget, *text, font_index, justification, &color, &bounds, &clip);
 	}
-	if (string_has_icons_to_draw(*text))
-		draw_string_and_hack_in_icons(&bounds, &clip, NULL, 0, *text, FALSE);
-	else
-		rasterizer_draw_unicode_string(&bounds, &clip, NULL, 0, *text);
+	{
+		struct bitmap_data *button_bitmap = NULL;
+		boolean button_label = FALSE;
+
+		if (definition->background_bitmap.index != NONE)
+			button_bitmap = bitmap_group_get_bitmap_from_sequence(
+				definition->background_bitmap.index, 0, 0);
+		/* the pill's label is drawn smaller, so it sits inside the pill */
+		if (button_bitmap &&
+			((button_bitmap->width == 128 && button_bitmap->height == 32) ||
+			(button_bitmap->width == 512 && button_bitmap->height == 128)))
+			button_label = TRUE;
+		if (button_label)
+			rasterizer_text_set_scale(0.75f,
+				(real)(bounds.x0 + bounds.x1) * 0.5f,
+				(real)(bounds.y0 + bounds.y1) * 0.5f);
+		if (string_has_icons_to_draw(*text))
+			draw_string_and_hack_in_icons(&bounds, &clip, NULL, 0, *text, FALSE);
+		else
+			rasterizer_draw_unicode_string(&bounds, &clip, NULL, 0, *text);
+		if (button_label)
+			rasterizer_text_set_scale(1.0f, 0.0f, 0.0f);
+	}
 
 	return;
 }
@@ -6560,6 +6600,10 @@ static void ui_mouse_note_target(
 	{
 		return;
 	}
+	/* the clips bar covers the whole bottom row. its buttons are the
+	targets, so the bar itself does not sit on top of KEEP */
+	if (widget->name && !strcmp(widget->name, "clips_button_bar"))
+		return;
 	bounds.x0 += offset.x;
 	bounds.x1 += offset.x;
 	bounds.y0 += offset.y;
@@ -6657,6 +6701,14 @@ static void ui_mouse_note_target(
 				bounds.y1 = MAX(bounds.y1, arrow.y1);
 			}
 		}
+	}
+	/* KEEP is a button that steps a number. a click on its left half
+	goes down, the right half goes up */
+	else if (widget->name && !strcmp(widget->name, "clips_keep"))
+	{
+		if (!widget_instance_can_receive_events(widget))
+			return;
+		kind = _ui_mouse_target_value;
 	}
 	else if (ui_mouse_widget_is_item(widget))
 	{
@@ -7713,8 +7765,12 @@ static void widget_instance_render_recursive(
 			picture is stretched over the widget; a stock campaign level's is
 			laid out as the stock pictures are */
 			rectangle2d texels = bounds;
+			rectangle2d pill;
 			short frame_x, frame_y, frame_width, frame_height;
+			short row_w = 0;
+			short row_h = 0;
 			boolean shown = TRUE;
+			boolean pill_band = FALSE;
 			boolean stretched = custom_edition_picture &&
 				custom_edition_maps_campaign_level(widget->animation.current_frame_index) == NONE;
 
@@ -7734,35 +7790,76 @@ static void widget_instance_render_recursive(
 				texels.y1 = (short)((long)(bounds.y1 - bounds.y0) * bitmap->height / frame_height);
 				shown = bounds.x1 > bounds.x0 && bounds.y1 > bounds.y0;
 			}
-			/* A settings row shorter than its 32-tall bar draws the whole bar
-			into the row. The stock path crops from the top, which cuts the
-			bar's lower rim. The server browser's rows are wider than this and
-			keep that crop. */
-			else if (!stretched && bitmap->height == 32 && bitmap->width >= 256)
+			/* The short bar is 512 wide and 20 tall, the same height as a row.
+			A narrower row draws the whole bar, so both caps stay and the rim
+			is not squashed. The button sheet is four times as wide as it is
+			tall: the pill is the top of it and the glow is the rest, so a
+			button draws the pill and leaves the glow out. A row wider than
+			560, the server browser, keeps the stock crop. */
+			else if (!stretched)
 			{
-				short row_w = (short)(bounds.x1 - bounds.x0);
-				short row_h = (short)(bounds.y1 - bounds.y0);
-
-				if (row_w >= 400 && row_w <= 560 && row_h >= 16 && row_h < 26)
+				row_w = (short)(bounds.x1 - bounds.x0);
+				row_h = (short)(bounds.y1 - bounds.y0);
+				if (bitmap->height == row_h && row_h >= 16 && row_h <= 24 &&
+					bitmap->width > row_w && row_w >= 40 && row_w <= 560 &&
+					bitmap->width <= 512)
 				{
 					texels.x0 = 0;
 					texels.y0 = 0;
 					texels.x1 = bitmap->width;
 					texels.y1 = bitmap->height;
 				}
+				/* the profile card shows the same 112 by 136 of the color sheet
+				the menus always did, drawn smaller so the shape stays */
+				else if (widget->name &&
+					!strcmp(widget->name, "qtr_screen_profile_color_pic"))
+				{
+					texels.x0 = 0;
+					texels.y0 = 0;
+					texels.x1 = 112;
+					texels.y1 = 136;
+					if (texels.x1 > bitmap->width)
+						texels.x1 = bitmap->width;
+					if (texels.y1 > bitmap->height)
+						texels.y1 = bitmap->height;
+				}
+				else if (bitmap->height > row_h && row_h >= 14 && row_h <= 24 &&
+					row_w >= 40 && row_w <= bitmap->width && row_w <= 560 &&
+					((bitmap->width == 128 && bitmap->height == 32) ||
+					(bitmap->width == 512 && bitmap->height == 128)))
+				{
+					pill.x0 = 0;
+					pill.y0 = 0;
+					pill.x1 = bitmap->width;
+					pill.y1 = (short)((long)bitmap->height * 21 / 32);
+					if (pill.y1 < 1)
+						pill.y1 = bitmap->height;
+					pill_band = TRUE;
+				}
 			}
 			if (pane_dim)
 				rasterizer_screen_fit_suspend(TRUE);
 			if (shown)
 			{
-				draw_bitmap_in_rect(
-					bitmap,
-					&bounds,
-					stretched ? NULL : &texels,
-					clip,
-					color,
-					&multitexture_params,
-					FALSE);
+				if (pill_band)
+					draw_bitmap_region_in_rect(
+						bitmap,
+						&bounds,
+						NULL,
+						clip,
+						color,
+						&multitexture_params,
+						FALSE,
+						&pill);
+				else
+					draw_bitmap_in_rect(
+						bitmap,
+						&bounds,
+						stretched ? NULL : &texels,
+						clip,
+						color,
+						&multitexture_params,
+						FALSE);
 			}
 			if (pane_dim)
 				rasterizer_screen_fit_suspend(FALSE);

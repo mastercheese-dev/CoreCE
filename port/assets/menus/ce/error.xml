@@ -6,16 +6,16 @@
 		<child widget="error/header_warning" x="201" y="180"/>
 	</widget>
 	<widget name="error/confirm_delete_gametype_button_bar" type="column_list" width="256" height="20" flags="pass_unhandled_to_focused_child up_down_tabs_items left_right_tabs_items">
-		<child widget="error/confirm_delete_gametype_button_cancel" x="128"/>
-		<child widget="error/confirm_delete_gametype_button_ok"/>
+		<child widget="error/confirm_delete_gametype_button_cancel" x="132"/>
+		<child widget="error/confirm_delete_gametype_button_ok" x="28"/>
 		<on event="right_trigger" run="mouse emit accept event"/>
 </widget>
-	<widget name="error/confirm_delete_gametype_button_cancel" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="2" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="error/confirm_delete_gametype_button_cancel" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="2" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="left_mouse" run="mouse emit back event"/>
 		<on event="a" run="mouse emit back event"/>
 		<on event="start" run="mouse emit back event"/>
 	</widget>
-	<widget name="error/confirm_delete_gametype_button_ok" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="error/confirm_delete_gametype_button_ok" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="final del playlist profile" close="current" sound="sound\sfx\ui\forward"/>
 		<on event="start" run="final del playlist profile" close="current" sound="sound\sfx\ui\forward"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -33,16 +33,16 @@
 		<child widget="error/header_warning" x="201" y="180"/>
 	</widget>
 	<widget name="error/confirm_delete_profile_button_bar" type="column_list" width="256" height="20" flags="pass_unhandled_to_focused_child up_down_tabs_items left_right_tabs_items">
-		<child widget="error/confirm_delete_profile_button_cancel" x="128"/>
-		<child widget="error/confirm_delete_profile_button_ok"/>
+		<child widget="error/confirm_delete_profile_button_cancel" x="132"/>
+		<child widget="error/confirm_delete_profile_button_ok" x="28"/>
 		<on event="right_trigger" run="mouse emit accept event"/>
 </widget>
-	<widget name="error/confirm_delete_profile_button_cancel" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="2" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="error/confirm_delete_profile_button_cancel" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="2" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="left_mouse" run="mouse emit back event"/>
 		<on event="a" run="mouse emit back event"/>
 		<on event="start" run="mouse emit back event"/>
 	</widget>
-	<widget name="error/confirm_delete_profile_button_ok" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="error/confirm_delete_profile_button_ok" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="final del player profile" close="current" sound="sound\sfx\ui\forward"/>
 		<on event="start" run="final del player profile" close="current" sound="sound\sfx\ui\forward"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -60,11 +60,11 @@
 		<child widget="error/header_warning" x="201" y="180"/>
 	</widget>
 	<widget name="error/confirm_delete_savegame_button_bar" type="column_list" width="256" height="20" flags="pass_unhandled_to_focused_child up_down_tabs_items left_right_tabs_items">
-		<child widget="error/confirm_delete_profile_button_cancel" x="128"/>
-		<child widget="error/confirm_delete_savegame_button_ok"/>
+		<child widget="error/confirm_delete_profile_button_cancel" x="132"/>
+		<child widget="error/confirm_delete_savegame_button_ok" x="28"/>
 		<on event="right_trigger" run="mouse emit accept event"/>
 </widget>
-	<widget name="error/confirm_delete_savegame_button_ok" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="error/confirm_delete_savegame_button_ok" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="load game menu delete finish" close="current" sound="sound\sfx\ui\forward"/>
 		<on event="start" run="load game menu delete finish" close="current" sound="sound\sfx\ui\forward"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -88,10 +88,10 @@
 		<child widget="error/header_error" x="202" y="180"/>
 	</widget>
 	<widget name="error/error_modal_button_bar" type="column_list" width="256" height="20" flags="pass_unhandled_to_focused_child up_down_tabs_items left_right_tabs_items">
-		<child widget="error/error_modal_button_ok" x="64"/>
+		<child widget="error/error_modal_button_ok" x="80"/>
 		<on event="right_trigger" run="mouse emit accept event"/>
 </widget>
-	<widget name="error/error_modal_button_ok" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="error/error_modal_button_ok" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
 	<widget name="error/error_text_box" type="text" controller="1" width="280" height="159" bitmap="bitmaps/alert_bkd" string_list="strings/displayed_error_messages" font="ui\large_ui" color="#FF2896FF" text_x="9" text_y="35">

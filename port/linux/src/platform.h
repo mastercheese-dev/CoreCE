@@ -139,6 +139,9 @@ the window opens, or between frames), with `count` buttons (3 at most: Android's
 when it cannot ask */
 int platform_ask(const char *title, const char *text, const char *const *labels, int count, int default_index);
 const char *platform_save_root(void);
+/* An update is in place. The next start deletes the rebuilt resource caches
+(z:\cacheNNN.map) and leaves saves, profiles, and settings. */
+void platform_mark_resource_caches_stale(void);
 
 /* ---------- contiguous ("physical") memory
 

@@ -14,7 +14,7 @@ def generated(fault=None):
     if fault=='controller': inp=mutated(inp,'if (gamepad_index != 0) return FALSE;','if (FALSE) return FALSE;')
     return (('policy.inc',policy),('input.inc',inp))
 
-@pytest.mark.parametrize('case',['allowed','devices','scope','replication','admission','reset'])
+@pytest.mark.parametrize('case',['allowed','devices','scope','replication','admission','reset','early'])
 def test_case(case):
     status,output=run(build('aim_assist',generated()),case)
     assert status==0,output

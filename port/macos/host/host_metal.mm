@@ -1815,6 +1815,15 @@ extern "C" void host_metal_pace_vblank(void) {
         nanosleep(&step, nullptr);
     }
 }
+extern "C" void host_metal_forget_warmup(void) {
+    @autoreleasepool { std::lock_guard<std::mutex> guard(lock);
+        if (context.warmup_path)
+            [[NSFileManager defaultManager] removeItemAtPath:context.warmup_path error:nil];
+        context.warmup_path = nil;
+        context.warmup_dirty = false;
+        if (context.draw_encoder) context.draw_encoder.warmupLearningEnabled = NO;
+    }
+}
 extern "C" void host_metal_shutdown(void) {
     @autoreleasepool { std::lock_guard<std::mutex> guard(lock);
         warmup_save();

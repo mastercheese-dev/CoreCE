@@ -2442,6 +2442,12 @@ static void distributed_client_send_inputs(
 		csmemset(input, 0, sizeof(*input));
 		if (!update_client_distributed_input(local_player_index, &input->tick, &input->action, input->control_flags))
 			continue;
+		{
+			/* the host blocks this player's shot pull when they aim with the mouse */
+			extern int halo_linux_mouse_is_aim_device(short gamepad_index);
+
+			input->pad = halo_linux_mouse_is_aim_device(local_player_index) ? 1 : 0;
+		}
 		input->player_index = distributed_player_to_byte(player_index);
 		input->structure_bsp_index = (byte)global_structure_bsp_index_get();
 		input->coop_no_friendly_fire = network_coop_active() && !network_coop_own_friendly_fire();
@@ -2515,6 +2521,10 @@ static void distributed_handle_inputs(
 		action.throttle.i = PIN(action.throttle.i, -1.0f, 1.0f);
 		action.throttle.j = PIN(action.throttle.j, -1.0f, 1.0f);
 		action.primary_trigger = PIN(action.primary_trigger, 0.0f, 1.0f);
+		/* 1: that client is aiming with the mouse. The host's block then
+		keeps this player's shot on the crosshair. Anything else is a
+		controller, touch, or a build that does not say. */
+		network_aim_assist_note_mouse(input->player_index, input->pad == 1);
 		/* (a spectator's buttons pick whom it watches: not counted) */
 		if (network_coop_active() && player->unit_index != NONE)
 			distributed_note_input_actions(input->player_index, &action);
@@ -3549,6 +3559,9 @@ static void distributed_match_start(
 		message.update_number = network_game_server_get_next_update_number();
 		distributed_send(&message, _distributed_message_match_go, 1,
 			(word)sizeof(message), _distributed_to_clients_reliably);
+		/* every machine still here has loaded, so the aim policy is not
+		the one a client dropped while the map was loading */
+		network_aim_assist_broadcast();
 		hardcore_rules_opening_go(message.update_number, TRUE);
 	}
 }

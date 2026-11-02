@@ -1,0 +1,41 @@
+/* A clip is one campaign level or one multiplayer game, from the tick the
+level starts until it ends or the player leaves. It is listed under each
+local profile that sat in that run. Watching one does not record another.
+The tape is player actions and a picture of the local controls. It does
+not store an address or a hardware id, and it adds nothing on the wire. */
+
+#ifndef CLIPS_H
+#define CLIPS_H
+
+struct player_action;
+union rectangle2d;
+
+/* a clip waiting to play fills the map, difficulty and seed, and sets the
+multiplayer variant. returns 0 when nothing is waiting */
+int clips_fill_options(char *map_name, long map_name_size, short *difficulty, unsigned long *random_seed);
+void clips_map_started(void);
+void clips_map_ended(void);
+int clips_replaying(void);
+void clips_on_actions(struct player_action *actions, int capacity);
+void clips_frame(void);
+void clips_after_director(void);
+void clips_draw(short local_player_index, union rectangle2d const *window);
+int clips_return_pending(void);
+int clips_take_return(void);
+
+void clips_menu_set_profile(long profile_index);
+long clips_menu_profile(void);
+int clips_menu_take_restore(long *profile_index);
+void clips_menu_load(void);
+int clips_menu_count(void);
+void clips_menu_scroll(int delta);
+void clips_menu_note_focus(int visible_row);
+void clips_menu_line(int visible_row, wchar_t *text, int length);
+int clips_menu_play(int visible_row, char *map_name, long map_name_size, short *difficulty);
+int clips_menu_delete(int visible_row);
+/* how many clips this profile keeps. the newest stay, and older ones past
+that number are removed */
+int clips_menu_keep(void);
+void clips_menu_keep_adjust(int delta);
+
+#endif

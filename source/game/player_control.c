@@ -1300,13 +1300,19 @@ static void get_local_player_input_blob(
 							&target_angular_velocity);
 						{
 							/* no magnetism for the mouse (port/linux/src/xinput_sdl.c),
-							nor for the touch controls without their aim assist */
+							nor for the touch controls without their aim assist.
+							The host's block also clears the reticle lock. */
 							extern int halo_linux_mouse_aiming(short gamepad_index);
+							extern int halo_linux_mouse_blocked_by_host(short gamepad_index);
 							extern int halo_linux_touch_aiming(short gamepad_index);
 
 							if (halo_linux_mouse_aiming(gamepad_index) || halo_linux_touch_aiming(gamepad_index))
 							{
 								control->magnetism_level = 0.f;
+							}
+							if (halo_linux_mouse_blocked_by_host(gamepad_index))
+							{
+								control->autoaim_level = 0.f;
 							}
 						}
 						if (player_magnetism_flag && control->magnetism_level > 0.f &&

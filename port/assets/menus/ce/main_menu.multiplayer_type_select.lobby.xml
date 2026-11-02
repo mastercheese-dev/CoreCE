@@ -21,69 +21,69 @@
 		<data input="net splitscreen prejoin players"/>
 		<data input="port lobby update"/>
 		<child widget="main_menu/multiplayer_type_select/lobby/list_item_0" x="20" y="73"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/list_item_1" x="20" y="103"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/list_item_2" x="20" y="133"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/list_item_3" x="20" y="163"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/list_item_4" x="20" y="193"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/list_item_5" x="20" y="223"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/list_item_6" x="20" y="253"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/list_item_7" x="20" y="283"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/list_item_8" x="20" y="313"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/list_item_9" x="20" y="343"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/list_item_10" x="20" y="373"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/list_item_1" x="20" y="93"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/list_item_2" x="20" y="113"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/list_item_3" x="20" y="133"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/list_item_4" x="20" y="153"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/list_item_5" x="20" y="173"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/list_item_6" x="20" y="193"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/list_item_7" x="20" y="213"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/list_item_8" x="20" y="233"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/list_item_9" x="20" y="253"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/list_item_10" x="20" y="273"/>
 		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_bar" y="414"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/list_item_0" width="390" height="28" bitmap="bitmaps/sel_list_item_bkd_top" font="ui\large_ui" color="#FF2896FF" align="center" text_y="3">
+	<widget name="main_menu/multiplayer_type_select/lobby/list_item_0" width="398" height="20" bitmap="bitmaps/option_bkds_join_top" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1">
 		<on event="left right" run="swap player team"/>
 		<child widget="main_menu/new_select/list_item_text" x="25"/>
 		<child widget="main_menu/new_select/list_item_arrows"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/list_item_1" width="390" height="28" bitmap="bitmaps/sel_list_item_bkd" font="ui\large_ui" color="#FF2896FF" align="center" text_y="3">
+	<widget name="main_menu/multiplayer_type_select/lobby/list_item_1" width="382" height="20" bitmap="bitmaps/option_bkds_join" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1">
 		<on event="left right" run="swap player team"/>
 		<child widget="main_menu/new_select/list_item_text" x="25"/>
 		<child widget="main_menu/new_select/list_item_arrows"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/list_item_2" width="390" height="28" bitmap="bitmaps/sel_list_item_bkd" font="ui\large_ui" color="#FF2896FF" align="center" text_y="3">
+	<widget name="main_menu/multiplayer_type_select/lobby/list_item_2" width="382" height="20" bitmap="bitmaps/option_bkds_join" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1">
 		<on event="left right" run="swap player team"/>
 		<child widget="main_menu/new_select/list_item_text" x="25"/>
 		<child widget="main_menu/new_select/list_item_arrows"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/list_item_3" width="390" height="28" bitmap="bitmaps/sel_list_item_bkd" font="ui\large_ui" color="#FF2896FF" align="center" text_y="3">
+	<widget name="main_menu/multiplayer_type_select/lobby/list_item_3" width="382" height="20" bitmap="bitmaps/option_bkds_join" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1">
 		<on event="left right" run="swap player team"/>
 		<child widget="main_menu/new_select/list_item_text" x="25"/>
 		<child widget="main_menu/new_select/list_item_arrows"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/list_item_4" width="390" height="28" bitmap="bitmaps/sel_list_item_bkd" font="ui\large_ui" color="#FF2896FF" align="center" text_y="3">
+	<widget name="main_menu/multiplayer_type_select/lobby/list_item_4" width="382" height="20" bitmap="bitmaps/option_bkds_join" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1">
 		<on event="left right" run="swap player team"/>
 		<child widget="main_menu/new_select/list_item_text" x="25"/>
 		<child widget="main_menu/new_select/list_item_arrows"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/list_item_5" width="390" height="28" bitmap="bitmaps/sel_list_item_bkd" font="ui\large_ui" color="#FF2896FF" align="center" text_y="3">
+	<widget name="main_menu/multiplayer_type_select/lobby/list_item_5" width="382" height="20" bitmap="bitmaps/option_bkds_join" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1">
 		<on event="left right" run="swap player team"/>
 		<child widget="main_menu/new_select/list_item_text" x="25"/>
 		<child widget="main_menu/new_select/list_item_arrows"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/list_item_6" width="390" height="28" bitmap="bitmaps/sel_list_item_bkd" font="ui\large_ui" color="#FF2896FF" align="center" text_y="3">
+	<widget name="main_menu/multiplayer_type_select/lobby/list_item_6" width="382" height="20" bitmap="bitmaps/option_bkds_join" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1">
 		<on event="left right" run="swap player team"/>
 		<child widget="main_menu/new_select/list_item_text" x="25"/>
 		<child widget="main_menu/new_select/list_item_arrows"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/list_item_7" width="390" height="28" bitmap="bitmaps/sel_list_item_bkd" font="ui\large_ui" color="#FF2896FF" align="center" text_y="3">
+	<widget name="main_menu/multiplayer_type_select/lobby/list_item_7" width="382" height="20" bitmap="bitmaps/option_bkds_join" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1">
 		<on event="left right" run="swap player team"/>
 		<child widget="main_menu/new_select/list_item_text" x="25"/>
 		<child widget="main_menu/new_select/list_item_arrows"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/list_item_8" width="390" height="28" bitmap="bitmaps/sel_list_item_bkd" font="ui\large_ui" color="#FF2896FF" align="center" text_y="3">
+	<widget name="main_menu/multiplayer_type_select/lobby/list_item_8" width="382" height="20" bitmap="bitmaps/option_bkds_join" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1">
 		<on event="left right" run="swap player team"/>
 		<child widget="main_menu/new_select/list_item_text" x="25"/>
 		<child widget="main_menu/new_select/list_item_arrows"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/list_item_9" width="390" height="28" bitmap="bitmaps/sel_list_item_bkd" font="ui\large_ui" color="#FF2896FF" align="center" text_y="3">
+	<widget name="main_menu/multiplayer_type_select/lobby/list_item_9" width="382" height="20" bitmap="bitmaps/option_bkds_join" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1">
 		<on event="left right" run="swap player team"/>
 		<child widget="main_menu/new_select/list_item_text" x="25"/>
 		<child widget="main_menu/new_select/list_item_arrows"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/list_item_10" width="390" height="28" bitmap="bitmaps/sel_list_item_bkd" font="ui\large_ui" color="#FF2896FF" align="center" text_y="3">
+	<widget name="main_menu/multiplayer_type_select/lobby/list_item_10" width="382" height="20" bitmap="bitmaps/option_bkds_join" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1">
 		<on event="left right" run="swap player team"/>
 		<child widget="main_menu/new_select/list_item_text" x="25"/>
 		<child widget="main_menu/new_select/list_item_arrows"/>
@@ -92,7 +92,7 @@
 		<child widget="main_menu/current_profile_name"/>
 		<child widget="main_menu/multiplayer_type_select/lobby/lobby_right_item" x="22" y="2"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/lobby_right_item" controller="1" left="406" top="75" width="162" height="326" bitmap="bitmaps/spinner_list_3_wide_item_background">
+	<widget flags="nifty_fx" name="main_menu/multiplayer_type_select/lobby/lobby_right_item" controller="1" left="406" top="75" width="162" height="326" bitmap="bitmaps/spinner_list_3_wide_item_background">
 		<child widget="main_menu/multiplayer_type_select/lobby/lobby_map_pic"/>
 		<child widget="main_menu/multiplayer_type_select/lobby/lobby_map_name"/>
 		<child widget="main_menu/solo_level_select/replay_level_right_pic"/>
@@ -106,43 +106,43 @@
 	<widget name="main_menu/multiplayer_type_select/lobby/lobby_game_data" type="text" controller="1" left="417" top="250" width="146" height="144" font="ui\small_ui" color="#FF2896FF">
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
-		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_copy_dim" x="0" y="1"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_copy" x="0" y="1"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_paste" x="120" y="1"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_team" x="120" y="1"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_start" x="250" y="1"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_add" x="380" y="1"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_leave" x="510" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_copy_dim" x="64" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_copy" x="64" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_paste" x="168" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_team" x="168" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_start" x="272" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_add" x="376" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_leave" x="480" y="1"/>
 		<on event="right_trigger" run="mouse emit accept event"/>
 </widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_add" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="ADD PLAYER" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_add" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="ADD PLAYER" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="port lobby add player" open="main_menu/multiplayer_type_select/lobby/player_profile_screen"/>
 		<on event="start" run="port lobby add player" open="main_menu/multiplayer_type_select/lobby/player_profile_screen"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_copy_dim" type="text" width="128" height="24" text="COPY LINK" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2" text_flags="no_focus_test">
+	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_copy_dim" type="text" width="96" height="20" text="COPY LINK" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1" text_flags="no_focus_test">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_copy" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="COPY LINK" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_copy" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="COPY LINK" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="port lobby copy link"/>
 		<on event="start" run="port lobby copy link"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_paste" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="PASTE LINK" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_paste" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="PASTE LINK" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="port lobby paste link"/>
 		<on event="start" run="port lobby paste link"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_team" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="SWITCH TEAM" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_team" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="SWITCH TEAM" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="swap player team"/>
 		<on event="start" run="swap player team"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_start" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="START NOW" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_start" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="START NOW" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="net game speed start"/>
 		<on event="start" run="net game speed start"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_leave" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="LEAVE" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/multiplayer_type_select/lobby/lobby_button_leave" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="LEAVE" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="mouse emit back event"/>
 		<on event="start" run="mouse emit back event"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -166,23 +166,23 @@
 		<on event="b" run="port list copy back"/>
 		<on event="back" run="port list copy back"/>
 		<child widget="main_menu/multiplayer_type_select/coop/list_item_0" x="20" y="73"/>
-		<child widget="main_menu/multiplayer_type_select/coop/list_item_1" x="20" y="103"/>
-		<child widget="main_menu/multiplayer_type_select/coop/list_item_2" x="20" y="133"/>
-		<child widget="main_menu/multiplayer_type_select/coop/list_item_3" x="20" y="163"/>
-		<child widget="main_menu/multiplayer_type_select/coop/list_item_4" x="20" y="193"/>
-		<child widget="main_menu/multiplayer_type_select/coop/list_item_5" x="20" y="223"/>
-		<child widget="main_menu/multiplayer_type_select/coop/list_item_6" x="20" y="253"/>
-		<child widget="main_menu/multiplayer_type_select/coop/list_item_7" x="20" y="283"/>
-		<child widget="main_menu/multiplayer_type_select/coop/list_item_8" x="20" y="313"/>
-		<child widget="main_menu/multiplayer_type_select/coop/list_item_9" x="20" y="343"/>
-		<child widget="main_menu/multiplayer_type_select/coop/list_item_10" x="20" y="373"/>
+		<child widget="main_menu/multiplayer_type_select/coop/list_item_1" x="20" y="93"/>
+		<child widget="main_menu/multiplayer_type_select/coop/list_item_2" x="20" y="113"/>
+		<child widget="main_menu/multiplayer_type_select/coop/list_item_3" x="20" y="133"/>
+		<child widget="main_menu/multiplayer_type_select/coop/list_item_4" x="20" y="153"/>
+		<child widget="main_menu/multiplayer_type_select/coop/list_item_5" x="20" y="173"/>
+		<child widget="main_menu/multiplayer_type_select/coop/list_item_6" x="20" y="193"/>
+		<child widget="main_menu/multiplayer_type_select/coop/list_item_7" x="20" y="213"/>
+		<child widget="main_menu/multiplayer_type_select/coop/list_item_8" x="20" y="233"/>
+		<child widget="main_menu/multiplayer_type_select/coop/list_item_9" x="20" y="253"/>
+		<child widget="main_menu/multiplayer_type_select/coop/list_item_10" x="20" y="273"/>
 		<child widget="main_menu/multiplayer_type_select/lobby/profile_button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/profile_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		<data input="common button bar update"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_copy_dim" x="120" y="1"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_copy" x="120" y="1"/>
-		<child widget="main_menu/profile_manager/profile_manager_button_ok" x="380" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_copy_dim" x="302" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/lobby_button_copy" x="302" y="1"/>
+		<child widget="main_menu/profile_manager/profile_manager_button_ok" x="406" y="1"/>
 		<child widget="common_button_back" x="510" y="1"/>
 		<on event="right_trigger" run="mouse emit accept event"/>
 	</widget>
@@ -287,10 +287,10 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/lan_add/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		<on event="right_trigger" run="mouse emit accept event"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/lan_add/button_ok" x="380" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/lan_add/button_ok" x="406" y="1"/>
 		<child widget="common_button_cancel" x="510" y="1"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/lan_add/button_ok" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/multiplayer_type_select/lobby/lan_add/button_ok" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="mouse emit back event"/>
 		<on event="start" run="mouse emit back event"/>
 		<on event="left_mouse" run="mouse emit back event"/>
@@ -326,22 +326,22 @@
 	<widget name="main_menu/multiplayer_type_select/lobby/preview_status" type="text" controller="1" width="360" height="300" font="ui\large_ui" color="#FF2896FF">
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/preview_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
-		<child widget="main_menu/multiplayer_type_select/lobby/preview_button_join" x="250" y="1"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/preview_button_add" x="380" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/preview_button_join" x="302" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/preview_button_add" x="406" y="1"/>
 		<child widget="main_menu/multiplayer_type_select/lobby/preview_button_back" x="510" y="1"/>
 		<on event="right_trigger" run="mouse emit accept event"/>
 </widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/preview_button_join" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="JOIN GAME" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/multiplayer_type_select/lobby/preview_button_join" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="JOIN GAME" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="port lobby preview join"/>
 		<on event="start" run="port lobby preview join"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/preview_button_add" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="ADD PLAYER" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/multiplayer_type_select/lobby/preview_button_add" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="ADD PLAYER" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="port lobby add player" open="main_menu/multiplayer_type_select/lobby/player_profile_screen"/>
 		<on event="start" run="port lobby add player" open="main_menu/multiplayer_type_select/lobby/player_profile_screen"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/preview_button_back" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="BACK" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/multiplayer_type_select/lobby/preview_button_back" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="BACK" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="mouse emit back event"/>
 		<on event="start" run="mouse emit back event"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -383,10 +383,10 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/lobby/bot_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		<on event="right_trigger" run="mouse emit accept event"/>
-		<child widget="main_menu/multiplayer_type_select/lobby/bot_button_add" x="380" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/lobby/bot_button_add" x="406" y="1"/>
 		<child widget="common_button_cancel" x="510" y="1"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/lobby/bot_button_add" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="ADD BOT" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/multiplayer_type_select/lobby/bot_button_add" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="ADD BOT" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="port lobby bot add" back="true"/>
 		<on event="start" run="port lobby bot add" back="true"/>
 		<on event="left_mouse" run="mouse emit accept event"/>

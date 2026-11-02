@@ -22,9 +22,15 @@
 	<widget name="main_menu/profile_manager/player_profile_manager_screen" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/gradient">
 		<on event="x" run="request del player profile" open="error/confirm_delete_profile_modal_fullscreen"/>
 		<on event="y" run="new campaign chosen" open="main_menu/profile_manager/pm_empty_creating_profile"/>
+		<on event="left_trigger" run="port clips open"/>
+		<on event="white" run="port clips open"/>
 		<child widget="main_menu/new_select/sel_list_desc_bkd"/>
 		<child widget="main_menu/profile_manager/profile_manager_select_list_2"/>
 		<child widget="main_menu/player_profiles_select/header_select_profile"/>
+		<child widget="main_menu/profile_manager/player_profile_clips_bar" x="440" y="378"/>
+	</widget>
+	<widget name="main_menu/profile_manager/player_profile_clips_bar" type="column_list" width="96" height="22" flags="pass_unhandled_to_focused_child left_right_tabs_items">
+		<child widget="main_menu/player_profiles_select/player_profile_clips_button"/>
 	</widget>
 	<widget name="main_menu/profile_manager/pm_empty_creating_profile" width="640" height="480" flags="pass_unhandled_to_focused_child no_history" auto_close="1">
 		<on event="deleted" run="new campaign decision" open="main_menu/profile_manager/pm_empty_saving_profile"/>
@@ -42,11 +48,11 @@
 		<child widget="main_menu/profile_manager/pm_empty_selected_button_bar" x="194" y="309"/>
 	</widget>
 	<widget name="main_menu/profile_manager/pm_empty_selected_button_bar" type="column_list" width="256" height="20" flags="pass_unhandled_to_focused_child up_down_tabs_items left_right_tabs_items">
-		<child widget="main_menu/profile_manager/pm_empty_selected_button_ok"/>
-		<child widget="common_button_cancel" x="128"/>
+		<child widget="main_menu/profile_manager/pm_empty_selected_button_ok" x="28"/>
+		<child widget="common_button_cancel" x="132"/>
 		<on event="right_trigger" run="mouse emit accept event"/>
 </widget>
-	<widget name="main_menu/profile_manager/pm_empty_selected_button_ok" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/profile_manager/pm_empty_selected_button_ok" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
 	<widget name="main_menu/profile_manager/pm_entry_creating_profile" width="640" height="480" flags="pass_unhandled_to_focused_child no_history" auto_close="1">
@@ -60,29 +66,29 @@
 	</widget>
 	<widget name="main_menu/profile_manager/profile_manager_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		<data input="common button bar update"/>
-		<child widget="main_menu/profile_manager/profile_manager_button_new" y="1"/>
-		<child widget="main_menu/profile_manager/profile_manager_button_delete" x="128" y="1"/>
-		<child widget="main_menu/profile_manager/profile_manager_button_edit" x="256" y="1"/>
-		<child widget="main_menu/profile_manager/profile_manager_button_ok" x="384" y="1"/>
-		<child widget="common_button_back" x="512" y="1"/>
+		<child x="64" widget="main_menu/profile_manager/profile_manager_button_new" y="1"/>
+		<child widget="main_menu/profile_manager/profile_manager_button_delete" x="168" y="1"/>
+		<child widget="main_menu/profile_manager/profile_manager_button_edit" x="272" y="1"/>
+		<child widget="main_menu/profile_manager/profile_manager_button_ok" x="376" y="1"/>
+		<child widget="common_button_back" x="480" y="1"/>
 		<on event="right_trigger" run="mouse emit accept event"/>
 </widget>
-	<widget name="main_menu/profile_manager/profile_manager_button_delete" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="5" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/profile_manager/profile_manager_button_delete" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="5" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="mouse emit x event"/>
 		<on event="start" run="mouse emit x event"/>
 		<on event="left_mouse" run="mouse emit x event"/>
 	</widget>
-	<widget name="main_menu/profile_manager/profile_manager_button_new" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="4" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/profile_manager/profile_manager_button_new" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="4" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="new campaign chosen" open="main_menu/profile_manager/pm_empty_creating_profile"/>
 		<on event="start" run="new campaign chosen" open="main_menu/profile_manager/pm_empty_creating_profile"/>
 		<on event="left_mouse" run="new campaign chosen" open="main_menu/profile_manager/pm_empty_creating_profile"/>
 	</widget>
-	<widget name="main_menu/profile_manager/profile_manager_button_edit" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="EDIT" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/profile_manager/profile_manager_button_edit" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="EDIT" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="port profile edit" open="main_menu/settings_select/player_setup/player_profile_edit/player_profile_edit_screen" branch="true"/>
 		<on event="start" run="port profile edit" open="main_menu/settings_select/player_setup/player_profile_edit/player_profile_edit_screen" branch="true"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/profile_manager/profile_manager_button_ok" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/profile_manager/profile_manager_button_ok" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="emit custom activation event"/>
 		<on event="start" run="emit custom activation event"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -96,16 +102,16 @@
 		<on event="back" run="port list copy back"/>
 		<conditional widget="main_menu/profile_manager/pm_empty_selected" if_failed="true"/>
 		<child widget="main_menu/new_select/list_item_0" x="20" y="73"/>
-		<child widget="main_menu/new_select/list_item_1" x="20" y="103"/>
-		<child widget="main_menu/new_select/list_item_2" x="20" y="133"/>
-		<child widget="main_menu/new_select/list_item_3" x="20" y="163"/>
-		<child widget="main_menu/new_select/list_item_4" x="20" y="193"/>
-		<child widget="main_menu/new_select/list_item_5" x="20" y="223"/>
-		<child widget="main_menu/new_select/list_item_6" x="20" y="253"/>
-		<child widget="main_menu/new_select/list_item_7" x="20" y="283"/>
-		<child widget="main_menu/new_select/list_item_8" x="20" y="313"/>
-		<child widget="main_menu/new_select/list_item_9" x="20" y="343"/>
-		<child widget="main_menu/new_select/list_item_10" x="20" y="373"/>
+		<child widget="main_menu/new_select/list_item_1" x="20" y="93"/>
+		<child widget="main_menu/new_select/list_item_2" x="20" y="113"/>
+		<child widget="main_menu/new_select/list_item_3" x="20" y="133"/>
+		<child widget="main_menu/new_select/list_item_4" x="20" y="153"/>
+		<child widget="main_menu/new_select/list_item_5" x="20" y="173"/>
+		<child widget="main_menu/new_select/list_item_6" x="20" y="193"/>
+		<child widget="main_menu/new_select/list_item_7" x="20" y="213"/>
+		<child widget="main_menu/new_select/list_item_8" x="20" y="233"/>
+		<child widget="main_menu/new_select/list_item_9" x="20" y="253"/>
+		<child widget="main_menu/new_select/list_item_10" x="20" y="273"/>
 		<child widget="main_menu/profile_manager/profile_manager_button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/profile_manager/settings_creating_profile" width="640" height="480" flags="pass_unhandled_to_focused_child no_history" auto_close="1">

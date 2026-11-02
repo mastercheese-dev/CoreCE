@@ -222,6 +222,14 @@ int main(int argc, char **argv) {
     setenv("HALO_DATA_ROOT", data_root, 1);
     setenv("HALO_SAVE_ROOT", save_root, 1);
     {
+        char marker[4096];
+        int wrote = snprintf(marker, sizeof(marker), "%s/z/resource-cache-clear", save_root);
+        extern void halo_update_discard_shader_caches(const char *save_root);
+        /* The guest drops the cache maps. These shader files are the host's. */
+        if (wrote > 0 && (size_t)wrote < sizeof(marker) && !access(marker, F_OK))
+            halo_update_discard_shader_caches(save_root);
+    }
+    {
         char film_path[4096];
         snprintf(film_path, sizeof(film_path), "%s/opening_frames.bin", resources);
         setenv("HALO_OPENING_FILM", film_path, 1);

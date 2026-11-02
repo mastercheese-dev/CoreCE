@@ -76,6 +76,22 @@
 		<frame png="ce/shell/bitmaps/option_bkds_short__0.png" width="512" height="20"/>
 		<frame png="ce/shell/bitmaps/option_bkds_short__1.png" width="512" height="20"/>
 	</bitmap>
+	<bitmap name="bitmaps/option_bkds_join">
+		<frame png="ce/shell/bitmaps/option_bkds_join__0.png" width="382" height="20"/>
+		<frame png="ce/shell/bitmaps/option_bkds_join__1.png" width="382" height="20"/>
+	</bitmap>
+	<bitmap name="bitmaps/option_bkds_join_field">
+		<frame png="ce/shell/bitmaps/option_bkds_join_field__0.png" width="226" height="20"/>
+		<frame png="ce/shell/bitmaps/option_bkds_join_field__1.png" width="226" height="20"/>
+	</bitmap>
+	<bitmap name="bitmaps/option_bkds_join_top">
+		<frame png="ce/shell/bitmaps/option_bkds_join_top__0.png" width="398" height="20"/>
+		<frame png="ce/shell/bitmaps/option_bkds_join_top__1.png" width="398" height="20"/>
+	</bitmap>
+	<bitmap name="bitmaps/option_bkds_join_field_top">
+		<frame png="ce/shell/bitmaps/option_bkds_join_field_top__0.png" width="242" height="20"/>
+		<frame png="ce/shell/bitmaps/option_bkds_join_field_top__1.png" width="242" height="20"/>
+	</bitmap>
 	<bitmap name="bitmaps/option_bkds_sm">
 		<frame png="ce/shell/bitmaps/option_bkds_sm__0.png" width="256" height="32"/>
 		<frame png="ce/shell/bitmaps/option_bkds_sm__1.png" width="256" height="32"/>
@@ -117,9 +133,9 @@
 		<frame png="ce/shell/bitmaps/server_header_background_3__1.png" width="128" height="32"/>
 	</bitmap>
 	<bitmap name="bitmaps/server_item_bkds">
-		<frame png="ce/shell/bitmaps/server_item_bkds__0.png" width="512" height="32"/>
-		<frame png="ce/shell/bitmaps/server_item_bkds__1.png" width="512" height="32"/>
-		<frame png="ce/shell/bitmaps/server_item_bkds__2.png" width="512" height="32"/>
+		<frame png="ce/shell/bitmaps/server_item_bkds__0.png" width="512" height="20"/>
+		<frame png="ce/shell/bitmaps/server_item_bkds__1.png" width="512" height="20"/>
+		<frame png="ce/shell/bitmaps/server_item_bkds__2.png" width="512" height="20"/>
 	</bitmap>
 	<bitmap name="bitmaps/spinner_list_3_wide_item_background">
 		<frame png="ce/shell/bitmaps/spinner_list_3_wide_item_background__0.png" width="256" height="512"/>

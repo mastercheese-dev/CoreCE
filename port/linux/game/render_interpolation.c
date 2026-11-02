@@ -32,7 +32,7 @@ a few world units of it: further is a jump). That glide is also drawn when
 display.interpolation is off, on the one frame of each tick: a beam and a
 muzzle flash are placed from the pose that is drawn. A local player's view
 glides so with their unit, and with what it rides, when frames are drawn
-between ticks.
+between ticks. A teammate pane does too (hardcore_views_correct_unit).
 */
 
 #include "cseries.h"
@@ -47,6 +47,7 @@ between ticks.
 #include "render/render_cameras.h"
 #include "units/units.h"
 #include "network_distributed.h"
+#include "hardcore_views.h"
 
 /* port/linux/src/port_config.c */
 int config_boolean(const char *name);
@@ -456,6 +457,7 @@ void render_interpolation_tick(void)
 	if (!halo_interpolation_enabled())
 	{
 		interpolation_corrections_tick();
+		hardcore_views_corrections_tick();
 		return;
 	}
 	/* the cameras' corrections a tick on, as the objects' (below) */
@@ -469,6 +471,7 @@ void render_interpolation_tick(void)
 			if (camera->valid)
 				correction_advance(&camera->correction, &camera->correction_pending);
 		}
+		hardcore_views_corrections_tick();
 	}
 	if (!interpolated_objects)
 	{
@@ -1081,6 +1084,8 @@ void render_interpolation_correct_object(long object_index, real_vector3d const 
 			correction_add(&camera->correction, &camera->correction_pending, offset);
 		}
 	}
+	/* a teammate pane's camera glides with this unit too */
+	hardcore_views_correct_unit(object_index, offset);
 	object = object_get(object_index);
 	for (child_index = object->object.first_child_object_index; child_index != NONE;
 		child_index = object_get(child_index)->object.next_object_index)

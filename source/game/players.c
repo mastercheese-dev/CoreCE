@@ -237,6 +237,7 @@ symbols in this file:
 #include "data.h"
 #include "devices/devices.h"
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
+#include "clips.h" /* port: a clip records and plays these actions */
 #include "cutscene/cinematics.h" /* port: network co-op's first spawns */
 #include "editor/editor_stubs.h"
 #include "effects/effects.h"
@@ -4827,12 +4828,21 @@ void players_update_before_game(
 	struct unit_control_data control_data;
 	long weapon_index;
 	short action_index;
+	boolean have_actions;
 
 	profile_enter(PLAYERS_UPDATE_BEFORE_GAME_PROFILE);
 	players_coop_note_on_foot();
 	players_coop_rescue_stranded();
-	if (update_client_dequeue(actions) || players_idle_actions(actions))
+	have_actions = update_client_dequeue(actions) || players_idle_actions(actions);
+	/* a clip still has a tick when this frame queued nothing */
+	if (!have_actions && clips_replaying())
 	{
+		csmemset(actions, 0, sizeof(actions));
+		have_actions = TRUE;
+	}
+	if (have_actions)
+	{
+		clips_on_actions(actions, NETWORK_GAME_MAXIMUM_PLAYER_COUNT);
 		data_iterator_new(&iterator, player_data);
 		while (player = data_iterator_next(&iterator))
 		{

@@ -27,6 +27,7 @@ static NSString *keyName(const void *key,EGLsizeiANDROID size) {
     return digest([NSData dataWithBytes:key length:(NSUInteger)size]);
 }
 static void trimDisk(void) {
+    if(!cacheDirectory)return;
     NSFileManager *files=NSFileManager.defaultManager;
     NSArray *urls=[files contentsOfDirectoryAtURL:[NSURL fileURLWithPath:cacheDirectory]
         includingPropertiesForKeys:@[NSURLFileSizeKey,NSURLContentModificationDateKey] options:0 error:nil];
@@ -50,15 +51,21 @@ static void storeBlob(const void *key,EGLsizeiANDROID keySize,const void *value,
         NSData *bytes=[NSData dataWithBytes:value length:(NSUInteger)valueSize];
         [memoryCache setObject:bytes forKey:name cost:bytes.length];
         [pendingLock lock];
-        BOOL queued=pendingBytes+bytes.length<=maximumDisk;
+        NSString *directory=cacheDirectory;
+        BOOL queued=directory && pendingBytes+bytes.length<=maximumDisk;
         if(queued)pendingBytes+=bytes.length;
         [pendingLock unlock];
         if(!queued)return;
         dispatch_async(writer,^{@autoreleasepool {
-            NSString *path=[cacheDirectory stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"blob"]];
-            BOOL ok=[bytes writeToFile:path options:NSDataWritingAtomic error:nil];
-            if(ok && !loggedStore){loggedStore=YES;host_logf(HOST_LOG_INFO,"ANGLE shader cache: stored compiled blob");}
-            trimDisk();
+            [pendingLock lock];
+            BOOL live=[cacheDirectory isEqual:directory];
+            [pendingLock unlock];
+            if(live) {
+                NSString *path=[directory stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"blob"]];
+                BOOL ok=[bytes writeToFile:path options:NSDataWritingAtomic error:nil];
+                if(ok && !loggedStore){loggedStore=YES;host_logf(HOST_LOG_INFO,"ANGLE shader cache: stored compiled blob");}
+                trimDisk();
+            }
             [pendingLock lock];pendingBytes-=bytes.length;[pendingLock unlock];
         }});
     }
@@ -66,9 +73,13 @@ static void storeBlob(const void *key,EGLsizeiANDROID keySize,const void *value,
 static EGLsizeiANDROID getBlob(const void *key,EGLsizeiANDROID keySize,void *value,EGLsizeiANDROID valueSize) {
     @autoreleasepool {
         NSString *name=keyName(key,keySize);if(!name)return 0;
+        [pendingLock lock];
+        NSString *directory=cacheDirectory;
+        [pendingLock unlock];
+        if(!directory)return 0;
         NSData *bytes=[memoryCache objectForKey:name];BOOL diskHit=NO;
         if(!bytes) {
-            NSString *path=[cacheDirectory stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"blob"]];
+            NSString *path=[directory stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"blob"]];
             unsigned long long size=[[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil] fileSize];
             if(size==0 || size>maximumBlob)return 0;
             bytes=[NSData dataWithContentsOfFile:path options:0 error:nil];
@@ -104,4 +115,16 @@ void halo_shader_cache_install(EGLDisplay display,PFNEGLGETPROCADDRESSPROC get_p
     dispatch_async(writer,^{trimDisk();});
     install(display,storeBlob,getBlob);
     host_logf(HOST_LOG_INFO,"ANGLE shader cache: enabled (64 MiB disk budget)");
+}
+void halo_update_discard_shader_caches(const char *save_root) {
+    NSString *root=[NSSearchPathForDirectoriesInDomains(NSCachesDirectory,NSUserDomainMask,YES).firstObject
+        stringByAppendingPathComponent:@"HaloShaderCache-v1"];
+    if(pendingLock){[pendingLock lock]; cacheDirectory=nil; [pendingLock unlock];}
+    else cacheDirectory=nil;
+    [memoryCache removeAllObjects];
+    if(writer)dispatch_sync(writer,^{});
+    [NSFileManager.defaultManager removeItemAtPath:root error:nil];
+    if(!save_root || !save_root[0])return;
+    NSString *warmup=[[NSString stringWithUTF8String:save_root] stringByAppendingPathComponent:@"Cache/MetalWarmup-v1.bin"];
+    [NSFileManager.defaultManager removeItemAtPath:warmup error:nil];
 }

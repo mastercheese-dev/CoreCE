@@ -156,6 +156,15 @@ void director_initialize_for_saved_game(
 	void);
 void director_update(
 	real time_delta_sec);
+/* port: a clip's viewer. hold keeps the game from putting the camera back
+on the player's eyes. mode is eyes, behind, or free. a unit other than NONE
+watches that player */
+void director_clips_hold(
+	boolean hold);
+void director_clips_camera(
+	short local_player_index,
+	short mode,
+	long unit_index);
 
 /* ---------- globals */
 

@@ -221,6 +221,7 @@ symbols in this file:
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/players.h"
+#include "game/bots.h"
 #include "interface/first_person_weapons.h"
 #include "math/periodic_functions.h"
 #include "models/model_animation_definitions.h"
@@ -2435,6 +2436,7 @@ static void trigger_create_projectiles(
 		long target_object_index= NONE;
 		long projectile_definition_index;
 		short projectile_count;
+		boolean perfect_aim= FALSE;
 
 		if (!TEST_FLAG(trigger_definition->flags, _weapon_trigger_projectiles_cannot_be_aimed_bit) &&
 			unit &&
@@ -2497,6 +2499,7 @@ static void trigger_create_projectiles(
 					&origin);
 
 				target_object_index= player_aim_projectile(player_index, &origin, &forward);
+				perfect_aim= bot_player_is_impossible(player_index);
 			}
 			else if (actor_index!=NONE)
 			{
@@ -2508,6 +2511,12 @@ static void trigger_create_projectiles(
 		{
 			origin= markers[marker_index].matrix.position;
 		}
+
+		/* port: an impossible bot looks at the head. Autoaim pulls toward
+		the body, and the muzzle sits off the camera ray, so put the shot
+		back on the aiming line before the gun's own spread. */
+		if (perfect_aim && unit->unit.gunner_object_index==NONE)
+			unit_adjust_projectile_ray(owner_object_index, &origin, &forward, &velocity, TRUE, TRUE);
 
 		if (trigger_index==0 && weapon->weapon.alternate_shots_loaded>0)
 		{
@@ -2551,7 +2560,9 @@ static void trigger_create_projectiles(
 					trigger->sequential_non_tracer_rounds= 0;
 				}
 
-				if (error==0.0f)
+				if (perfect_aim)
+					error= 0.0f;
+				else if (error==0.0f)
 				{
 					real fraction= TEST_FLAG(trigger_definition->flags, _weapon_trigger_analog_rate_of_fire_bit) ?
 						weapon->weapon.primary_trigger :
@@ -2562,8 +2573,9 @@ static void trigger_create_projectiles(
 					error= hardcore_rules_spread(weapon->definition_index, error);
 				}
 
-				if (!TEST_FLAG(trigger_definition->flags, _weapon_trigger_use_error_when_unzoomed_bit) ||
-					!TEST_FLAG(weapon->weapon.control_flags, _weapon_control_zoomed_bit))
+				if (!perfect_aim &&
+					(!TEST_FLAG(trigger_definition->flags, _weapon_trigger_use_error_when_unzoomed_bit) ||
+					!TEST_FLAG(weapon->weapon.control_flags, _weapon_control_zoomed_bit)))
 				{
 					random_vector_in_cone3d(&data.forward, trigger_definition->projectile_error_inner_cone_angle, error, &data.forward);
 				}

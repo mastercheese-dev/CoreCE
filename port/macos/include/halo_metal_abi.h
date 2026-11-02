@@ -303,6 +303,9 @@ int host_metal_submit(uint32_t packet, uint32_t size, uint32_t reply, uint32_t r
 int host_metal_readback(uint32_t id, uint32_t generation, uint32_t plane,
                         uint32_t destination, uint32_t size, uint32_t reply, uint32_t reply_size);
 void host_metal_shutdown(void);
+/* Stop writing the Metal warmup file. An update deletes that file, and a
+later save would put the old one back. */
+void host_metal_forget_warmup(void);
 /* Block until the next display-locked 60 Hz tick. Falls back to a plain
  * 1/60 s sleep before the display link is running. */
 void host_metal_pace_vblank(void);

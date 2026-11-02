@@ -293,6 +293,25 @@ const char *platform_save_root(void)
 	return root;
 }
 
+void platform_mark_resource_caches_stale(void)
+{
+	char path[1024];
+	FILE *file;
+
+	/* z:\cache000.map and the rest are filled again from the maps. The
+	marker sits beside them. Saves under z:\saved stay. */
+	platform_translate_path("z:\\resource-cache-clear", path, sizeof(path));
+	file = fopen(path, "wb");
+	if (!file)
+	{
+		platform_log("update: could not mark resource caches to rebuild (%s)", strerror(errno));
+		return;
+	}
+	fputc('1', file);
+	fclose(file);
+	platform_log("update: resource caches will be rebuilt");
+}
+
 const char *platform_custom_edition_root(void)
 {
 	static char root[MAX_PATH];

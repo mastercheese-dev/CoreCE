@@ -595,6 +595,8 @@ struct network_game *network_game_server_get_game(struct network_game_server *se
 #include "units/units.h"
 #include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
 #include "hardcore_rules.h" /* port: hardcore kills and item spawns */
+#include "game/bots.h"
+#include "../../port/linux/src/matchmaking.h"
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -5596,12 +5598,63 @@ void game_engine_playlist_next(
 	return;
 }
 
+/* a LAN match had a player in it. The next one starts clear. */
+static boolean lan_match_had_a_player;
+
+static boolean lan_player_is_bot(struct player_datum *player)
+{
+	if (bot_controller_is_bot(player->network_player_data.machine_index,
+			player->network_player_data.controller_index))
+		return TRUE;
+	return ustrncmp(player->name, L"Bot", 3) == 0;
+}
+
+/* the last player has left a LAN match, and lobby bots are still in it */
+static boolean lan_match_only_bots_left(void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	long humans;
+	long bots;
+	long departed;
+
+	if (!network_game_is_active() || matchmaking_game_port())
+		return FALSE;
+	if (!player_data || !player_data->valid)
+		return FALSE;
+
+	humans = 0;
+	bots = 0;
+	departed = 0;
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		/* a player gone while the map loaded is already quitting on the
+		first tick, so that leave counts too */
+		if (player->quit_out_of_game || player->quit_out_of_game_time != NONE)
+		{
+			if (!lan_player_is_bot(player))
+				departed++;
+			continue;
+		}
+		if (lan_player_is_bot(player))
+			bots++;
+		else
+			humans++;
+	}
+	if (humans > 0 || departed > 0)
+		lan_match_had_a_player = TRUE;
+	return lan_match_had_a_player && humans == 0 && bots > 0;
+}
+
 boolean game_engine_should_end_game(
 	void)
 {
 	boolean should_end_game = FALSE;
 
 	if (game_engine && !multiple_teams_alive())
+		should_end_game = TRUE;
+	if (game_engine && lan_match_only_bots_left())
 		should_end_game = TRUE;
 	/* port: the gametype's time limit (game_variant_options) */
 	if (game_engine && game_variant_options_get()->time_limit > 0 &&
@@ -7422,6 +7475,7 @@ void game_engine_initialize(
 {
 	csmemset(&game_engine_globals, 0, sizeof(game_engine_globals));
 	game_engine_globals.postgame_state = game_engine_mode_active;
+	lan_match_had_a_player = FALSE;
 
 	if (variant && variant->game_engine_index)
 	{

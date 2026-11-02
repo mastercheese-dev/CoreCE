@@ -403,6 +403,8 @@ static void cache_files_verify_language(
 	void);
 static void cache_files_open_cache_files(
 	void);
+static void cache_files_discard_marked_caches(
+	void);
 static void CALLBACK cache_file_read_io_completion_routine(
 	unsigned long error_code,
 	unsigned long bytes_transferred,
@@ -1023,6 +1025,39 @@ static void cache_files_verify_language(
 	return;
 }
 
+/* an update leaves z:\resource-cache-clear. those cache maps are filled
+again from the disc. a file the process that wrote the marker still has
+open is tried for a moment. z:\saved is not one of these files */
+static void cache_files_discard_marked_caches(
+	void)
+{
+	short map_file_index;
+	int attempt;
+	int blocked;
+
+	if (GetFileAttributesA("z:\\resource-cache-clear") == (DWORD)-1)
+		return;
+	blocked = FALSE;
+	for (map_file_index = 0; map_file_index < MAXIMUM_CACHE_FILES; map_file_index++)
+	{
+		char path[64];
+
+		sprintf(path, "z:\\cache%03d.map", map_file_index);
+		if (GetFileAttributesA(path) == (DWORD)-1)
+			continue;
+		for (attempt = 0; attempt < 20; attempt++)
+		{
+			if (DeleteFileA(path) || GetFileAttributesA(path) == (DWORD)-1)
+				break;
+			Sleep(100);
+		}
+		if (GetFileAttributesA(path) != (DWORD)-1)
+			blocked = TRUE;
+	}
+	if (!blocked)
+		DeleteFileA("z:\\resource-cache-clear");
+}
+
 static void cache_files_open_cache_files(
 	void)
 {
@@ -1035,6 +1070,7 @@ static void cache_files_open_cache_files(
 	boolean valid;
 	short map_file_index;
 
+	cache_files_discard_marked_caches();
 	cached_map_files_delete(NUMBER_OF_CACHED_MAP_FILES);
 	for (map_file_index = 0;
 		map_file_index < NUMBER_OF_CACHED_MAP_FILES;

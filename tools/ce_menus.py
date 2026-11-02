@@ -77,25 +77,25 @@ CHILD_OFFSETS = {
     ("ui\\shell\\main_menu\\main_menu_select_list", "ui\\shell\\main_menu\\main_menu_item_quit_game"):
         port_settings.QUIT_ITEM_PLACE,
     ("ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_select_list",
-     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_join_item"): (-32, 78),
+     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_join_item"): (-32, 73),
     ("ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_select_list",
-     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_join_internet_item"): (0, 106),
+     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_join_internet_item"): (0, 113),
     ("ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_select_list",
-     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_join_lan_item"): (0, 134),
+     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_join_lan_item"): (0, 133),
     ("ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_select_list",
-     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_join_direct_item"): (0, 162),
+     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_join_direct_item"): (0, 153),
     ("ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_select_list",
-     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_create_item"): (-32, 190),
+     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_create_item"): (-32, 173),
     ("ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_select_list",
-     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_create_internet_item"): (0, 218),
+     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_create_internet_item"): (0, 193),
     ("ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_select_list",
-     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_create_lan_item"): (0, 246),
+     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_create_lan_item"): (0, 213),
     ("ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_select_list",
-     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_gametypes_item"): (0, 351),
+     "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_gametypes_item"): (0, 262),
     ("ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_select_list",
      "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_button_bar"): (0, 414),
     ("ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_select_screen",
-     "ui\\shell\\main_menu\\blueline"): (64, 314),
+     "ui\\shell\\main_menu\\blueline"): (64, 255),
     # the browser's rows up under the column titles, into the place of the
     # scroll up button (hidden: the list does not scroll)
     **{("ui\\shell\\main_menu\\multiplayer_type_select\\join_game\\join_game_items_list",
@@ -103,7 +103,7 @@ CHILD_OFFSETS = {
        for row in range(1, 16)},
     # the map lists' first row, the SINGLEPLAYER or MULTIPLAYER chooser
     # (port_settings.MAP_KIND_CHOOSER), where the gametype list has its own
-    **{(f"ui\\shell\\main_menu\\{list_tag}", "ui\\shell\\main_menu\\new_select\\list_item_0"): (82, 73)
+    **{(f"ui\\shell\\main_menu\\{list_tag}", "ui\\shell\\main_menu\\new_select\\list_item_0"): (20, 73)
        for list_tag in ("multiplayer_type_select\\mp_map_select\\mp_map_select_list_2",
                         "solo_level_select\\solo_level_select_list")},
 }

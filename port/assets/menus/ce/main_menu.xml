@@ -3,9 +3,6 @@
 <menus root="main_menu/main_menu">
 	<widget name="main_menu/blueline" controller="1" width="192" height="2" bitmap="bitmaps/blue">
 	</widget>
-	<widget name="main_menu/build_number" type="text" controller="1" width="150" height="20" font="ui\small_ui" color="#FFFF8000">
-		<data input="build number textbox only"/>
-	</widget>
 	<widget name="main_menu/current_profile_name" type="text" controller="1" left="10" top="446" width="340" height="34" font="ui\large_ui" color="#FFCCCCCC">
 	</widget>
 	<widget name="main_menu/halo_logo" controller="1" width="640" height="256" bitmap="ui\shell\main_menu\halo_logo">
@@ -16,7 +13,6 @@
 		<on event="b" open="main_menu/quit_select/quit_screen"/>
 		<child widget="main_menu/halo_logo" y="28"/>
 		<child widget="main_menu/main_menu_select_list"/>
-		<child widget="main_menu/build_number" x="450" y="400"/>
 	</widget>
 	<widget name="main_menu/main_menu_item_load_camp" type="text" width="256" height="33" bitmap="main_menu/menu_load_campaign" string_list="main_menu/main_menu_options" string_index="1" font="ui\small_ui" color="#000080FF">
 		<on event="a" run="new game if no plyr profiles" label="load_campaign" open="main_menu/campaign_select/campaign_menu" branch="true"/>
@@ -47,7 +43,7 @@
 		<on event="left_mouse" run="mouse emit accept event"/>
 		<conditional widget="main_menu/profile_manager/settings_creating_profile" if_failed="true"/>
 	</widget>
-	<widget name="main_menu/main_menu_list_ext_desc" controller="1" left="-1" top="-1" width="1" height="1" bitmap="bitmaps/white" color="#FF0080FF">
+	<widget name="main_menu/main_menu_list_ext_desc" controller="1" left="-1" top="-1" width="1" height="1" bitmap="bitmaps/white" color="#FF2896FF">
 	</widget>
 	<widget name="main_menu/main_menu_select_list" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_items" description="main_menu/main_menu_list_ext_desc">
 		<data input="main menu fake animate"/>

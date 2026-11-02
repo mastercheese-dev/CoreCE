@@ -406,6 +406,10 @@ static char const *const port_function_names[] =
 	"port list copy back",
 	/* (Multiplayer's MATCHMAKING) */
 	"port mm open", "port mm choose", "port mm leave", "port mm launch",
+	/* (a profile's CLIPS) */
+	"port clips open", "port clips play", "port clips delete",
+	"port clips page up", "port clips page down",
+	"port clips keep down", "port clips keep up",
 };
 
 /* the PC version's game data functions that the Xbox's have not, from
@@ -436,6 +440,8 @@ static char const *const port_game_data_input_names[] =
 	"port coop friendly fire text",
 	/* (MATCHMAKING's search) */
 	"port mm update",
+	/* (a profile's CLIPS) */
+	"port clips list",
 };
 
 static struct

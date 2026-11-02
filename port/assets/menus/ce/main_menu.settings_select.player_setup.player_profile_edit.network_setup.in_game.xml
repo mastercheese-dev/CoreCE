@@ -17,16 +17,16 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/in_game/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/in_game/button_defaults" y="1"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/in_game/button_ok" x="380" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/in_game/button_ok" x="406" y="1"/>
 		<child widget="common_button_cancel" x="510" y="1"/>
 		<on event="right_trigger" run="mouse emit accept event"/>
 </widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/in_game/button_defaults" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="3" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/in_game/button_defaults" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="3" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="port settings defaults"/>
 		<on event="start" run="port settings defaults"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/in_game/button_ok" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/in_game/button_ok" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="port settings save" back="true"/>
 		<on event="start" run="port settings save" back="true"/>
 		<on event="left_mouse" run="mouse emit accept event"/>

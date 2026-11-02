@@ -400,6 +400,7 @@ final class Updater {
                     }));
                 extractApk(zip, apk);
                 zip.delete();
+                markResourceCachesStale(activity);
                 activity.runOnUiThread(() -> {
                     progress.dismiss();
                     install(activity);
@@ -479,6 +480,29 @@ final class Updater {
             }
         }
         throw new IOException("the download has no app in it");
+    }
+
+    /**
+     * The guest rebuilds z:\cacheNNN.map when it next starts, and leaves
+     * saves. The host passes that save folder as HALO_SAVE_ROOT
+     * (port/android/host/host_main.c), which is the guest's save root.
+     */
+    private static void markResourceCachesStale(Activity activity) {
+        File external = activity.getExternalFilesDir(null);
+        File folder;
+        File marker;
+
+        if (external == null)
+            return;
+        folder = new File(external, "save/z");
+        if (!folder.mkdirs() && !folder.isDirectory())
+            return;
+        marker = new File(folder, "resource-cache-clear");
+        try (OutputStream out = new FileOutputStream(marker)) {
+            out.write('1');
+        } catch (IOException e) {
+            android.util.Log.i("halo", "update: could not mark resource caches to rebuild");
+        }
     }
 
     /**

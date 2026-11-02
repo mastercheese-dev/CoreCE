@@ -2083,14 +2083,24 @@ static void set_textbox_to_build_number(
 	/* Name, type and function scope from the 2003 PC demo PDB and the HCEX PDB (static local
 	   wchar_t build_number_string[0x40]). Neither PDB records the block: placing it at the top of
 	   the function is unattested. January corroborates: .bss +0x28, referenced only here. */
+#ifndef HALO_BUILD_NUMBER
+#define HALO_BUILD_NUMBER 0
+#endif
+#ifndef HALO_BUILD_CHANNEL
+#define HALO_BUILD_CHANNEL "main"
+#endif
+	/* A testing build shows 0.3.N. A main release shows its build-N number.
+	   The map format string stays 01.01.14.2342. */
 	static wchar_t build_number_string[64];
+	static int build_number_ready;
 
-	if (!build_number_string[0])
+	if (!build_number_ready)
 	{
-		ascii_to_wide(
-			"01.01.14.2342",
-			build_number_string,
-			sizeof(build_number_string));
+		build_number_ready = 1;
+		if (HALO_BUILD_NUMBER > 0 && HALO_BUILD_CHANNEL[0] == 't')
+			usnprintf(build_number_string, NUMBEROF(build_number_string) - 1, L"0.3.%d", HALO_BUILD_NUMBER);
+		else if (HALO_BUILD_NUMBER > 0)
+			usnprintf(build_number_string, NUMBEROF(build_number_string) - 1, L"build-%d", HALO_BUILD_NUMBER);
 	}
 
 	if (!widget->parameters.text_box.text)

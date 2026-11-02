@@ -44,7 +44,10 @@ boolean main_menu_is_active(void);
 #define HARDCORE_VIEW_MAXIMUM 4
 
 /* the sight and the aim, kept from the last tick so the pane can draw
-between them. the camera is asked before the frame's object blend. */
+between them. the camera is asked before the frame's object blend.
+a host correction is drawn on top and fades, with the same numbers as
+the local view (render_interpolation.c): 0.6 of it remains after a tick,
+and a sum past 8 world units is a jump. */
 struct hardcore_view_camera
 {
 	boolean valid;
@@ -52,7 +55,13 @@ struct hardcore_view_camera
 	long tick;
 	struct observer_result previous;
 	struct observer_result latest;
+	real_vector3d correction;
+	real_vector3d correction_pending;
 };
+
+#define VIEW_CORRECTION_DECAY 0.6f
+#define VIEW_CORRECTION_NEGLIGIBLE 0.001f
+#define VIEW_CORRECTION_MAXIMUM 8.0f
 
 static long view_unit[HARDCORE_VIEW_MAXIMUM];
 static long view_player[HARDCORE_VIEW_MAXIMUM];
@@ -596,14 +605,90 @@ static void hardcore_views_death_place(
 	position->z = focus->z + (desired.z - focus->z) * scale;
 }
 
+static void hardcore_views_correction_clear(struct hardcore_view_camera *camera)
+{
+	camera->correction.i = 0.0f;
+	camera->correction.j = 0.0f;
+	camera->correction.k = 0.0f;
+	camera->correction_pending.i = 0.0f;
+	camera->correction_pending.j = 0.0f;
+	camera->correction_pending.k = 0.0f;
+}
+
 static void hardcore_views_smooth_drop(short window_index)
 {
 	if (window_index >= 0 && window_index < HARDCORE_VIEW_MAXIMUM)
+	{
 		view_camera[window_index].valid = FALSE;
+		hardcore_views_correction_clear(&view_camera[window_index]);
+	}
+}
+
+/* the pane was showing this body, on foot or in the seat whose parent
+moved. the snapshots move with the body, and the difference is drawn
+until it fades. */
+void hardcore_views_correct_unit(long unit_index, real_vector3d const *offset)
+{
+	short window;
+
+	if (unit_index == NONE || !offset)
+		return;
+	for (window = 0; window < HARDCORE_VIEW_MAXIMUM; window++)
+	{
+		struct hardcore_view_camera *camera = &view_camera[window];
+		real_vector3d sum;
+
+		if (window >= view_count || window == local_slot || !camera->valid)
+			continue;
+		if (view_unit[window] != unit_index &&
+			!(death_on[window] && death_body[window] == unit_index))
+			continue;
+		camera->previous.position.x -= offset->i;
+		camera->previous.position.y -= offset->j;
+		camera->previous.position.z -= offset->k;
+		camera->latest.position.x -= offset->i;
+		camera->latest.position.y -= offset->j;
+		camera->latest.position.z -= offset->k;
+		camera->correction_pending.i += offset->i;
+		camera->correction_pending.j += offset->j;
+		camera->correction_pending.k += offset->k;
+		sum.i = camera->correction.i + camera->correction_pending.i;
+		sum.j = camera->correction.j + camera->correction_pending.j;
+		sum.k = camera->correction.k + camera->correction_pending.k;
+		if (!(sum.i * sum.i + sum.j * sum.j + sum.k * sum.k <=
+			VIEW_CORRECTION_MAXIMUM * VIEW_CORRECTION_MAXIMUM))
+			hardcore_views_correction_clear(camera);
+	}
+}
+
+void hardcore_views_corrections_tick(void)
+{
+	short window;
+
+	for (window = 0; window < HARDCORE_VIEW_MAXIMUM; window++)
+	{
+		struct hardcore_view_camera *camera = &view_camera[window];
+		real size;
+
+		if (!camera->valid)
+			continue;
+		camera->correction.i = camera->correction.i * VIEW_CORRECTION_DECAY + camera->correction_pending.i;
+		camera->correction.j = camera->correction.j * VIEW_CORRECTION_DECAY + camera->correction_pending.j;
+		camera->correction.k = camera->correction.k * VIEW_CORRECTION_DECAY + camera->correction_pending.k;
+		camera->correction_pending.i = 0.0f;
+		camera->correction_pending.j = 0.0f;
+		camera->correction_pending.k = 0.0f;
+		size = camera->correction.i < 0.0f ? -camera->correction.i : camera->correction.i;
+		size += camera->correction.j < 0.0f ? -camera->correction.j : camera->correction.j;
+		size += camera->correction.k < 0.0f ? -camera->correction.k : camera->correction.k;
+		if (size < VIEW_CORRECTION_NEGLIGIBLE)
+			hardcore_views_correction_clear(camera);
+	}
 }
 
 /* between the last two ticks, the same fraction the world is drawn at.
-a jump in place or aim (a respawn, the death camera) is left as a cut */
+a jump in place (a respawn) or in aim is left as a cut. the place's
+glide stays through an aim cut */
 static void hardcore_views_smooth(short window_index, struct observer_result *result)
 {
 	struct hardcore_view_camera *camera;
@@ -631,7 +716,14 @@ static void hardcore_views_smooth(short window_index, struct observer_result *re
 			dot = result->forward.i * camera->latest.forward.i +
 				result->forward.j * camera->latest.forward.j +
 				result->forward.k * camera->latest.forward.k;
-			if (!(dx * dx + dy * dy + dz * dz <= 9.0f) || !(dot >= 0.5f))
+			/* a respawn. the glide belongs to the body this pane was on.
+			   a fast look still keeps it: the aim cuts, the place does not */
+			if (!(dx * dx + dy * dy + dz * dz <= 9.0f))
+			{
+				camera->has_previous = FALSE;
+				hardcore_views_correction_clear(camera);
+			}
+			else if (!(dot >= 0.5f))
 				camera->has_previous = FALSE;
 		}
 		if (camera->has_previous)
@@ -640,9 +732,19 @@ static void hardcore_views_smooth(short window_index, struct observer_result *re
 		camera->tick = tick;
 		camera->valid = TRUE;
 	}
-	if (!halo_interpolation_enabled() || !camera->has_previous)
-		return;
 	t = game_time_get_tick_fraction();
+	/* one frame a tick, the usual setting, and a frame that skipped ticks:
+	   this tick's pose, drawn back by the same glide as the body. frames
+	   between ticks blend below and fade the glide across the tick */
+	if (!halo_interpolation_enabled() || !camera->has_previous)
+	{
+		real fade = 1.0f + (VIEW_CORRECTION_DECAY - 1.0f) * t;
+
+		result->position.x += camera->correction.i * fade + camera->correction_pending.i;
+		result->position.y += camera->correction.j * fade + camera->correction_pending.j;
+		result->position.z += camera->correction.k * fade + camera->correction_pending.k;
+		return;
+	}
 	blended = camera->latest;
 	blended.position.x = camera->previous.position.x +
 		(camera->latest.position.x - camera->previous.position.x) * t;
@@ -669,6 +771,14 @@ static void hardcore_views_smooth(short window_index, struct observer_result *re
 	}
 	blended.field_of_view = camera->previous.field_of_view +
 		(camera->latest.field_of_view - camera->previous.field_of_view) * t;
+	{
+		/* whole until this tick begins to fade it, as the body is drawn */
+		real fade = 1.0f + (VIEW_CORRECTION_DECAY - 1.0f) * t;
+
+		blended.position.x += camera->correction.i * fade + camera->correction_pending.i;
+		blended.position.y += camera->correction.j * fade + camera->correction_pending.j;
+		blended.position.z += camera->correction.k * fade + camera->correction_pending.k;
+	}
 	*result = blended;
 }
 
