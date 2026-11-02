@@ -124,9 +124,9 @@ SCREENS = {
         "mouse_accept": True,
         "rows": [
             ("HORIZONTAL SENSITIVITY:", "input.mouse_look_horizontal", SENSITIVITIES,
-             "How fast the view turns left and right. 3.00 is the\noriginal. Arrows step by 0.5. Click the number to type.", None),
+             "How fast the view turns left and right. 10.00 turns as\nfast as 1.00 used to. Arrows step by 0.5. Click the number to type.", None),
             ("VERTICAL SENSITIVITY:", "input.mouse_look_vertical", SENSITIVITIES,
-             "How fast the view turns up and down. 3.00 is the\noriginal. Arrows step by 0.5. Click the number to type.", None),
+             "How fast the view turns up and down. 10.00 turns as\nfast as 1.00 used to. Arrows step by 0.5. Click the number to type.", None),
             ("INVERT VERTICAL AXIS:", "input.invert_mouse", YES_NO,
              "Moving the mouse forward looks down.", None),
             ("AIM ASSIST:", "input.mouse_aim_assist", ON_OFF,

@@ -115,9 +115,9 @@ static Uint64 touch_aimed_ms = 0;
 worn stick's drift */
 #define STICK_AIMING_DEFLECTION 8000
 
-/* yaw 60 + 20*s and pitch 30 + 10*s, divided by the original (120 and 60).
-Setting 3 is 1. Whole numbers 1 through 10 match the Xbox tables. 0 is the
-step below 1. A vertical below 0 uses the horizontal setting. */
+/* the menu's 0 to 10. the controller uses that number as the Xbox rate.
+the mouse uses a tenth of it, so 10 turns as fast as 1 used to, and 0 is
+still the step below that. a vertical below 0 uses the horizontal setting. */
 static float mouse_axis(float sensitivity)
 {
 	if (sensitivity < 0.f)
@@ -129,12 +129,12 @@ static float mouse_axis(float sensitivity)
 
 static float mouse_yaw_scale(float sensitivity)
 {
-	return (60.f + 20.f * mouse_axis(sensitivity)) / 120.f;
+	return (60.f + 20.f * mouse_axis(sensitivity) * 0.1f) / 120.f;
 }
 
 static float mouse_pitch_scale(float sensitivity)
 {
-	return (30.f + 10.f * mouse_axis(sensitivity)) / 60.f;
+	return (30.f + 10.f * mouse_axis(sensitivity) * 0.1f) / 60.f;
 }
 
 static float mouse_config_axis(const char *name)

@@ -7035,27 +7035,32 @@ static void ui_mouse_fit_button_targets(
 	return;
 }
 
-/* the target drawn last (so on top, and the innermost) under a point */
+/* the target drawn last (so on top, and the innermost) under a point.
+the point comes back in the menu's coordinates: a pause menu fitted into
+its pane is drawn smaller than the screen, and a click on its number has
+to be measured there */
 static struct ui_mouse_target *ui_mouse_target_at(
-	short x,
-	short y)
+	short *x,
+	short *y)
 {
 	long index;
-	real px = (real)x;
-	real py = (real)y;
+	real px;
+	real py;
 
-	/* port: the menu was fitted into the pane. the pointer is the
-	screen's, so turn it back to the menu's own coordinates */
+	if (!x || !y)
+		return NULL;
+	px = (real)*x;
+	py = (real)*y;
 	if (rasterizer_screen_fit_pointer(&px, &py))
 	{
-		x = (short)px;
-		y = (short)py;
+		*x = (short)px;
+		*y = (short)py;
 	}
 	for (index = ui_mouse_target_count - 1; index >= 0; index--)
 	{
 		rectangle2d const *bounds = &ui_mouse_targets[index].bounds;
 
-		if (x >= bounds->x0 && x < bounds->x1 && y >= bounds->y0 && y < bounds->y1)
+		if (*x >= bounds->x0 && *x < bounds->x1 && *y >= bounds->y0 && *y < bounds->y1)
 			return &ui_mouse_targets[index];
 	}
 
@@ -7570,8 +7575,13 @@ static void ui_widgets_process_mouse(
 		}
 		if (!ui_mouse_press_count && ui_mouse_hover_pending)
 		{
+			short hover_x;
+			short hover_y;
+
 			ui_mouse_hover_pending = FALSE;
-			target = ui_mouse_target_at(ui_mouse_hover_x, ui_mouse_hover_y);
+			hover_x = ui_mouse_hover_x;
+			hover_y = ui_mouse_hover_y;
+			target = ui_mouse_target_at(&hover_x, &hover_y);
 			if (target)
 			{
 				switch (target->kind)
@@ -7604,9 +7614,14 @@ static void ui_widgets_process_mouse(
 		}
 		if (!ui_mouse_press_count && ui_mouse_click_pending)
 		{
+			short click_x;
+			short click_y;
+
 			ui_mouse_click_pending = FALSE;
 			ui_mouse_hovered_last = FALSE;
-			target = ui_mouse_target_at(ui_mouse_click_x, ui_mouse_click_y);
+			click_x = ui_mouse_click_x;
+			click_y = ui_mouse_click_y;
+			target = ui_mouse_target_at(&click_x, &click_y);
 			if (ui_debug_targets_enabled())
 				ui_debug_log_click(ui_mouse_click_x, ui_mouse_click_y, target, ui_debug_frame - ui_debug_click_frame);
 			if (target)
@@ -7630,7 +7645,7 @@ static void ui_widgets_process_mouse(
 					ui_mouse_give_focus(target->widget);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 					if (game_settings_is_adjustable(target->widget))
-						ui_mouse_press(ui_mouse_click_x < (target->bounds.x0 + target->bounds.x1) / 2 ?
+						ui_mouse_press(click_x < (target->bounds.x0 + target->bounds.x1) / 2 ?
 							_widget_event_dpad_left : _widget_event_dpad_right);
 					else
 #endif
@@ -7642,12 +7657,12 @@ static void ui_widgets_process_mouse(
 					boolean first_half;
 
 					ui_mouse_give_focus(target->widget);
-					if (menu_sensitivity_value_click(target->widget, ui_mouse_click_x, target->split_x))
+					if (menu_sensitivity_value_click(target->widget, click_x, target->split_x))
 						break;
 					ui_mouse_list_directions(target->widget, &back, &forward);
 					first_half = back == _widget_event_dpad_left ?
-						ui_mouse_click_x < target->split_x :
-						ui_mouse_click_y < target->split_y;
+						click_x < target->split_x :
+						click_y < target->split_y;
 					ui_mouse_press(first_half ? back : forward);
 					break;
 				}

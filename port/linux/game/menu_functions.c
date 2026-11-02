@@ -470,16 +470,8 @@ static unsigned short stick_edit_horizontal_saved;
 static unsigned short stick_edit_vertical_saved;
 static boolean stick_edit_open;
 /* the local player whose pause menu is editing settings, else NONE (the
-main menu, which edits player 1's profile and the machine's mouse) */
+main menu). Mouse Settings is the machine's, on both screens. */
 static short in_game_settings_player = NONE;
-static boolean mouse_edit_open;
-static boolean mouse_edit_set;
-static boolean mouse_edit_dirty;
-static boolean mouse_edit_vertical_same;
-static unsigned short mouse_edit_horizontal;
-static unsigned short mouse_edit_vertical;
-static boolean mouse_edit_invert;
-static boolean mouse_edit_aim;
 
 /* a player with no saved profile keeps look and mouse beside this key */
 long player_profile_control_key(short local_player_index, long profile_index)
@@ -700,7 +692,6 @@ void player_profile_stick_scales_begin(long profile_index)
 void player_profile_stick_scales_end(void)
 {
 	stick_edit_open = FALSE;
-	mouse_edit_open = FALSE;
 }
 
 void player_profile_stick_scales_seed(long key, long look_sensitivity)
@@ -718,42 +709,20 @@ void player_profile_stick_scales_seed(long key, long look_sensitivity)
 
 void player_profile_mouse_begin(long key)
 {
-	short slot;
-
-	mouse_edit_set = FALSE;
-	mouse_edit_dirty = FALSE;
-	mouse_edit_vertical_same = TRUE;
-	mouse_edit_horizontal = SENSITIVITY_DEFAULT_HUNDREDTHS;
-	mouse_edit_vertical = SENSITIVITY_DEFAULT_HUNDREDTHS;
-	mouse_edit_invert = FALSE;
-	mouse_edit_aim = FALSE;
-	if (stick_scale_find(key, &slot) && stick_scale_cache[slot].mouse_set)
-	{
-		mouse_edit_set = TRUE;
-		mouse_edit_horizontal = stick_scale_cache[slot].mouse_horizontal;
-		mouse_edit_vertical = stick_scale_cache[slot].mouse_vertical;
-		mouse_edit_vertical_same = stick_scale_cache[slot].mouse_vertical_same;
-		mouse_edit_invert = stick_scale_cache[slot].mouse_invert;
-		mouse_edit_aim = stick_scale_cache[slot].mouse_aim;
-	}
-	mouse_edit_open = TRUE;
+	(void)key;
 }
 
 void player_profile_mouse_apply(long key, short controller_index)
 {
 	short slot;
 
-	/* the mouse aims the player on controller 0 */
+	/* the mouse aims the player on controller 0, from the machine config
+	that Mouse Settings writes on the main menu and in the pause menu */
 	if (controller_index != 0)
 		return;
-	if (stick_scale_find(key, &slot) && stick_scale_cache[slot].mouse_set)
-		halo_linux_mouse_player((float)stick_scale_cache[slot].mouse_horizontal / 100.f,
-			stick_scale_cache[slot].mouse_vertical_same ? -1.f :
-				(float)stick_scale_cache[slot].mouse_vertical / 100.f,
-			stick_scale_cache[slot].mouse_invert ? 1 : 0,
-			stick_scale_cache[slot].mouse_aim ? 1 : 0);
-	else
-		halo_linux_mouse_player(-1.f, -1.f, 0, 0);
+	if (stick_scale_find(key, &slot))
+		stick_scale_cache[slot].mouse_set = FALSE;
+	halo_linux_mouse_player(-1.f, -1.f, 0, 0);
 }
 
 boolean player_profile_stick_scales_dirty(void)
@@ -797,42 +766,6 @@ void player_profile_stick_scales_apply(long profile_index, short controller_inde
 	input_abstraction_set_look_rates(controller_index, sensitivity_yaw(horizontal), sensitivity_pitch(vertical));
 }
 
-/* 0 horizontal, 1 vertical, 2 invert, 3 aim assist, else not a mouse setting */
-static int mouse_setting_which(char const *name)
-{
-	if (!strcmp(name, "input.mouse_look_horizontal"))
-		return 0;
-	if (!strcmp(name, "input.mouse_look_vertical"))
-		return 1;
-	if (!strcmp(name, "input.invert_mouse"))
-		return 2;
-	if (!strcmp(name, "input.mouse_aim_assist"))
-		return 3;
-	return -1;
-}
-
-/* the first change in a match copies the machine's mouse, then keeps this
-player's own */
-static void mouse_edit_capture(void)
-{
-	char text[32];
-
-	if (mouse_edit_set)
-		return;
-	mouse_edit_set = TRUE;
-	mouse_edit_horizontal = SENSITIVITY_DEFAULT_HUNDREDTHS;
-	mouse_edit_vertical = SENSITIVITY_DEFAULT_HUNDREDTHS;
-	mouse_edit_vertical_same = config_mouse_vertical_follows() ? TRUE : FALSE;
-	if (config_text("input.mouse_look_horizontal", text, sizeof(text)))
-		mouse_edit_horizontal = sensitivity_hundredths_from_text(text);
-	if (mouse_edit_vertical_same)
-		mouse_edit_vertical = mouse_edit_horizontal;
-	else if (config_text("input.mouse_look_vertical", text, sizeof(text)))
-		mouse_edit_vertical = sensitivity_hundredths_from_text(text);
-	mouse_edit_invert = config_boolean("input.invert_mouse") ? TRUE : FALSE;
-	mouse_edit_aim = config_boolean("input.mouse_aim_assist") ? TRUE : FALSE;
-}
-
 static short controller_for_local_player(short player)
 {
 	short controller = player_ui_get_single_player_local_player_controller(player);
@@ -842,34 +775,17 @@ static short controller_for_local_player(short player)
 	return controller;
 }
 
-/* the pause menu's mouse settings, onto this player and their profile */
+/* the pause menu wrote the same mouse config the main menu writes. the
+live aim drops any older per-player copy and reads that config */
 static void mouse_commit(short player)
 {
 	long index;
-	long key;
-	short slot;
-	struct player_profile profile;
 
-	/* only a mouse change on this screen. another settings screen's OK
-	must not write this player's profile */
-	if (player < 0 || player >= MAXIMUM_LOCAL_PLAYERS || !mouse_edit_open || !mouse_edit_dirty)
+	if (player < 0 || player >= MAXIMUM_LOCAL_PLAYERS)
 		return;
 	index = player_ui_get_active_player_profile_index(player);
-	key = player_profile_control_key(player, index);
-	slot = stick_scale_slot(key);
-	stick_scale_cache[slot].mouse_set = TRUE;
-	stick_scale_cache[slot].mouse_horizontal = mouse_edit_horizontal;
-	stick_scale_cache[slot].mouse_vertical = mouse_edit_vertical;
-	stick_scale_cache[slot].mouse_vertical_same = mouse_edit_vertical_same;
-	stick_scale_cache[slot].mouse_invert = mouse_edit_invert;
-	stick_scale_cache[slot].mouse_aim = mouse_edit_aim;
-	player_profile_mouse_apply(key, controller_for_local_player(player));
-	if (index != NONE)
-	{
-		player_ui_get_active_player_profile(player, &profile);
-		player_profile_save(index, &profile);
-	}
-	mouse_edit_dirty = FALSE;
+	player_profile_mouse_apply(player_profile_control_key(player, index),
+		controller_for_local_player(player));
 }
 
 /* a setting's value as text, or (default_value) its default: config.toml's,
@@ -878,21 +794,7 @@ static boolean setting_text(char const *name, char *text, unsigned int size, boo
 {
 	short index;
 	short which;
-	int mouse;
 
-	mouse = mouse_setting_which(name);
-	if (in_game_settings_player != NONE && mouse_edit_open && mouse >= 0 && !default_value && mouse_edit_set)
-	{
-		if (mouse == 0)
-			sensitivity_format(mouse_edit_horizontal, text, size);
-		else if (mouse == 1)
-			sensitivity_format(mouse_edit_vertical_same ? mouse_edit_horizontal : mouse_edit_vertical, text, size);
-		else if (mouse == 2)
-			snprintf(text, size, "%s", mouse_edit_invert ? "true" : "false");
-		else
-			snprintf(text, size, "%s", mouse_edit_aim ? "true" : "false");
-		return TRUE;
-	}
 	if (strncmp(name, "profile.", 8))
 	{
 		if (!(default_value ? config_default(name, text, size) : config_text(name, text, size)))
@@ -970,26 +872,7 @@ static boolean setting_write(char const *name, char const *value)
 {
 	short index;
 	short which;
-	int mouse;
 
-	mouse = mouse_setting_which(name);
-	if (in_game_settings_player != NONE && mouse_edit_open && mouse >= 0)
-	{
-		mouse_edit_capture();
-		if (mouse == 0)
-			mouse_edit_horizontal = sensitivity_hundredths_from_text(value);
-		else if (mouse == 1)
-		{
-			mouse_edit_vertical = sensitivity_hundredths_from_text(value);
-			mouse_edit_vertical_same = FALSE;
-		}
-		else if (mouse == 2)
-			mouse_edit_invert = !strcmp(value, "true") ? TRUE : FALSE;
-		else
-			mouse_edit_aim = !strcmp(value, "true") ? TRUE : FALSE;
-		mouse_edit_dirty = TRUE;
-		return TRUE;
-	}
 	if (strncmp(name, "profile.", 8))
 		return config_write(name, value);
 	which = stick_scale_which(name);
@@ -1042,6 +925,7 @@ static struct widget_instance *sensitivity_field_widget;
 
 static void sensitivity_finish_typing(boolean keep);
 static void sensitivity_follow_focus(struct widget_instance *list);
+static void sensitivity_mirror(struct sensitivity_edit *edit);
 static void text_field_insert(char const *text);
 
 static boolean sensitivity_is_name(char const *name)
@@ -1143,6 +1027,34 @@ static void sensitivity_select(struct widget_instance *widget, unsigned short hu
 	widget->parameters.list.selected_index = setting_value_index(setting, text);
 }
 
+/* controls setup and gamepads, and the pause menu's copy of either, show
+one setting. a change on one row is the number on the others */
+static void sensitivity_mirror(struct sensitivity_edit *edit)
+{
+	struct pc_menu_setting *setting;
+	short index;
+
+	if (!edit || !edit->widget)
+		return;
+	setting = pc_menu_setting_get(edit->widget->definition_tag_index);
+	if (!setting || !sensitivity_is_name(setting->setting))
+		return;
+	for (index = 0; index < SENSITIVITY_EDITS; index++)
+	{
+		struct sensitivity_edit *other = &sensitivity_edits[index];
+		struct pc_menu_setting *other_setting;
+
+		if (!other->used || other == edit || !other->widget)
+			continue;
+		other_setting = pc_menu_setting_get(other->widget->definition_tag_index);
+		if (!other_setting || strcmp(other_setting->setting, setting->setting))
+			continue;
+		other->hundredths = edit->hundredths;
+		other->same = edit->same;
+		sensitivity_select(other->widget, sensitivity_shown(other));
+	}
+}
+
 static boolean setting_load(struct widget_instance *widget)
 {
 	struct pc_menu_setting *setting = pc_menu_setting_get(widget->definition_tag_index);
@@ -1156,11 +1068,8 @@ static boolean setting_load(struct widget_instance *widget)
 	same = FALSE;
 	if (!strcmp(setting->setting, "input.mouse_look_vertical"))
 	{
-		if (in_game_settings_player != NONE && mouse_edit_open && mouse_edit_set)
-			same = mouse_edit_vertical_same;
-		else if (in_game_settings_player == NONE && config_mouse_vertical_follows())
-			same = TRUE;
-		if (same && in_game_settings_player == NONE)
+		same = config_mouse_vertical_follows() ? TRUE : FALSE;
+		if (same)
 			setting_text("input.mouse_look_horizontal", current, sizeof(current), FALSE);
 	}
 	setting->loaded_index = setting_value_index(setting, current);
@@ -4392,6 +4301,7 @@ static void sensitivity_typed(char const *text)
 	edit->hundredths = sensitivity_clamp(hundredths);
 	edit->same = FALSE;
 	sensitivity_select(widget, edit->hundredths);
+	sensitivity_mirror(edit);
 }
 
 static void sensitivity_finish_typing(boolean keep)
@@ -4494,6 +4404,7 @@ boolean menu_sensitivity_step(struct widget_instance *widget, int direction)
 		next = SENSITIVITY_HUNDREDTHS_MAX;
 	edit->hundredths = (unsigned short)next;
 	sensitivity_select(widget, edit->hundredths);
+	sensitivity_mirror(edit);
 	return TRUE;
 }
 
@@ -4504,8 +4415,9 @@ boolean menu_sensitivity_value_click(struct widget_instance *widget, short x, sh
 	if (!sensitivity_find(widget))
 		return FALSE;
 	delta = x > split_x ? (short)(x - split_x) : (short)(split_x - x);
-	/* the number sits in the middle. a click out by the arrows still steps */
-	if (delta > 28)
+	/* the number fills the gap between the arrows, on the main menu and
+	in a fitted pause menu. a click on an arrow still steps */
+	if (delta > 70)
 		return FALSE;
 	sensitivity_begin_typing(widget);
 	return TRUE;
@@ -5780,8 +5692,9 @@ static short browser_chosen_row(void)
 		row < BROWSER_ROWS ? row : NONE;
 }
 
-/* a playlist's own game, named as the catalog names that playlist. the
-server browser still lists it. it is shown full, and Join does not start. */
+/* CCE FFA and CCE Hardcore, or the catalog name of that playlist. CCE FFA
+can be joined and shows its player count. CCE Hardcore stays in the list,
+shown full, and Join does not start. */
 static int mm_browser_same(const char *left, const char *right)
 {
 	if (!left || !right)
@@ -5801,19 +5714,35 @@ static int mm_browser_same(const char *left, const char *right)
 	return *left == 0 && *right == 0;
 }
 
-static int mm_browser_playlist(const struct p2p_listing *game)
+/* 1 is CCE FFA. 2 is CCE Hardcore. 0 is any other server. */
+static int mm_browser_kind(const struct p2p_listing *game)
 {
 	struct matchmaking_catalog catalog;
 	int index;
 
-	if (!game || matchmaking_catalog(&catalog) != 1)
+	if (!game || !game->name[0])
+		return 0;
+	if (mm_browser_same(game->name, "CCE FFA"))
+		return 1;
+	if (mm_browser_same(game->name, "CCE Hardcore"))
+		return 2;
+	if (matchmaking_catalog(&catalog) != 1)
 		return 0;
 	for (index = 0; index < catalog.count; index++)
 	{
-		if (mm_browser_same(catalog.playlist[index].name, game->name))
+		if (!mm_browser_same(catalog.playlist[index].name, game->name))
+			continue;
+		if (!strcmp(catalog.playlist[index].id, "ffa"))
 			return 1;
+		if (!strcmp(catalog.playlist[index].id, "hardcore"))
+			return 2;
 	}
 	return 0;
+}
+
+static int mm_browser_closed(const struct p2p_listing *game)
+{
+	return mm_browser_kind(game) == 2;
 }
 
 static void lobby_browser_begin(void)
@@ -5827,7 +5756,7 @@ static void lobby_browser_begin(void)
 	lobby_browser.ready = FALSE;
 	lobby_browser.password_joined = FALSE;
 	lobby_browser.begin_time = system_milliseconds();
-	/* the catalog names the matchmaking games, so this list can show them full */
+	/* the catalog names the matchmaking games, so CCE Hardcore can show full */
 	matchmaking_watch();
 	p2p_lobby_browse(TRUE);
 }
@@ -6002,7 +5931,7 @@ static int browser_sort_flip(int cmp)
 
 static int listing_players_shown(struct p2p_listing const *game)
 {
-	if (mm_browser_playlist(game) && game->maximum_player_count)
+	if (mm_browser_closed(game) && game->maximum_player_count)
 		return game->maximum_player_count;
 	return game->player_count;
 }
@@ -6313,7 +6242,7 @@ static void lobby_browser_update(struct widget_instance *list)
 		{
 			int players = game->player_count;
 
-			if (mm_browser_playlist(game) && game->maximum_player_count)
+			if (mm_browser_closed(game) && game->maximum_player_count)
 				players = game->maximum_player_count;
 			usnprintf(text, ROW_TEXT_LENGTH - 1, L"%d/%d", players, game->maximum_player_count);
 		}
@@ -6423,7 +6352,7 @@ static void lobby_browser_update(struct widget_instance *list)
 
 			text_to_wide(game->gametype, gametype, NUMBEROF(gametype));
 			{
-				int full = mm_browser_playlist(game);
+				int full = mm_browser_closed(game);
 				int players = full && game->maximum_player_count ? game->maximum_player_count : game->player_count;
 
 				usnprintf(text, NUMBEROF(text) - 1, L"%s: %d %s of %d%s%s", gametype, players,
@@ -6526,7 +6455,7 @@ static boolean lobby_browser_select(struct widget_instance *widget, short contro
 	if (index >= lobby_browser.count)
 		return campaign_fail();
 	game = &lobby_browser.games[index];
-	if (mm_browser_playlist(game) || !game->open || !config_boolean("network.online"))
+	if (mm_browser_closed(game) || !game->open || !config_boolean("network.online"))
 		return campaign_fail();
 	/* (a game with a password: its screen asks for it, then joins) */
 	if (game->locked)
@@ -11856,8 +11785,9 @@ static boolean mm_begin_host(struct widget_instance *widget, struct event_record
 {
 	char build[0x20];
 	wchar_t name[16];
-	const char *title = mm_menu.offer.name[0] ? mm_menu.offer.name : !strcmp(mm_menu.offer.playlist, "ffa") ? "FFA" :
-		!strcmp(mm_menu.offer.playlist, "hardcore") ? "Hardcore" : "Objective";
+	const char *title = !strcmp(mm_menu.offer.playlist, "ffa") ? "CCE FFA" :
+		!strcmp(mm_menu.offer.playlist, "hardcore") ? "CCE Hardcore" :
+		mm_menu.offer.name[0] ? mm_menu.offer.name : "Match";
 
 	if (!mm_menu.offer.map[0] || !mm_menu.offer.port)
 	{
@@ -11880,9 +11810,11 @@ static boolean mm_begin_host(struct widget_instance *widget, struct event_record
 	}
 	multiplayer.mode = _multiplayer_mode_host_internet;
 	multiplayer.hardcore = FALSE;
-	multiplayer.game_private = TRUE;
+	/* listed, so the server browser can show CCE FFA and CCE Hardcore.
+	CCE Hardcore is still refused by Join. */
+	multiplayer.game_private = FALSE;
 	p2p_set_hosting_allowed(1);
-	p2p_set_hosting_public(0);
+	p2p_set_hosting_public(1);
 	p2p_set_hosting_password(NULL);
 	if (!ui_widget_port_host(widget, event, NULL))
 	{
@@ -11905,6 +11837,8 @@ static boolean mm_begin_host(struct widget_instance *widget, struct event_record
 	multiplayer.game_name[NUMBEROF(multiplayer.game_name) - 1] = 0;
 	multiplayer.maximum_players_index = mm_players_index(mm_menu.offer.players);
 	network_game_server_port_set_settings(multiplayer.game_name, mm_menu.offer.players);
+	p2p_set_hosting_public(1);
+	p2p_set_hosting_password(NULL);
 	/* the queue stays up, and the invite is published for the service. */
 	if (party)
 		matchmaking_commit_party();

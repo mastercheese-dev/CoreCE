@@ -79,8 +79,8 @@
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/help_strings">
 		<string text=""/>
-		<string text="How fast the view turns left and right. 3.00 is the\noriginal. Arrows step by 0.5. Click the number to type."/>
-		<string text="How fast the view turns up and down. 3.00 is the\noriginal. Arrows step by 0.5. Click the number to type."/>
+		<string text="How fast the view turns left and right. 10.00 turns as\nfast as 1.00 used to. Arrows step by 0.5. Click the number to type."/>
+		<string text="How fast the view turns up and down. 10.00 turns as\nfast as 1.00 used to. Arrows step by 0.5. Click the number to type."/>
 		<string text="Moving the mouse forward looks down."/>
 		<string text="Slow and drag the view along with a target while\naiming with the mouse, as with a controller."/>
 	</strings>
