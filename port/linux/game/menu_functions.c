@@ -1553,7 +1553,8 @@ static short focused_row(struct widget_instance *list)
 	struct widget_instance *child;
 	short index = 0;
 
-	for (child = list->child; child && index < MAXIMUM_ROWS; child = child->next, index++)
+	/* select map and select gametype have rows past the campaign lists' */
+	for (child = list->child; child; child = child->next, index++)
 	{
 		if (child == list->focused_child)
 			return strncmp(child->name, "list_item_", 10) ? NONE : index;
@@ -1806,7 +1807,9 @@ enum
 	NUMBER_OF_MAP_KINDS
 };
 
-/* the rows after the chooser */
+/* the rows after the chooser, when a list does not say how many it has.
+select map counts its own rows (list_data_rows): fifteen, ending above
+the line over the buttons */
 #define MAP_KIND_ROWS 10
 
 static void visible_set(struct widget_instance *widget, boolean visible);
@@ -1848,10 +1851,29 @@ static void map_kind_set(struct widget_instance *list, short kind)
 		spinner->parameters.list.selected_index = kind;
 }
 
-/* the first of count entries shown, for the entry chosen to be in the middle */
-static short map_kind_first(short chosen, short count)
+/* list_item_ rows after the chooser, until the button bar */
+static short list_data_rows(struct widget_instance *list)
 {
-	return (short)PIN(chosen - MAP_KIND_ROWS / 2, 0, MAX(count - MAP_KIND_ROWS, 0));
+	struct widget_instance *child;
+	short index = 0, rows = 0;
+
+	for (child = list->child; child; child = child->next, index++)
+	{
+		if (index < 1)
+			continue;
+		if (strncmp(child->name, "list_item_", 10))
+			break;
+		rows++;
+	}
+	return rows > 0 ? rows : MAP_KIND_ROWS;
+}
+
+/* the first of count entries shown, for the entry chosen to be in the middle */
+static short map_kind_first(short chosen, short count, short rows)
+{
+	if (rows < 1)
+		rows = 1;
+	return (short)PIN(chosen - rows / 2, 0, MAX(count - rows, 0));
 }
 
 static void map_kind_focus(struct widget_instance *list, short first, short chosen)
@@ -1868,11 +1890,12 @@ static void menu_window_set(struct widget_instance *list, short *first, short co
 static short map_kind_rows_update(struct widget_instance *list, short *first, short count,
 	void (*entry_text)(short entry, wchar_t *text))
 {
-	short shown = (short)MIN(count, MAP_KIND_ROWS);
+	short rows = list_data_rows(list);
+	short shown = (short)MIN(count, rows);
 	short row = focused_row(list), index = 0;
 	struct widget_instance *child;
 
-	menu_window_set(list, first, count, MAP_KIND_ROWS, 1, FALSE);
+	menu_window_set(list, first, count, rows, 1, FALSE);
 	for (child = list->child; child; child = child->next, index++)
 	{
 		wchar_t text[ROW_TEXT_LENGTH];
@@ -2025,7 +2048,7 @@ static boolean level_list_initialize(struct widget_instance *list, short control
 	level_list.map_count = ui_widget_port_multiplayer_maps(&level_list.map_names, &last_used);
 	level_list.kind = MAP_KIND_SINGLEPLAYER;
 	level_list.chosen = level;
-	level_list.first = map_kind_first(level, NUMBER_OF_SINGLE_PLAYER_LEVELS);
+	level_list.first = map_kind_first(level, NUMBER_OF_SINGLE_PLAYER_LEVELS, list_data_rows(list));
 	map_kind_set(list, level_list.kind);
 	map_kind_focus(list, level_list.first, level_list.chosen);
 	return TRUE;
@@ -4036,7 +4059,7 @@ Xbox's networking, run by the engine's port entry points
 (ui_widget_event_handler_functions.c) on our lists */
 
 #define MAXIMUM_ADVERTISED_GAMES 9
-#define GAMETYPE_ROWS 10
+#define GAMETYPE_ROWS 15
 #define MAXIMUM_GAMETYPES 100
 #define BROWSER_ROWS 12
 #define LOBBY_ROWS 11
@@ -4121,6 +4144,9 @@ void *global_network_game_client_get(void);
 void *global_network_game_server_get(void);
 void dispose_global_network_game_client(void);
 void dispose_global_network_game_server(void);
+boolean create_global_network_game_client(void);
+boolean create_global_network_game_server(void);
+void network_game_accept_remote_connections(boolean accept_remote_connections);
 struct network_game *network_game_server_get_game(void *server);
 void game_set_game_variant(struct game_variant *variant);
 boolean network_game_is_splitscreen_local(void);
@@ -4653,7 +4679,7 @@ static void map_step_open(struct widget_instance *list, short step, short entry)
 	map_list.step = step;
 	count = map_step_count();
 	map_list.chosen = (short)PIN(entry, 0, MAX(count - 1, 0));
-	map_list.first = map_kind_first(map_list.chosen, count);
+	map_list.first = map_kind_first(map_list.chosen, count, list_data_rows(list));
 	map_kind_focus(list, map_list.first, map_list.chosen);
 }
 
@@ -4803,12 +4829,44 @@ static void gametype_bank_read(short bank)
 	multiplayer.gametype_chosen = 0;
 }
 
+/* the gametype that shipped as Comp 2v2. the file and the list say 2v2 */
+static void hardcore_comp_rename(void)
+{
+	long indices[MAXIMUM_GAMETYPES];
+	word count = MAXIMUM_GAMETYPES;
+	short index;
+	static boolean renamed;
+
+	if (renamed)
+		return;
+	renamed = TRUE;
+	playlist_profiles_enumerate_available_to_local_player_index(0, &count, indices);
+	for (index = 0; index < (short)count; index++)
+	{
+		wchar_t name[MAX_GAMENAME];
+		struct game_variant variant;
+		struct game_variant_options options;
+
+		if (!playlist_profile_get_display_name(indices[index], name) || ustrcmp(name, L"Comp 2v2"))
+			continue;
+		if (!playlist_profile_get(indices[index], &variant))
+			continue;
+		ustrncpy(variant.human_readable_game_description, L"2v2",
+			NUMBEROF(variant.human_readable_game_description) - 1);
+		variant.human_readable_game_description[NUMBEROF(variant.human_readable_game_description) - 1] = 0;
+		if (!playlist_profile_get_options(indices[index], &options))
+			game_variant_options_default(&variant, &options);
+		playlist_profile_save_with_options(indices[index], &variant, &options);
+	}
+}
+
 /* "mp profiles list initialize": on the gametype used last */
 static boolean gametype_list_initialize(struct widget_instance *list)
 {
 	struct widget_instance *spinner = named(list, "list_item_0_chooser_spinner", 0);
 	short last, index;
 
+	hardcore_comp_rename();
 	multiplayer.gametype_count = ui_widget_port_gametypes(multiplayer.gametypes, MAXIMUM_GAMETYPES, &last);
 	gametype_bank_read(multiplayer.gametype_count && !((unsigned long)multiplayer.gametypes[last] &
 		PLAYLIST_READ_ONLY_BIT) ? 1 : 0);
@@ -4834,6 +4892,8 @@ static void gametype_display_name(long profile_index, wchar_t *text)
 	text[0] = 0;
 	if (playlist_profile_get_display_name(profile_index, name))
 	{
+		if (!ustrcmp(name, L"Comp 2v2"))
+			ustrncpy(name, L"2v2", MAX_GAMENAME - 1);
 		ustrncpy(text, name, ROW_TEXT_LENGTH - 1);
 		text[ROW_TEXT_LENGTH - 1] = 0;
 	}
@@ -5246,9 +5306,33 @@ static boolean invite_copy(void)
 	return TRUE;
 }
 
+/* a lobby the host left disposed its server. Server Setup and Hardcore
+still open the next one, with the gametype they already chose */
+static boolean server_ensure(void)
+{
+	if (global_network_game_server_get() && global_network_game_client_get())
+		return TRUE;
+	dispose_global_network_game_client();
+	dispose_global_network_game_server();
+	network_game_accept_remote_connections(TRUE);
+	if (!create_global_network_game_server() || !create_global_network_game_client())
+	{
+		dispose_global_network_game_client();
+		dispose_global_network_game_server();
+		network_game_accept_remote_connections(FALSE);
+		return FALSE;
+	}
+	game_connection_set(_game_connection_network_server);
+	network_game_server_pause_countdown(
+		(struct network_game_server *)global_network_game_server_get(), TRUE);
+	return TRUE;
+}
+
 /* "ss start game": the settings given the server, then the lobby */
 static boolean server_start(void)
 {
+	if (!server_ensure())
+		return campaign_fail();
 	if (text_field_editing(NULL))
 		text_field_end(TRUE);
 	network_game_server_port_set_settings(multiplayer.game_name,
@@ -6871,7 +6955,8 @@ it joins on a free seat and takes no pad. A player's B leaves the game alone
 host, has KICK and MUTE for the player row last selected ("port lobby kick",
 "port lobby mute"). KICK drops a remote machine, or a bot seated here. MUTE
 stops that machine's voice for everyone. In game, a player's pause
-menu's QUIT is theirs (the Xbox's "mp game player quit") */
+menu's QUIT is theirs (the Xbox's "mp game player quit"). The host's
+button reads BACK and closes this lobby ("port lobby back") */
 static struct
 {
 	/* the profile list is open: one gamepad is its own controller, not
@@ -7008,6 +7093,7 @@ static boolean lobby_join_reset(void)
 /* the party lobby leaves the playlist screen, and a search can move this
 party onto another invite. defined with the matchmaking menu. */
 static void mm_lobby_abandoned(void);
+static boolean lobby_is_host(void);
 static void mm_remember_host_invite(void);
 static void mm_follow_reset(void);
 static void mm_follow_offer(void);
@@ -7263,10 +7349,21 @@ static boolean lobby_others_beside(short controller)
 	return FALSE;
 }
 
+/* the host's BACK. this lobby ends, and the screen we came from can open
+another. a second controller's B still drops only that seat */
+static void lobby_host_exit(void)
+{
+	lobby_join_reset();
+	mm_lobby_abandoned();
+	dispose_global_network_game_client();
+	dispose_global_network_game_server();
+}
+
 /* "port lobby leave" (B): a player leaves the game, the machine's last
 leaving it (TRUE: back from the lobby) when nobody else is in it. With other
-players or bots still there, the host stays on the lobby and can sit back
-down. A controller not playing cancels ADD PLAYER */
+players or bots still there, a second person on the host's machine stays on
+the lobby and can sit back down. The host's own B, with nobody else on this
+machine, closes the lobby. A controller not playing cancels ADD PLAYER */
 static boolean lobby_leave(struct widget_instance *widget, struct event_record *event, short controller,
 	boolean *widget_deleted)
 {
@@ -7280,6 +7377,11 @@ static boolean lobby_leave(struct widget_instance *widget, struct event_record *
 		lobby_join.controller = NONE;
 		lobby_join.profile = NONE;
 		return FALSE;
+	}
+	if (lobby_is_host() && lobby_local_player_count() <= 1)
+	{
+		lobby_host_exit();
+		return TRUE;
 	}
 	others = lobby_others_beside(controller);
 	left = ui_widget_port_unjoin_player(widget, event, widget_deleted);
@@ -7750,7 +7852,10 @@ static boolean lobby_assign(struct widget_instance *widget, struct event_record 
 	return TRUE;
 }
 
-static void lobby_button_at(struct widget_instance *list, char const *name, short x);
+/* the lobby pills start at 120 wide. a crowded row narrows toward these
+floors, and the row stays inside the bar */
+#define LOBBY_BUTTON_GAP 6
+#define LOBBY_ROW_LIMIT 624
 
 /* the row the list has selected, when that child is one of its player rows */
 static struct network_player *lobby_focused_row(struct widget_instance *list)
@@ -7794,8 +7899,19 @@ static boolean lobby_is_host(void)
 	return global_network_game_server_get() != NULL;
 }
 
+/* "port lobby back": the host's BACK closes this lobby. a guest's button
+is still LEAVE */
+static boolean lobby_back(struct widget_instance *widget, struct event_record *event, short controller,
+	boolean *widget_deleted)
+{
+	if (!lobby_is_host())
+		return lobby_leave(widget, event, controller, widget_deleted);
+	lobby_host_exit();
+	return TRUE;
+}
+
 /* a remote machine, or a bot on this one. The host's own players leave
-with LEAVE */
+with B, or with the host's BACK */
 static boolean lobby_action_kickable(struct network_player *player)
 {
 	short local;
@@ -7870,8 +7986,8 @@ static void lobby_action_track(struct widget_instance *list)
 		lobby_action_machine = NONE;
 }
 
-/* KICK and MUTE sit above the bar, and only while the host has a player
-they apply to */
+/* KICK and MUTE, only while the host has a player they apply to. the row
+places them with the other pills */
 static void lobby_host_controls(struct widget_instance *list)
 {
 	struct network_player *player;
@@ -7891,16 +8007,9 @@ static void lobby_host_controls(struct widget_instance *list)
 	if (show_mute)
 		label_set(mute, lobby_player_muted(player) ? L"UNMUTE" : L"MUTE");
 	if (kick)
-		kick->vertical_offset = -24;
+		kick->vertical_offset = 0;
 	if (mute)
-		mute->vertical_offset = -24;
-	if (show_kick && show_mute)
-	{
-		lobby_button_at(list, "lobby_button_kick", 120);
-		lobby_button_at(list, "lobby_button_mute", 250);
-	}
-	else if (show_kick)
-		lobby_button_at(list, "lobby_button_kick", 184);
+		mute->vertical_offset = 0;
 }
 
 /* "port lobby kick": the host drops the selected player's machine, or the
@@ -8120,12 +8229,135 @@ void menu_functions_text_box_drawn(struct widget_instance *widget, rectangle2d c
 	}
 }
 
-static void lobby_button_at(struct widget_instance *list, char const *name, short x)
+static void lobby_button_width(struct widget_instance *button, short width)
 {
-	struct widget_instance *button = named(list, name, 0);
+	struct ui_widget_definition *definition;
 
-	if (button)
-		button->horizontal_offset = x;
+	if (!button)
+		return;
+	definition = ui_widget_definition_get(button->definition_tag_index);
+	if (!definition)
+		return;
+	definition->bounds.x1 = (short)(definition->bounds.x0 + width);
+}
+
+/* the pills showing, left to right, centered on the bar. KICK and MUTE
+share it. a twin is the same slot. a full row narrows the short labels
+first, and SWITCH TEAM stays wide enough to read */
+static void lobby_place_buttons(struct widget_instance *list)
+{
+	static char const *const names[] = {
+		"lobby_button_copy", "lobby_button_paste", "lobby_button_team",
+		"lobby_button_start", "lobby_button_add", "lobby_button_kick",
+		"lobby_button_mute", "lobby_button_leave"
+	};
+	static char const *const twins[] = {
+		"lobby_button_copy_dim", NULL, NULL, NULL, NULL, NULL, NULL, NULL
+	};
+	static short const preferred[] = { 120, 120, 120, 120, 120, 120, 120, 120 };
+	static short const floors[] = { 100, 104, 112, 104, 104, 64, 72, 64 };
+	struct widget_instance *shown[8];
+	struct widget_instance *twin[8];
+	short width[8];
+	short floor_width[8];
+	short count;
+	short index;
+	short span;
+	short gap;
+	short overflow;
+	short origin;
+	short x;
+	struct widget_instance *leave;
+
+	count = 0;
+	for (index = 0; index < (short)NUMBEROF(names); index++)
+	{
+		struct widget_instance *button = named(list, names[index], 0);
+		struct widget_instance *other = twins[index] ? named(list, twins[index], 0) : NULL;
+		struct widget_instance *slot = NULL;
+
+		if (button && button->visible)
+			slot = button;
+		else if (other && other->visible)
+			slot = other;
+		if (!slot || count >= (short)NUMBEROF(shown))
+			continue;
+		shown[count] = slot;
+		twin[count] = slot == button ? other : button;
+		width[count] = preferred[index];
+		floor_width[count] = floors[index];
+		count++;
+	}
+	gap = LOBBY_BUTTON_GAP;
+	span = 0;
+	for (index = 0; index < count; index++)
+		span = (short)(span + width[index]);
+	if (count > 1)
+		span = (short)(span + (short)(count - 1) * gap);
+	overflow = (short)(span - LOBBY_ROW_LIMIT);
+	while (overflow > 0)
+	{
+		short shaved = 0;
+
+		for (index = 0; index < count; index++)
+		{
+			if (width[index] <= floor_width[index])
+				continue;
+			width[index]--;
+			overflow--;
+			shaved = 1;
+			if (overflow <= 0)
+				break;
+		}
+		if (!shaved)
+			break;
+	}
+	while (overflow > 0 && gap > 2 && count > 1)
+	{
+		short drop = (short)((count - 1) * 2);
+
+		if (drop > overflow)
+			break;
+		gap = (short)(gap - 2);
+		overflow = (short)(overflow - drop);
+	}
+	for (index = (short)(count - 1); index >= 0 && overflow > 0; index--)
+	{
+		short step = overflow;
+
+		if (step > (short)(width[index] - 48))
+			step = (short)(width[index] - 48);
+		if (step < 1)
+			continue;
+		width[index] = (short)(width[index] - step);
+		overflow = (short)(overflow - step);
+	}
+	span = 0;
+	for (index = 0; index < count; index++)
+		span = (short)(span + width[index]);
+	if (count > 1)
+		span = (short)(span + (short)(count - 1) * gap);
+	origin = (short)((640 - span) / 2);
+	if (origin < 0)
+		origin = 0;
+	x = origin;
+	for (index = 0; index < count; index++)
+	{
+		shown[index]->horizontal_offset = x;
+		shown[index]->vertical_offset = 0;
+		lobby_button_width(shown[index], width[index]);
+		if (twin[index])
+		{
+			twin[index]->horizontal_offset = x;
+			twin[index]->vertical_offset = 0;
+			lobby_button_width(twin[index], width[index]);
+		}
+		x = (short)(x + width[index] + gap);
+	}
+	leave = named(list, "lobby_button_leave", 0);
+	if (leave)
+		leave->vertical_offset = 0;
+	label_set(leave, lobby_is_host() ? L"BACK" : L"LEAVE");
 }
 
 /* "port lobby update" */
@@ -8210,25 +8442,9 @@ static void lobby_update(struct widget_instance *list)
 			start->disabled = FALSE;
 		}
 	}
-	/* five party buttons share the bar. a LAN lobby keeps the four it had. */
-	if (show_paste)
-	{
-		lobby_button_at(list, "lobby_button_copy", 0);
-		lobby_button_at(list, "lobby_button_copy_dim", 0);
-		lobby_button_at(list, "lobby_button_paste", 128);
-		lobby_button_at(list, "lobby_button_start", 256);
-		lobby_button_at(list, "lobby_button_add", 384);
-		lobby_button_at(list, "lobby_button_leave", 512);
-	}
-	else
-	{
-		lobby_button_at(list, "lobby_button_paste", 120);
-		lobby_button_at(list, "lobby_button_team", 120);
-		lobby_button_at(list, "lobby_button_start", 250);
-		lobby_button_at(list, "lobby_button_add", 380);
-		lobby_button_at(list, "lobby_button_leave", 510);
-	}
 	mm_copy_buttons(list);
+	/* the pills that are showing, including KICK and MUTE, on this row */
+	lobby_place_buttons(list);
 	/* (the buttons' focus, off Switch Team when it is hidden) */
 	focus_off_hidden(named(list, "lobby_button_bar", 0));
 	mm_party_focus(list, show_paste);
@@ -9199,6 +9415,7 @@ static void gametype_edit_read(void)
 	short last;
 	short slots;
 
+	hardcore_comp_rename();
 	gametype_edit.count = ui_widget_port_gametypes(gametype_edit.gametypes, MAXIMUM_GAMETYPES, &last);
 	slots = gametype_edit_slots();
 	gametype_edit.chosen = (short)MIN(gametype_edit.chosen, MAX(0, slots - 1));
@@ -9219,6 +9436,7 @@ static boolean gametype_edit_list_initialize(struct widget_instance *list)
 		gametype_edit.picking = FALSE;
 		gametype_edit.copying = FALSE;
 	}
+	hardcore_comp_rename();
 	gametype_edit.count = ui_widget_port_gametypes(gametype_edit.gametypes, MAXIMUM_GAMETYPES, &last);
 	gametype_edit.chosen = last;
 	gametype_edit.first = (short)MAX(0, MIN(last - GAMETYPE_EDIT_ROWS / 2, gametype_edit_slots() - GAMETYPE_EDIT_ROWS));
@@ -9828,7 +10046,7 @@ static short hardcore_map_index(short row)
    the other rows are this mode's. */
 static wchar_t const *const hardcore_gametype_names[] =
 {
-	L"Comp 2v2", L"Slayer", L"CTF", L"Oddball", L"Crazy King"
+	L"2v2", L"Slayer", L"CTF", L"Oddball", L"Crazy King"
 };
 
 static void hardcore_gametype_text(short entry, wchar_t *text)
@@ -9865,12 +10083,14 @@ static boolean hardcore_comp_find(long *profile)
 	word count = MAXIMUM_GAMETYPES;
 	short index;
 
+	hardcore_comp_rename();
 	playlist_profiles_enumerate_available_to_local_player_index(0, &count, indices);
 	for (index = 0; index < (short)count; index++)
 	{
 		wchar_t name[MAX_GAMENAME];
 
-		if (playlist_profile_get_display_name(indices[index], name) && !ustrcmp(name, L"Comp 2v2"))
+		if (playlist_profile_get_display_name(indices[index], name) &&
+			(!ustrcmp(name, L"2v2") || !ustrcmp(name, L"Comp 2v2")))
 		{
 			*profile = indices[index];
 			return TRUE;
@@ -9901,8 +10121,6 @@ static void hardcore_comp_apply(void)
 		variant->game_engine_variant.slayer.no_death_bonus = TRUE;
 		variant->game_engine_variant.slayer.no_kill_penalty = TRUE;
 		SET_FLAG(variant->universal_variant.flags, _game_variant_generic_starting_equipment_bit, TRUE);
-		ustrncpy(variant->human_readable_game_description, L"Comp 2v2", 9);
-		variant->human_readable_game_description[8] = 0;
 		game_variant_options_default(variant, &gametype_edit.setup_options);
 		gametype_edit.setup_options.radar_players = _radar_players_none;
 	}
@@ -9916,6 +10134,9 @@ static void hardcore_comp_apply(void)
 		variant->universal_variant.goal_radar = 1;
 	}
 	hardcore_stamp(variant);
+	ustrncpy(variant->human_readable_game_description, L"2v2",
+		NUMBEROF(variant->human_readable_game_description) - 1);
+	variant->human_readable_game_description[NUMBEROF(variant->human_readable_game_description) - 1] = 0;
 	/* port: the saved game is free for all. a 2v2 is teams, which is
 	   what puts the counters beside the clock. the score stays. */
 	variant->universal_variant.teams = TRUE;
@@ -10255,6 +10476,8 @@ static boolean hardcore_start(struct widget_instance *widget)
 	boolean teams;
 
 	if (!multiplayer.hardcore || !gametype_edit.setup)
+		return campaign_fail();
+	if (!server_ensure())
 		return campaign_fail();
 	if (text_field_editing(NULL))
 		text_field_end(TRUE);
@@ -10940,7 +11163,7 @@ static const wchar_t *mm_mode_name(int mode)
 static const wchar_t *mm_game_name(const struct matchmaking_offer *offer)
 {
 	if (!strcmp(offer->playlist, "hardcore"))
-		return L"Comp 2v2";
+		return L"2v2";
 	if (!strcmp(offer->playlist, "ffa"))
 		return L"FFA";
 	return mm_mode_name(offer->rules.mode);
@@ -12575,6 +12798,10 @@ boolean pc_menu_event_function_invoke(
 		else if (!strcmp(name, "port lobby leave"))
 		{
 			return lobby_leave(widget, event, controller, widget_deleted);
+		}
+		else if (!strcmp(name, "port lobby back"))
+		{
+			return lobby_back(widget, event, controller, widget_deleted);
 		}
 		else if (!strcmp(name, "port lobby kick"))
 		{

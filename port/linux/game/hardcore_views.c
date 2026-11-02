@@ -169,7 +169,8 @@ static boolean hardcore_views_client_split_applies(void)
 		return TRUE;
 	if (!game_engine_running())
 		return FALSE;
-	return !ustrcmp(game_engine_get_variant()->human_readable_game_description, L"Comp 2v2");
+	return !ustrcmp(game_engine_get_variant()->human_readable_game_description, L"2v2") ||
+		!ustrcmp(game_engine_get_variant()->human_readable_game_description, L"Comp 2v2");
 }
 
 /* A team game has one team on this display. The other team's local player

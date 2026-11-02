@@ -212,7 +212,8 @@ void hardcore_rules_choose(long profile_index)
 	if (opened)
 		file_close(&file);
 	if (!opened && playlist_profile_get(profile_index, &variant) &&
-		!ustrcmp(variant.human_readable_game_description, L"Comp 2v2"))
+		(!ustrcmp(variant.human_readable_game_description, L"2v2") ||
+		!ustrcmp(variant.human_readable_game_description, L"Comp 2v2")))
 		hardcore_edit.team_scores = 1;
 	hardcore_rules_kept_only(&hardcore_edit);
 	/* A client in someone else's lobby still opens game types. That

@@ -6079,12 +6079,13 @@ short ui_widget_port_gametypes(
 				*last_used = index;
 		}
 	}
-		/* Comp 2v2 is a normal built-in. It edits as a copy. */
+		/* 2v2 is a normal built-in. It edits as a copy. Comp 2v2 is that
+		gametype before its name was shortened. */
 		for (index = 0; index < (short)count; index++)
 		{
 			wchar_t *name = saved_game_file_get_display_name(indices[index]);
 
-		if (name && !ustrcmp(name, L"Comp 2v2"))
+		if (name && (!ustrcmp(name, L"2v2") || !ustrcmp(name, L"Comp 2v2")))
 			indices[index] |= FLAG(_saved_game_file_index_read_only_bit);
 	}
 	return (short)count;

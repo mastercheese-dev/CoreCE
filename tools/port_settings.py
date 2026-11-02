@@ -1573,11 +1573,11 @@ def _lobby() -> list:
                      # game without teams, which moves the focus to the first shown,
                      # START NOW. PASTE LINK shares that slot and is shown on a
                      # matchmaking party, before Find Game.)
-                     [f'<child widget="{base}/lobby_button_paste" x="120" y="1"/>',
-                      f'<child widget="{base}/lobby_button_team" x="120" y="1"/>',
-                      f'<child widget="{base}/lobby_button_start" x="250" y="1"/>',
-                      f'<child widget="{base}/lobby_button_add" x="380" y="1"/>',
-                      f'<child widget="{base}/lobby_button_leave" x="510" y="1"/>'])
+                     [f'<child widget="{base}/lobby_button_paste" x="71" y="1"/>',
+                      f'<child widget="{base}/lobby_button_team" x="71" y="1"/>',
+                      f'<child widget="{base}/lobby_button_start" x="197" y="1"/>',
+                      f'<child widget="{base}/lobby_button_add" x="323" y="1"/>',
+                      f'<child widget="{base}/lobby_button_leave" x="449" y="1"/>'])
     for key, caption, handlers in (
         ("add", "ADD PLAYER", ['<on event="a" run="port lobby add player"/>',
                                '<on event="start" run="port lobby add player"/>']),
@@ -1586,9 +1586,9 @@ def _lobby() -> list:
         ("team", "SWITCH TEAM", ['<on event="a" run="swap player team"/>', '<on event="start" run="swap player team"/>']),
         ("start", "START NOW", ['<on event="a" run="net game speed start"/>',
                                 '<on event="start" run="net game speed start"/>']),
-        ("leave", "LEAVE", ['<on event="a" run="mouse emit back event"/>',
-                            '<on event="start" run="mouse emit back event"/>'])):
-        lines += _widget(f"{base}/lobby_button_{key}", [("type", "text"), ("width", 128), ("height", 20),
+        ("leave", "LEAVE", ['<on event="a" run="port lobby back" back="true"/>',
+                            '<on event="start" run="port lobby back" back="true"/>'])):
+        lines += _widget(f"{base}/lobby_button_{key}", [("type", "text"), ("width", 120), ("height", 20),
                                                        ("bitmap", "bitmaps/text_button_background"),
                                                        ("text", caption), ("font", "ui\\small_ui"),
                                                        ("color", "#FFFFFFFF"), ("align", "center"), ("text_y", 1)],
