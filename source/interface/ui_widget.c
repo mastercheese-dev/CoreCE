@@ -5730,6 +5730,44 @@ static void menu_value_scroll(
 	draw_string_set_draw_mode(font_index, NONE, _text_justification_left, 0, color);
 }
 
+/* the white line under a menu that says what the selection does */
+static boolean menu_guidance_text(
+	struct widget_instance *widget,
+	struct ui_widget_definition *definition)
+{
+	char const *name;
+	char const *leaf;
+	char const *scan;
+	int length;
+	real_argb_color const *color;
+	short width;
+	short height;
+
+	if (!widget || widget->type != _ui_widget_type_text_box || !definition)
+		return FALSE;
+	if (definition->background_bitmap.index != NONE)
+		return FALSE;
+	color = &definition->text_color;
+	if (color->red < 0.9f || color->green < 0.9f || color->blue < 0.9f)
+		return FALSE;
+	name = widget->name ? widget->name : "";
+	leaf = name;
+	for (scan = name; *scan; scan++)
+		if (*scan == '/' || *scan == '\\')
+			leaf = scan + 1;
+	length = 0;
+	for (scan = leaf; *scan; scan++)
+		length++;
+	if (!strcmp(leaf, "help") ||
+		(length >= 5 && !strcmp(leaf + length - 5, "_help")) ||
+		(length >= 10 && !strcmp(leaf + length - 10, "_help_text")))
+		return TRUE;
+	/* a stock screen names that line for itself. it is the wide white box */
+	width = (short)(definition->bounds.x1 - definition->bounds.x0);
+	height = (short)(definition->bounds.y1 - definition->bounds.y0);
+	return width >= 280 && height >= 32 && height <= 120;
+}
+
 static void widget_instance_render_text_box(
 	struct widget_instance *widget,
 	struct ui_widget_definition *definition,
@@ -5747,6 +5785,8 @@ static void widget_instance_render_text_box(
 	rectangle2d bounds;
 	rectangle2d clip;
 
+	if (menu_guidance_text(widget, definition))
+		return;
 	if (definition->text_label_string_list.index != NONE
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		&& widget->parameters.text_box.string_list_index != HALO_CUSTOM_MAP_TEXT
