@@ -515,7 +515,10 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 	{
 		/* Metal maps NDC +Y to the viewport's top and depth to 0..1. Xbox's
 		 * viewport_scale.y is already negative, so the inverse above needs
-		 * neither the GLES Y flip nor its zero-one to minus-one-one Z fix. */
+		 * neither the GLES Y flip nor its zero-one to minus-one-one Z fix.
+		 * Reversed depth stores 1 at the near plane. */
+		if (xgpu_reversed_depth)
+			xgpu_text_append(&text, "\toutput.position.z = output.position.w - output.position.z;\n");
 		xgpu_text_append(&text,
 			"\toutput.point_size = oPts.x;\n"
 			"\toutput.xD0 = clamp(oD0, 0.0, 1.0);\n"
@@ -530,6 +533,12 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 			"\treturn output;\n}\n");
 		return text.buffer;
 	}
+#ifndef HALO_ANDROID
+	/* reversed depth stores 1 at the near plane. Android keeps the Xbox's
+	24-bit depth, and its z remap below stays the only change. */
+	if (xgpu_reversed_depth)
+		xgpu_text_append(&text, "\tgl_Position.z = gl_Position.w - gl_Position.z;\n");
+#endif
 	xgpu_text_append(&text,
 #ifdef HALO_ANDROID
 		/* what glClipControl(GL_UPPER_LEFT, GL_ZERO_TO_ONE) does on desktop

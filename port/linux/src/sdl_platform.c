@@ -37,6 +37,10 @@ extern unsigned char network_chat_typing(void);
 #if !defined(_WIN32) && !defined(HALO_ANDROID)
 #include <signal.h>
 #endif
+#if defined(__linux__) && !defined(HALO_ARM64_GUEST) && !defined(HALO_ANDROID)
+#include <dlfcn.h>
+#include <unistd.h>
+#endif
 
 static SDL_Window *platform_window;
 static SDL_GLContext platform_gl_context;
@@ -183,6 +187,35 @@ static void data_check_maps(void)
 }
 #endif
 
+#if defined(__linux__) && !defined(HALO_ARM64_GUEST) && !defined(HALO_ANDROID)
+/* NVIDIA's Wayland EGL library is missing on some 32-bit installs, and SDL
+then has no GL context. Prefer X11 when that library will not load, unless
+the driver was already chosen. */
+static void platform_choose_video_driver(void)
+{
+	void *library;
+
+	if (getenv("SDL_VIDEO_DRIVER") || !getenv("WAYLAND_DISPLAY"))
+		return;
+	if (access("/sys/module/nvidia", F_OK) != 0)
+		return;
+	library = dlopen("libnvidia-egl-wayland.so.1", RTLD_LAZY | RTLD_LOCAL);
+	if (library)
+	{
+		dlclose(library);
+		return;
+	}
+	library = dlopen("libnvidia-egl-wayland2.so.1", RTLD_LAZY | RTLD_LOCAL);
+	if (library)
+	{
+		dlclose(library);
+		return;
+	}
+	SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11,wayland");
+	platform_log("video: NVIDIA on Wayland without its EGL library; using X11");
+}
+#endif
+
 BOOL platform_sdl_initialize(void)
 {
 	if (platform_sdl_started)
@@ -213,6 +246,9 @@ BOOL platform_sdl_initialize(void)
 	/* touching the screen must not aim or fire (the mouse drives the
 	controller emulation in xinput_sdl.c) */
 	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+#endif
+#if defined(__linux__) && !defined(HALO_ARM64_GUEST) && !defined(HALO_ANDROID)
+	platform_choose_video_driver();
 #endif
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
 	{
@@ -1095,6 +1131,12 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	version = SDL_GL_SetSwapInterval(config_boolean("display.vsync") ? 1 : 0);
 	(void)version;
 	platform_log("OpenGL %s on %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));
+	{
+		const char *renderer = (const char *)glGetString(GL_RENDERER);
+
+		if (renderer && (strstr(renderer, "llvmpipe") || strstr(renderer, "softpipe")))
+			platform_log("OpenGL is drawn on the processor");
+	}
 #else
 	platform_log("native Metal");
 #endif

@@ -1038,6 +1038,18 @@ static struct
 	int failed;
 } art[MAXIMUM_ART];
 static long art_count;
+/* port: a bit per hash of a texture's data, so a bind that is not menu art
+skips the walk. A set bit still searches, so a collision changes nothing. */
+static unsigned char art_filter[512];
+
+static unsigned char art_filter_bit(unsigned long data, unsigned char **byte)
+{
+	unsigned long hash = data * 2654435761u;
+	unsigned long bit = hash >> 20;
+
+	*byte = &art_filter[(bit >> 3) & 511];
+	return (unsigned char)(1u << (bit & 7));
+}
 
 void halo_menus_art_register(void const *texture, char const *png)
 {
@@ -1079,6 +1091,12 @@ void halo_menus_art_register(void const *texture, char const *png)
 	memset(&art[index], 0, sizeof(art[index]));
 	art[index].data = data;
 	art[index].png = strdup(png);
+	{
+		unsigned char *byte;
+		unsigned char bit = art_filter_bit(data, &byte);
+
+		*byte |= bit;
+	}
 }
 
 void halo_menus_art_forget(void)
@@ -1098,6 +1116,7 @@ void halo_menus_art_forget(void)
 #endif
 	}
 	art_count = 0;
+	memset(art_filter, 0, sizeof(art_filter));
 #if defined(HALO_MACOS_NATIVE_METAL)
 	halo_metal_menu_art_forget();
 #endif
@@ -1149,6 +1168,11 @@ int menu_art_pixels(unsigned long data, unsigned char **rgba, unsigned long *wid
 unsigned int menu_art_texture(unsigned long data, unsigned long *levels)
 {
 	long index;
+	unsigned char *byte;
+	unsigned char bit = art_filter_bit(data, &byte);
+
+	if (!(*byte & bit))
+		return 0;
 
 	for (index = 0; index < art_count; index++)
 	{

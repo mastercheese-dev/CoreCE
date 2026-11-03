@@ -102,6 +102,17 @@ static const struct config_setting config_settings[] =
 		"Xbox's 4:3." },
 	{ "display.vsync", _config_boolean, "true", "HALO_NO_VSYNC", _environment_set_is_false, _platform_all,
 		"Wait for the display between frames; false draws as fast as possible." },
+	{ "display.reversed_depth", _config_boolean, "true", "HALO_REVERSED_DEPTH", _environment_value, _platform_desktop,
+		"Depth buffer of 32-bit floats, 1 at the near plane, so surfaces a few\n"
+		"millimetres apart stay apart at long range. false keeps the Xbox's\n"
+		"24-bit depth. Read once, as the game starts." },
+	{ "display.frames_in_flight", _config_integer, "3", "HALO_FRAMES_IN_FLIGHT", _environment_value, _platform_desktop,
+		"How many frames the GPU may have queued (1 to 8) on Windows and Linux.\n"
+		"0 leaves the queue to the driver. 3 keeps the frame times even when\n"
+		"the GPU is the limit." },
+	{ "display.shader_cache", _config_boolean, "true", "HALO_SHADER_CACHE", _environment_value, _platform_desktop,
+		"On Windows and Linux, keep each linked GPU program on disk and load it\n"
+		"next time, instead of linking it again the first time it is drawn." },
 	/* Original Xbox presentation is the fork's baseline; enhancements are opt-in. */
 	{ "display.max_fps", _config_integer, "0", "HALO_MAX_FPS", _environment_value, _platform_desktop,
 		"With vsync off, the most frames a second: 0 for twice the display's\n"

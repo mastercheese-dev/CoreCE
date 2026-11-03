@@ -15,6 +15,12 @@ device itself (d3d8_gl.c).
 #include "gl.h"
 #endif
 
+/* display.reversed_depth, read once as the device starts. Depth is a 32-bit
+float, 1 at the near plane and 0 at the far, on desktop GL and on Metal.
+OpenGL ES stays on the Xbox's 24-bit depth. The shaders, the depth test,
+clears and polygon offset turn Direct3D's depth around to match. */
+extern BOOL xgpu_reversed_depth;
+
 #ifdef HALO_GLES
 /* OpenGL ES features that are optional (d3d8_gl.c gl_initialize) */
 struct xgpu_capabilities

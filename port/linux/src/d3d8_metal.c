@@ -5,6 +5,11 @@
  */
 #if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL
 #include "xgpu.h"
+
+/* display.reversed_depth (xgpu.h), read once as the device starts. The
+depth buffer is already 32-bit float. The shaders, the compare, the clear
+and the bias turn Direct3D's depth around so 1 is the near plane. */
+BOOL xgpu_reversed_depth;
 #include "xgpu_msl.h"
 #include "sdl_platform.h"
 #include "halo_ui_pointer.h"
@@ -683,6 +688,8 @@ static void native_storage_initialize(void) {
 }
 static void native_initialize(void) {
     void *storage = aligned_alloc(16, HALO_METAL_MAX_PACKET);
+    xgpu_reversed_depth = config_boolean("display.reversed_depth");
+    platform_log("depth: %s", xgpu_reversed_depth ? "32-bit float, reversed" : "24-bit values, as the Xbox's");
     if (!storage) native_fail("allocate packet",HALO_METAL_MEMORY);
     require_status("setup transport",halo_metal_guest_setup(&transport,storage,HALO_METAL_MAX_PACKET));
     int fxaa=!strcmp(config_string("display.anti_aliasing"),"fxaa");
@@ -2259,7 +2266,9 @@ void WINAPI D3DDevice_Clear(DWORD count,const D3DRECT *rectangles,DWORD flags,D3
     if (depth && (flags&D3DCLEAR_STENCIL)) command.clear.planes|=HALO_METAL_STENCIL;
     if (command.clear.planes&6) command.clear.depth_stencil=depth->ref;
     if (!command.clear.planes) return;
-    color_to_vec4(color,command.clear.rgba);command.clear.depth=z;command.clear.stencil=stencil&255;
+    color_to_vec4(color,command.clear.rgba);
+    command.clear.depth=xgpu_reversed_depth ? 1.0f - z : z;
+    command.clear.stencil=stencil&255;
     BOOL with_rectangles=count && rectangles;
     unsigned actual_count=with_rectangles ? count:1;
     for (unsigned i=0;i<actual_count;i++) {

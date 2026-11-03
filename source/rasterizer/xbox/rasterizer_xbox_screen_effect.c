@@ -502,6 +502,55 @@ static real rasterizer_screen_effect_pass_radius(
 
 /* ---------- public code */
 
+/* port: the video is authored at 640 wide (the Jenkins helmet's mask writes
+its alpha), and on a wider picture the sides added around it blend the lit
+world through. Those sides are painted opaque black, the authored width
+untouched. */
+static boolean rasterizer_screen_effect_video_borders(
+	boolean video_on,
+	short viewport_width,
+	short viewport_height)
+{
+	boolean success;
+	short side;
+	real inner;
+	real half_pixel_x;
+	real half_pixel_y;
+
+	if (!video_on || viewport_width <= 640 || viewport_height <= 0)
+		return TRUE;
+
+	inner = 640.0f / (real)viewport_width;
+	/* the shader adds half a pixel when it turns the Xbox's pixel centres
+	into clip space. Take it back, so the bars cover the added sides and
+	stop at the authored 640. */
+	half_pixel_x = 1.0f / (real)viewport_width;
+	half_pixel_y = 1.0f / (real)viewport_height;
+	/* these calls return 0 on success */
+	success = IDirect3DDevice8_SetRenderState(
+		global_d3d_device, D3DRS_SRCBLEND, D3DBLEND_ZERO) >= 0;
+	for (side = 0; side < 2; side++)
+	{
+		real left = (side ? inner : -1.0f) - half_pixel_x;
+		real right = (side ? 1.0f : -inner) - half_pixel_x;
+
+		success = IDirect3DDevice8_Begin(global_d3d_device, D3DPT_TRIANGLEFAN) >= 0 && success;
+		success = IDirect3DDevice8_SetVertexData2s(global_d3d_device, 4, 0, 0) >= 0 && success;
+		success = IDirect3DDevice8_SetVertexData2f(
+			global_d3d_device, _rasterizer_vertex_register_position, left, -1.0f + half_pixel_y) >= 0 && success;
+		success = IDirect3DDevice8_SetVertexData2f(
+			global_d3d_device, _rasterizer_vertex_register_position, right, -1.0f + half_pixel_y) >= 0 && success;
+		success = IDirect3DDevice8_SetVertexData2f(
+			global_d3d_device, _rasterizer_vertex_register_position, right, 1.0f + half_pixel_y) >= 0 && success;
+		success = IDirect3DDevice8_SetVertexData2f(
+			global_d3d_device, _rasterizer_vertex_register_position, left, 1.0f + half_pixel_y) >= 0 && success;
+		success = IDirect3DDevice8_End(global_d3d_device) >= 0 && success;
+	}
+	success = IDirect3DDevice8_SetRenderState(
+		global_d3d_device, D3DRS_SRCBLEND, D3DBLEND_INVSRCALPHA) >= 0 && success;
+	return success;
+}
+
 void _rasterizer_screen_effect(
 	struct rasterizer_cinematic_screen_effect_parameters *parameters)
 {
@@ -1228,7 +1277,11 @@ void _rasterizer_screen_effect(
 					0,
 					"IDirect3DDevice8_End(global_d3d_device)");
 			}
+
 		}
+
+		success = rasterizer_screen_effect_video_borders(
+			parameters->video_on, viewport_width, viewport_height) && success;
 
 		rasterizer_set_target(
 			global_window_parameters.rasterizer_target,

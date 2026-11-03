@@ -188,6 +188,35 @@ static struct
 	long asset;
 } placeholders[MAXIMUM_PLACEHOLDERS];
 static long placeholder_count = 0;
+/* port: a bit per hash of a placeholder's data, so a bind that is not one
+skips the walk. A set bit still searches. */
+static unsigned char placeholder_filter[128];
+
+static unsigned char placeholder_filter_bit(unsigned long data, unsigned char **byte)
+{
+	unsigned long hash = data * 2654435761u;
+	unsigned long bit = hash >> 22;
+
+	*byte = &placeholder_filter[(bit >> 3) & 127];
+	return (unsigned char)(1u << (bit & 7));
+}
+
+static void placeholder_filter_build(void)
+{
+	long index;
+
+	memset(placeholder_filter, 0, sizeof(placeholder_filter));
+	for (index = 0; index < placeholder_count; index++)
+	{
+		unsigned char *byte;
+		unsigned char bit;
+
+		if (!placeholders[index].data)
+			continue;
+		bit = placeholder_filter_bit(placeholders[index].data, &byte);
+		*byte |= bit;
+	}
+}
 
 /* the sequences whose sprites the texture is drawn for (hud_hires.h), or 0 */
 unsigned long hud_hires_asset_sprites(long asset)
@@ -250,12 +279,19 @@ void hud_hires_register_placeholder(long asset, const unsigned long *texture)
 		placeholders[index].data = texture ? texture[1] : 0;
 		placeholders[index].asset = asset;
 	}
+	placeholder_filter_build();
 }
 
 #if !defined(HALO_MACOS_NATIVE_METAL)
 unsigned int hud_hires_placeholder_texture(unsigned long data, unsigned long *levels)
 {
 	long index;
+	unsigned char *byte;
+	unsigned char bit;
+
+	bit = placeholder_filter_bit(data, &byte);
+	if (!(*byte & bit))
+		return 0;
 
 	for (index = 0; data && index < placeholder_count; index++)
 	{

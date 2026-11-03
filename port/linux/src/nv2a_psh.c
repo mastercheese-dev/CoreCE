@@ -659,6 +659,13 @@ static void texture_stage(struct xgpu_text *text, const struct nv2a_pixel_shader
 				"\treplacement_depth = (dot%d / dot%d) * u.depth_scale;\n"
 				"\tif (!isfinite(replacement_depth) || replacement_depth < u.depth_clip_min ||"
 				" replacement_depth > u.depth_clip_max) discard_fragment();\n", stage - 1, stage);
+		else if (stage >= 1)
+			/* window depth, 0 at the near plane, in the Xbox's 24-bit units.
+			A fragment behind the eye (the divisor not positive) is the far
+			plane. gl_FragDepth writes it at the end of main. */
+			xgpu_text_append(text,
+				"\treplaced_depth = dot%d > 0.0 ? clamp(dot%d / dot%d / 16777215.0, 0.0, 1.0) : 1.0;\n",
+				stage, stage - 1, stage);
 		break;
 	case _mode_dot_reflect_diffuse:
 		/* the normal takes its third component from stage 3's dot product */
@@ -900,13 +907,26 @@ char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key)
 		"}\n"
 		"void main()\n"
 		"{\n");
+	{
+		int stage_index;
+		int replaces_depth = 0;
 
-	pixel_shader_body(&text, key, _shader_glsl, 0, 0);
+		for (stage_index = 1; stage_index < 4; stage_index++)
+			if (stage_mode(key, stage_index) == _mode_dot_zw)
+				replaces_depth = 1;
+		if (replaces_depth)
+			xgpu_text_append(&text, "\tfloat replaced_depth = 1.0;\n");
+		pixel_shader_body(&text, key, _shader_glsl, 0, 0);
 #ifdef HALO_ANDROID
-	if (key->count_samples)
-		xgpu_text_append(&text, "\tatomicCounterIncrement(visible_samples);\n");
+		if (key->count_samples)
+			xgpu_text_append(&text, "\tatomicCounterIncrement(visible_samples);\n");
 #endif
-	xgpu_text_append(&text, "\tfragment_color = clamp(result, 0.0, 1.0);\n}\n");
+		xgpu_text_append(&text, "\tfragment_color = clamp(result, 0.0, 1.0);\n");
+		if (replaces_depth)
+			xgpu_text_append(&text, "\tgl_FragDepth = %sreplaced_depth;\n",
+				xgpu_reversed_depth ? "1.0 - " : "");
+		xgpu_text_append(&text, "}\n");
+	}
 	return text.buffer;
 }
 
@@ -1207,6 +1227,8 @@ char *nv2a_pixel_shader_to_msl_with_options(const struct nv2a_pixel_shader_key *
 	if (key->point_threshold)
 		xgpu_text_append(&text, "\tconstexpr sampler meter_nearest(filter::nearest, mip_filter::none);\n");
 	pixel_shader_body(&text, key, _shader_msl, alpha_border_mask, volume_border_mask);
+	if (depth_replace && xgpu_reversed_depth)
+		xgpu_text_append(&text, "\treplacement_depth = 1.0 - replacement_depth;\n");
 	if (depth_before_shader)
 		xgpu_text_append(&text, "\treturn XgpuFragmentResult { clamp(result, 0.0, 1.0) };\n}\n");
 	else if (depth_replace)

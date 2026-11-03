@@ -1183,6 +1183,12 @@ short convex_polygon2d_clip_to_plane(
 
 			vector_from_points2d(point, previous_point, &vector);
 			scale = PIN(vector_intersect_plane2d(point, &vector, plane), 0.f, 1.f);
+			/* port: a corner on the clip line, with the corner before it a rounding
+			error behind, is a 0/0 crossing. PIN keeps the NaN, and the portal walk
+			spreads it, so the clusters past that portal are skipped for the frame.
+			The corner on the line is the crossing. */
+			if (scale != scale)
+				scale = 0.f;
 			point_from_line2d(point, &vector, scale, result + result_count);
 			SET_FLAG(result_clip_flags, result_count, TRUE);
 			result_count++;

@@ -188,6 +188,10 @@ void particle_new(
 	struct new_particle_data const *data);
 void particles_update(
 	real dt);
+/* port: false until a tick's update has passed, so a one-tick particle is
+not drawn on the frames before that update */
+boolean particle_drawn(
+	long particle_index);
 
 /* ---------- globals */
 

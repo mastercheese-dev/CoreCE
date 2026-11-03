@@ -392,7 +392,22 @@ int metal_draw_state_pack(const struct metal_draw_state_input *in,
     color(rs[D3DRS_BLENDCOLOR],s->blend_color);
     s->depth_enabled=in->has_depth && rs[D3DRS_ZENABLE];
     s->depth_write=s->depth_enabled && rs[D3DRS_ZWRITEENABLE];
-    RS_MAP(depth_compare,D3DRS_ZFUNC,comparison);
+    {
+        /* reversed depth: nearer is the greater value */
+        uint32_t zfunc = rs[D3DRS_ZFUNC];
+        int mapped;
+
+        if (xgpu_reversed_depth)
+        {
+            if (zfunc == D3DCMP_LESS) zfunc = D3DCMP_GREATER;
+            else if (zfunc == D3DCMP_GREATER) zfunc = D3DCMP_LESS;
+            else if (zfunc == D3DCMP_LESSEQUAL) zfunc = D3DCMP_GREATEREQUAL;
+            else if (zfunc == D3DCMP_GREATEREQUAL) zfunc = D3DCMP_LESSEQUAL;
+        }
+        mapped = comparison(zfunc);
+        if (!mapped) BAD(HALO_METAL_UNSUPPORTED, D3DRS_ZFUNC, rs[D3DRS_ZFUNC], "unsupported render state enum");
+        s->depth_compare = (uint32_t)mapped;
+    }
     s->stencil_enabled=in->has_depth && rs[D3DRS_STENCILENABLE];
     RS_MAP(stencil_compare,D3DRS_STENCILFUNC,comparison);
     RS_MAP(stencil_fail,D3DRS_STENCILFAIL,stencil_op);
@@ -409,8 +424,22 @@ int metal_draw_state_pack(const struct metal_draw_state_input *in,
         s->depth_bias=word_float(rs[D3DRS_POLYGONOFFSETZOFFSET]);
         s->slope_depth_bias=word_float(rs[D3DRS_POLYGONOFFSETZSLOPESCALE]);
         if(!finite_values(&s->depth_bias,2)) BAD(HALO_METAL_INVALID,D3DRS_POLYGONOFFSETZOFFSET,0,"nonfinite depth bias");
+        /* reversed depth: toward the camera is up */
+        if (xgpu_reversed_depth)
+        {
+            s->depth_bias = -s->depth_bias;
+            s->slope_depth_bias = -s->slope_depth_bias;
+        }
     }
     memcpy(s->viewport,in->viewport,sizeof(s->viewport));
+    /* Direct3D's MinZ to MaxZ stored as 1 - MaxZ to 1 - MinZ */
+    if (xgpu_reversed_depth)
+    {
+        float near_z = s->viewport[4];
+
+        s->viewport[4] = 1.0f - s->viewport[5];
+        s->viewport[5] = 1.0f - near_z;
+    }
     for(i=0;i<4;i++) s->scissor[i]=(uint32_t)in->viewport[i];
     memcpy(key,&k,sizeof(k));memcpy(output,&out,sizeof(out));
     if(error) memset(error,0,sizeof(*error));

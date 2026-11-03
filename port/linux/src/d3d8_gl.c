@@ -25,6 +25,7 @@ Conventions carried over from the Xbox:
 #include "sdl_platform.h"
 #include "halo_ui_pointer.h"
 #include "port_config.h"
+#include "posix.h"
 #include "main/console.h"
 #ifdef HALO_MACOS
 #include "../../macos/renderer_config.h"
@@ -41,6 +42,10 @@ extern int host_ios_metalfx_present(unsigned int texture, unsigned int width, un
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+/* display.reversed_depth (xgpu.h), as the context was made. OpenGL ES stays
+on the Xbox's 24-bit depth. */
+BOOL xgpu_reversed_depth;
 
 void d3d8_surface_initialize(D3DSurface *surface, D3DFORMAT format, unsigned long width, unsigned long height);
 void d3d8_surface_resize(D3DSurface *surface, D3DFORMAT format, unsigned long width, unsigned long height);
@@ -1237,6 +1242,323 @@ void WINAPI D3DDevice_BlockUntilVerticalBlank(void)
 	pthread_mutex_unlock(&vertical_blank_lock);
 }
 
+/* ---------- the program cache on disk (desktop)
+
+Linking a program is where the drivers do most of their work. A linked
+program's binary is kept in one file of the driver's (its vendor, renderer
+and version) under the save root, by the hashes of its two shaders' GLSL.
+The next time the program is wanted it is loaded from that file instead of
+linked (display.shader_cache). A binary the driver refuses is forgotten and
+the program is linked again. OpenGL ES keeps its programs to itself. */
+
+#ifndef HALO_GLES
+static unsigned long long *shader_hashes;
+static GLuint shader_hashes_size;
+
+static unsigned long long source_hash(const char *source)
+{
+	unsigned long long hash = 14695981039346656037ULL;
+
+	while (*source)
+		hash = (hash ^ (unsigned char)*source++) * 1099511628211ULL;
+	return hash;
+}
+
+static void shader_hash_set(GLuint shader, const char *source)
+{
+	if (!shader)
+		return;
+	if (shader >= shader_hashes_size)
+	{
+		GLuint size = shader_hashes_size ? shader_hashes_size : 256;
+		unsigned long long *grown;
+
+		while (size <= shader)
+			size *= 2;
+		grown = realloc(shader_hashes, size * sizeof(*grown));
+		if (!grown)
+			return;
+		memset(grown + shader_hashes_size, 0, (size - shader_hashes_size) * sizeof(*grown));
+		shader_hashes = grown;
+		shader_hashes_size = size;
+	}
+	shader_hashes[shader] = source_hash(source);
+}
+
+static unsigned long long shader_hash(GLuint shader)
+{
+	return shader < shader_hashes_size ? shader_hashes[shader] : 0;
+}
+
+#define PROGRAM_CACHE_MAGIC 0x31435048 /* "HPC1" */
+#define PROGRAM_CACHE_BUCKETS 1024
+/* a file grown past this starts again empty */
+#define PROGRAM_CACHE_MAXIMUM_SIZE (64UL * 1024 * 1024)
+
+struct program_cache_header
+{
+	unsigned long magic;
+	unsigned long long vertex_hash;
+	unsigned long long fragment_hash;
+	unsigned long format;
+	unsigned long length;
+	unsigned long long data_hash;
+};
+
+struct program_cache_entry
+{
+	struct program_cache_entry *next;
+	unsigned long long vertex_hash;
+	unsigned long long fragment_hash;
+	unsigned long format;
+	unsigned long length;
+	unsigned long long data_hash;
+	unsigned long offset;
+};
+
+static struct
+{
+	BOOL enabled;
+	FILE *file;
+	unsigned long end;
+	struct program_cache_entry *buckets[PROGRAM_CACHE_BUCKETS];
+	unsigned long loaded, linked, written, refused;
+} program_cache;
+
+static unsigned long long data_hash(const void *data, unsigned long size)
+{
+	const unsigned char *bytes = data;
+	unsigned long long hash = 14695981039346656037ULL;
+
+	while (size--)
+		hash = (hash ^ *bytes++) * 1099511628211ULL;
+	return hash;
+}
+
+static struct program_cache_entry **program_cache_bucket(unsigned long long vertex_hash,
+	unsigned long long fragment_hash)
+{
+	unsigned long long key = vertex_hash * 0x9e3779b97f4a7c15ULL ^ fragment_hash;
+
+	return &program_cache.buckets[(unsigned long)(key >> 32 ^ key) % PROGRAM_CACHE_BUCKETS];
+}
+
+static struct program_cache_entry *program_cache_find(unsigned long long vertex_hash,
+	unsigned long long fragment_hash)
+{
+	struct program_cache_entry *entry;
+
+	for (entry = *program_cache_bucket(vertex_hash, fragment_hash); entry; entry = entry->next)
+	{
+		if (entry->vertex_hash == vertex_hash && entry->fragment_hash == fragment_hash)
+			return entry;
+	}
+	return NULL;
+}
+
+static void program_cache_index(void)
+{
+	struct program_cache_header header;
+	unsigned long offset = 0, size;
+
+	fseek(program_cache.file, 0, SEEK_END);
+	size = (unsigned long)ftell(program_cache.file);
+	while (offset + sizeof(header) <= size && fseek(program_cache.file, (long)offset, SEEK_SET) == 0 &&
+		fread(&header, sizeof(header), 1, program_cache.file) == 1 && header.magic == PROGRAM_CACHE_MAGIC &&
+		header.length && header.length <= size - offset - sizeof(header))
+	{
+		struct program_cache_entry *entry = program_cache_find(header.vertex_hash, header.fragment_hash);
+
+		if (!entry)
+		{
+			struct program_cache_entry **bucket = program_cache_bucket(header.vertex_hash, header.fragment_hash);
+
+			entry = calloc(1, sizeof(*entry));
+			if (!entry)
+				break;
+			entry->vertex_hash = header.vertex_hash;
+			entry->fragment_hash = header.fragment_hash;
+			entry->next = *bucket;
+			*bucket = entry;
+		}
+		entry->format = header.format;
+		entry->length = header.length;
+		entry->data_hash = header.data_hash;
+		entry->offset = offset + sizeof(header);
+		offset += sizeof(header) + header.length;
+	}
+	program_cache.end = offset;
+}
+
+static void program_cache_initialize(void)
+{
+	GLint formats = 0;
+	char path[512];
+	unsigned long long driver;
+	const char *strings[3];
+	int index;
+
+	program_cache.enabled = FALSE;
+	if (!config_boolean("display.shader_cache"))
+		return;
+	glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &formats);
+	if (formats <= 0)
+	{
+		platform_log("shader cache: off (the driver keeps no program binaries)");
+		return;
+	}
+	strings[0] = (const char *)glGetString(GL_VENDOR);
+	strings[1] = (const char *)glGetString(GL_RENDERER);
+	strings[2] = (const char *)glGetString(GL_VERSION);
+	driver = 14695981039346656037ULL;
+	for (index = 0; index < 3; index++)
+		driver = (driver ^ source_hash(strings[index] ? strings[index] : "")) * 1099511628211ULL;
+	snprintf(path, sizeof(path), "%s/shader_cache", platform_save_root());
+	posix_make_directory(path);
+	snprintf(path, sizeof(path), "%s/shader_cache/%016llx.bin", platform_save_root(), driver);
+	program_cache.file = fopen(path, "r+b");
+	if (program_cache.file)
+	{
+		fseek(program_cache.file, 0, SEEK_END);
+		if ((unsigned long)ftell(program_cache.file) > PROGRAM_CACHE_MAXIMUM_SIZE)
+		{
+			fclose(program_cache.file);
+			program_cache.file = NULL;
+		}
+	}
+	if (!program_cache.file)
+		program_cache.file = fopen(path, "w+b");
+	if (!program_cache.file)
+	{
+		platform_log("shader cache: off (%s cannot be opened)", path);
+		return;
+	}
+	program_cache_index();
+	program_cache.enabled = TRUE;
+	platform_log("shader cache: %s, %lu KB", path, program_cache.end / 1024);
+}
+
+static GLuint program_cache_load(unsigned long long vertex_hash, unsigned long long fragment_hash)
+{
+	struct program_cache_entry *entry;
+	void *binary;
+	GLuint program = 0;
+	GLint status = 0;
+
+	if (!program_cache.enabled || !vertex_hash || !fragment_hash)
+		return 0;
+	entry = program_cache_find(vertex_hash, fragment_hash);
+	if (!entry || !entry->length || !(binary = malloc(entry->length)))
+		return 0;
+	if (fseek(program_cache.file, (long)entry->offset, SEEK_SET) == 0 &&
+		fread(binary, entry->length, 1, program_cache.file) == 1 &&
+		data_hash(binary, entry->length) == entry->data_hash)
+	{
+		program = glCreateProgram();
+		glProgramBinary(program, (GLenum)entry->format, binary, (GLsizei)entry->length);
+		glGetProgramiv(program, GL_LINK_STATUS, &status);
+		if (!status)
+		{
+			glDeleteProgram(program);
+			program = 0;
+		}
+	}
+	free(binary);
+	if (!program)
+	{
+		program_cache.refused++;
+		entry->length = 0;
+		return 0;
+	}
+	program_cache.loaded++;
+	return program;
+}
+
+static void program_cache_store(GLuint program, unsigned long long vertex_hash, unsigned long long fragment_hash)
+{
+	struct program_cache_header header;
+	struct program_cache_entry *entry;
+	GLint length = 0;
+	GLenum format = 0;
+	void *binary;
+
+	if (!program_cache.enabled || !vertex_hash || !fragment_hash)
+		return;
+	glGetProgramiv(program, GL_PROGRAM_BINARY_LENGTH, &length);
+	if (length <= 0 || program_cache.end + sizeof(header) + (unsigned long)length > PROGRAM_CACHE_MAXIMUM_SIZE ||
+		!(binary = malloc((size_t)length)))
+	{
+		return;
+	}
+	glGetProgramBinary(program, length, &length, &format, binary);
+	memset(&header, 0, sizeof(header));
+	header.magic = PROGRAM_CACHE_MAGIC;
+	header.vertex_hash = vertex_hash;
+	header.fragment_hash = fragment_hash;
+	header.format = format;
+	header.length = (unsigned long)length;
+	header.data_hash = data_hash(binary, header.length);
+	if (length > 0 && fseek(program_cache.file, (long)program_cache.end, SEEK_SET) == 0 &&
+		fwrite(&header, sizeof(header), 1, program_cache.file) == 1 &&
+		fwrite(binary, header.length, 1, program_cache.file) == 1 && fflush(program_cache.file) == 0)
+	{
+		entry = program_cache_find(vertex_hash, fragment_hash);
+		if (!entry)
+		{
+			struct program_cache_entry **bucket = program_cache_bucket(vertex_hash, fragment_hash);
+
+			entry = calloc(1, sizeof(*entry));
+			if (entry)
+			{
+				entry->vertex_hash = vertex_hash;
+				entry->fragment_hash = fragment_hash;
+				entry->next = *bucket;
+				*bucket = entry;
+			}
+		}
+		if (entry)
+		{
+			entry->format = header.format;
+			entry->length = header.length;
+			entry->data_hash = header.data_hash;
+			entry->offset = program_cache.end + sizeof(header);
+		}
+		program_cache.end += sizeof(header) + header.length;
+		program_cache.written++;
+	}
+	free(binary);
+}
+
+/* display.frames_in_flight: a fence after each frame's swap, then a wait
+for the frame that many before. Without it a driver queues frames until
+its own limit, then blocks for several at once. */
+#define MAXIMUM_FRAMES_IN_FLIGHT 8
+
+static struct
+{
+	long limit;
+	GLsync fences[MAXIMUM_FRAMES_IN_FLIGHT];
+	long next;
+} frame_pacing;
+
+static void frame_pacing_wait(void)
+{
+	GLsync *slot;
+
+	if (!frame_pacing.limit)
+		return;
+	frame_pacing.fences[frame_pacing.next] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+	frame_pacing.next = (frame_pacing.next + 1) % frame_pacing.limit;
+	slot = &frame_pacing.fences[frame_pacing.next];
+	if (*slot)
+	{
+		glClientWaitSync(*slot, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+		glDeleteSync(*slot);
+		*slot = NULL;
+	}
+}
+#endif
+
 /* ---------- GL helpers */
 
 GLuint xgpu_compile_shader(GLenum type, const char *source, const char *what)
@@ -1256,6 +1578,9 @@ GLuint xgpu_compile_shader(GLenum type, const char *source, const char *what)
 		glDeleteShader(shader);
 		return 0;
 	}
+#ifndef HALO_GLES
+	shader_hash_set(shader, source);
+#endif
 	return shader;
 }
 
@@ -1413,8 +1738,16 @@ static struct render_target_entry *render_target_get(const D3DSurface *surface)
 	glBindTexture(GL_TEXTURE_2D, entry->target.texture);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
 	if (depth)
+	{
+#ifndef HALO_GLES
+		if (xgpu_reversed_depth)
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH32F_STENCIL8, (GLsizei)entry->target.gl_width,
+				(GLsizei)entry->target.gl_height, 0, GL_DEPTH_STENCIL, GL_FLOAT_32_UNSIGNED_INT_24_8_REV, NULL);
+		else
+#endif
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, (GLsizei)entry->target.gl_width,
 			(GLsizei)entry->target.gl_height, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, NULL);
+	}
 	else
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)entry->target.gl_width, (GLsizei)entry->target.gl_height,
 			0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
@@ -1545,7 +1878,12 @@ static void render_target_multisample(struct xgpu_render_target *target, int sam
 	if (!target->multisample)
 		glGenRenderbuffers(1, &target->multisample);
 	glBindRenderbuffer(GL_RENDERBUFFER, target->multisample);
-	glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, target->depth ? GL_DEPTH24_STENCIL8 : GL_RGBA8,
+	glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples,
+		target->depth ? (
+#ifndef HALO_GLES
+			xgpu_reversed_depth ? GL_DEPTH32F_STENCIL8 :
+#endif
+			GL_DEPTH24_STENCIL8) : GL_RGBA8,
 		samples ? (GLsizei)target->gl_width : 1, samples ? (GLsizei)target->gl_height : 1);
 	glBindRenderbuffer(GL_RENDERBUFFER, 0);
 	target->samples = samples;
@@ -1732,6 +2070,14 @@ static void gl_initialize(void)
 	}
 	glClipControl(GL_UPPER_LEFT, GL_ZERO_TO_ONE);
 	glEnable(GL_PROGRAM_POINT_SIZE);
+	xgpu_reversed_depth = config_boolean("display.reversed_depth");
+	platform_log("depth: %s", xgpu_reversed_depth ? "32-bit float, reversed" : "24 bits, as the Xbox's");
+	program_cache_initialize();
+	frame_pacing.limit = config_integer("display.frames_in_flight");
+	if (frame_pacing.limit < 0)
+		frame_pacing.limit = 0;
+	if (frame_pacing.limit > MAXIMUM_FRAMES_IN_FLIGHT)
+		frame_pacing.limit = MAXIMUM_FRAMES_IN_FLIGHT;
 #endif
 	glGenVertexArrays(1, &device.vertex_array);
 	glBindVertexArray(device.vertex_array);
@@ -1764,19 +2110,30 @@ static void gl_initialize(void)
 	glGenQueries(VISIBILITY_TEST_SLOTS, device.queries);
 	glGenQueries(1, &device.scratch_query);
 #ifndef HALO_GLES
-	glGenBuffers(1, &device.visibility_results_buffer);
-	glBindBuffer(GL_QUERY_BUFFER, device.visibility_results_buffer);
-	glBufferStorage(GL_QUERY_BUFFER, VISIBILITY_TEST_SLOTS * sizeof(GLuint), NULL,
-		GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
-	device.visibility_results = glMapBufferRange(GL_QUERY_BUFFER, 0, VISIBILITY_TEST_SLOTS * sizeof(GLuint),
-		GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
-	if (device.visibility_results)
 	{
-		glGenQueries(VISIBILITY_TEST_SLOTS, device.visibility_batches[0].queries);
-		glGenQueries(VISIBILITY_TEST_SLOTS, device.visibility_batches[1].queries);
+		const char *vendor = (const char *)glGetString(GL_VENDOR);
+
+		/* AMD's driver gives wrong counts from a query buffer, so flares
+		and lights vanish or flicker. Those counts are read on the CPU. */
+		if (vendor && !strcmp(vendor, "ATI Technologies Inc."))
+			platform_log("GPU: AMD's driver; visibility test queries are read on the CPU");
+		else
+		{
+			glGenBuffers(1, &device.visibility_results_buffer);
+			glBindBuffer(GL_QUERY_BUFFER, device.visibility_results_buffer);
+			glBufferStorage(GL_QUERY_BUFFER, VISIBILITY_TEST_SLOTS * sizeof(GLuint), NULL,
+				GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
+			device.visibility_results = glMapBufferRange(GL_QUERY_BUFFER, 0, VISIBILITY_TEST_SLOTS * sizeof(GLuint),
+				GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
+			if (device.visibility_results)
+			{
+				glGenQueries(VISIBILITY_TEST_SLOTS, device.visibility_batches[0].queries);
+				glGenQueries(VISIBILITY_TEST_SLOTS, device.visibility_batches[1].queries);
+			}
+			else
+				platform_log("cannot map the visibility test results; tests wait for the GPU");
+		}
 	}
-	else
-		platform_log("cannot map the visibility test results; tests wait for the GPU");
 	/* (unbound: a query read into a bound query buffer takes its pointer
 	for an offset into it) */
 	glBindBuffer(GL_QUERY_BUFFER, 0);
@@ -2976,7 +3333,35 @@ static struct program_entry *program_get(GLuint vertex_shader, GLuint fragment_s
 	if (!vertex_shader || !fragment_shader)
 		return NULL;
 
+#ifndef HALO_GLES
+	entry->program = program_cache_load(shader_hash(vertex_shader), shader_hash(fragment_shader));
+	if (!entry->program)
+	{
+		GLint status = 0;
+
+		entry->program = glCreateProgram();
+		glAttachShader(entry->program, vertex_shader);
+		glAttachShader(entry->program, fragment_shader);
+		if (program_cache.enabled)
+			glProgramParameteri(entry->program, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
+		glLinkProgram(entry->program);
+		glGetProgramiv(entry->program, GL_LINK_STATUS, &status);
+		if (!status)
+		{
+			char log[4096];
+
+			glGetProgramInfoLog(entry->program, sizeof(log), NULL, log);
+			platform_log("cannot link the shader program: %s", log);
+			glDeleteProgram(entry->program);
+			entry->program = 0;
+			return NULL;
+		}
+		program_cache.linked++;
+		program_cache_store(entry->program, shader_hash(vertex_shader), shader_hash(fragment_shader));
+	}
+#else
 	entry->program = xgpu_link_program(vertex_shader, fragment_shader, "shader");
+#endif
 	if (!entry->program)
 		return NULL;
 	state_program(entry->program);
@@ -3670,8 +4055,9 @@ static void apply_raster_state(BOOL has_depth)
 		memcpy(gl_state.scissor, scissor, sizeof(scissor));
 		glScissor(scissor[0], scissor[1], scissor[2], scissor[3]);
 	}
-	depth_range[0] = device.viewport.MinZ;
-	depth_range[1] = device.viewport.MaxZ;
+	/* reversed depth stores Direct3D's MinZ to MaxZ as 1 - MaxZ to 1 - MinZ */
+	depth_range[0] = xgpu_reversed_depth ? 1.0f - device.viewport.MaxZ : device.viewport.MinZ;
+	depth_range[1] = xgpu_reversed_depth ? 1.0f - device.viewport.MinZ : device.viewport.MaxZ;
 	if (memcmp(gl_state.depth_range, depth_range, sizeof(depth_range)))
 	{
 		memcpy(gl_state.depth_range, depth_range, sizeof(depth_range));
@@ -3683,6 +4069,12 @@ static void apply_raster_state(BOOL has_depth)
 	{
 		GLenum function = rs[D3DRS_ZFUNC] ? (GLenum)rs[D3DRS_ZFUNC] : GL_NEVER;
 
+		/* reversed depth: nearer is the greater value */
+		if (xgpu_reversed_depth)
+		{
+			function = function == GL_LESS ? GL_GREATER : function == GL_LEQUAL ? GL_GEQUAL :
+				function == GL_GREATER ? GL_LESS : function == GL_GEQUAL ? GL_LEQUAL : function;
+		}
 		if (gl_state.depth_function != function)
 		{
 			gl_state.depth_function = function;
@@ -3811,6 +4203,12 @@ static void apply_raster_state(BOOL has_depth)
 
 		offset[0] = dword_to_float(rs[D3DRS_POLYGONOFFSETZSLOPESCALE]);
 		offset[1] = dword_to_float(rs[D3DRS_POLYGONOFFSETZOFFSET]);
+		/* reversed depth: toward the camera is up */
+		if (xgpu_reversed_depth)
+		{
+			offset[0] = -offset[0];
+			offset[1] = -offset[1];
+		}
 		if (memcmp(gl_state.polygon_offset, offset, sizeof(offset)))
 		{
 			memcpy(gl_state.polygon_offset, offset, sizeof(offset));
@@ -3954,6 +4352,11 @@ static const char fixed_function_vertex_source[] =
 	"	vec2 pixel_offset = vec2(0.5 + screen_offset, 0.5);\n"
 	"	clip_position.xy += (pixel_offset * clip_position.w) / scale;\n"
 	"	gl_Position = clip_position;\n"
+#ifndef HALO_ANDROID
+	"	#ifdef REVERSED_DEPTH\n"
+	"	gl_Position.z = gl_Position.w - gl_Position.z;\n"
+	"	#endif\n"
+#endif
 #ifdef HALO_ANDROID
 	"	gl_Position.y = -gl_Position.y;\n"
 	"	gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;\n"
@@ -3983,6 +4386,8 @@ static GLuint fixed_function_vertex_shader(void)
 		xgpu_text_append(&text, "#version %s\n%s", xgpu_capabilities.shading_language,
 			fixed_function_vertex_source);
 #else
+		if (xgpu_reversed_depth)
+			xgpu_text_append(&text, "#define REVERSED_DEPTH 1\n");
 		xgpu_text_append(&text, "%s", fixed_function_vertex_source);
 #endif
 		shader = xgpu_compile_shader(GL_VERTEX_SHADER, text.buffer ? text.buffer : "", "fixed-function vertex");
@@ -5764,7 +6169,7 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 	if (has_depth && (flags & D3DCLEAR_ZBUFFER))
 	{
 		glDepthMask(GL_TRUE);
-		glClearDepth(z);
+		glClearDepth(xgpu_reversed_depth ? 1.0f - z : z);
 		mask |= GL_DEPTH_BUFFER_BIT;
 	}
 	if (has_depth && (flags & D3DCLEAR_STENCIL))
@@ -6109,6 +6514,9 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		/* A capture hook copies the read framebuffer at the swap. The window is upright. */
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 		platform_video_swap();
+#ifndef HALO_GLES
+		frame_pacing_wait();
+#endif
 		gl_check_errors("present");
 		xgpu_gl_state_invalidate();
 		memory_watch_begin_frame();
