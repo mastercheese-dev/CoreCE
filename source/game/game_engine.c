@@ -554,6 +554,7 @@ symbols in this file:
 #include "interface/hud.h"
 #include "interface/hud_definitions.h"
 #include "interface/hud_messaging.h"
+#include "clips.h" /* port: the free camera's text stream */
 #include "interface/player_ui.h"
 #include "interface/terminal.h"
 #include "interface/ui_widget.h"
@@ -3247,22 +3248,30 @@ static void multiplayer_message(
 	long message_data)
 {
 	struct player_datum *player = player_get(player_index);
+	wchar_t buffer[1024];
+	int quiet;
 
-	if (player->local_player_index != NONE)
+	quiet = player->local_player_index == NONE;
+	if (quiet && !clips_replaying())
+		return;
+	/* another player's line is for the stream. its announcement stays the watched player's */
+	if (quiet)
+		game_engine_multiplayer_sound_silent(1);
+	if (multiplayer_message_internal(
+		player_index,
+		message,
+		message_data,
+		buffer,
+		NUMBEROF(buffer)))
 	{
-		wchar_t buffer[1024];
-
-		if (multiplayer_message_internal(
-			player_index,
-			message,
-			message_data,
-			buffer,
-			NUMBEROF(buffer)))
-		{
-			buffer[NUMBEROF(buffer) - 1] = 0;
+		buffer[NUMBEROF(buffer) - 1] = 0;
+		if (clips_replaying())
+			clips_feed_note(buffer);
+		if (!quiet)
 			hud_print_message(player->local_player_index, buffer);
-		}
 	}
+	if (quiet)
+		game_engine_multiplayer_sound_silent(0);
 
 	return;
 }

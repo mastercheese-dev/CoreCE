@@ -12422,11 +12422,21 @@ static void clips_list_update(struct widget_instance *list)
 	count = clips_menu_count();
 	{
 		struct widget_instance *keep = named(list, "clips_keep", 0);
+		struct widget_instance *label = named(list, "clips_keep_label", 0);
+		struct widget_instance *down = named(list, "clips_keep_down", 0);
+		struct widget_instance *up = named(list, "clips_keep_up", 0);
 		wchar_t keep_text[16];
 
 		usnprintf(keep_text, NUMBEROF(keep_text) - 1, L"KEEP %d", clips_menu_keep());
 		keep_text[NUMBEROF(keep_text) - 1] = 0;
-		clips_row_label(keep, keep_text, 16);
+		clips_row_label(label, keep_text, 16);
+		/* the pill stays on its dark frame. the arrow with the cursor is white */
+		if (keep)
+			keep->animation.current_frame_index = 0;
+		if (down)
+			down->animation.current_frame_index = keep && keep->focused_child == down ? 1 : 0;
+		if (up)
+			up->animation.current_frame_index = keep && keep->focused_child == up ? 1 : 0;
 	}
 	if (focused && focused->name && !strncmp(focused->name, "clip_row_", 9))
 		clips_menu_note_focus(clips_row_index(focused));
@@ -12451,11 +12461,17 @@ static void clips_list_update(struct widget_instance *list)
 		row->disabled = count == 0 ? TRUE : FALSE;
 	}
 	if (focused && focused->name && !strcmp(focused->name, "clips_keep"))
-		clips_row_label(help, L"Left and right set how many clips this profile keeps. Older clips past that are removed.", 160);
+		clips_row_label(help, L"Arrows change the limit.", 160);
 	else if (count == 0)
 		clips_row_label(help, L"This profile has no clips.", 64);
 	else
-		clips_row_label(help, L"A plays the clip. DELETE removes it. KEEP sets how many clips stay.", 160);
+		clips_row_label(help, L"VIEW plays the clip. Double click or double A plays it too. DELETE removes it.", 160);
+	{
+		struct widget_instance *view = named(list, "clips_button_view", 0);
+
+		if (view)
+			view->disabled = count == 0 ? TRUE : FALSE;
+	}
 }
 
 /* "port clips play" */
@@ -12477,6 +12493,32 @@ static boolean clips_play_row(struct widget_instance *widget, short controller)
 	/* one window. a second local player would take a seat the clip recorded */
 	player_spawn_count = 1;
 	campaign_start(map, difficulty, controller);
+	return TRUE;
+}
+
+/* a clip row takes two presses close together. a click plays the row that
+is already highlighted, which a double click's second press is. hovering
+does not move that highlight. VIEW plays the highlighted one */
+static boolean clips_play_double(struct widget_instance *widget, short controller)
+{
+	static unsigned long armed_at;
+	static int armed_row = -1;
+	static short armed_controller = NONE;
+	int row;
+	unsigned long now;
+
+	row = clips_row_index(widget);
+	if (row < 0 || ui_widget_port_pointer_button())
+		return clips_play_row(widget, controller);
+	now = system_milliseconds();
+	if (armed_row == row && armed_controller == controller && now - armed_at <= 500)
+	{
+		armed_row = -1;
+		return clips_play_row(widget, controller);
+	}
+	armed_row = row;
+	armed_controller = controller;
+	armed_at = now;
 	return TRUE;
 }
 
@@ -12656,7 +12698,7 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port clips play"))
 		{
-			return clips_play_row(widget, controller);
+			return clips_play_double(widget, controller);
 		}
 		else if (!strcmp(name, "port clips delete"))
 		{

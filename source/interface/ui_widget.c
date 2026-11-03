@@ -5337,6 +5337,20 @@ static __inline real widget_instance_get_cumulative_alpha_modifier(
 	return alpha_modifier;
 }
 
+/* a clips list row's number, or -1. the name is clip_row_ and then digits */
+static int clips_row_number(
+	struct widget_instance *widget)
+{
+	char const *name;
+	int row = 0;
+
+	if (!widget || !widget->name || strncmp(widget->name, "clip_row_", 9))
+		return -1;
+	for (name = widget->name + 9; *name >= '0' && *name <= '9'; name++)
+		row = row * 10 + (*name - '0');
+	return row;
+}
+
 static boolean widget_instance_text_box_is_focused(
 	struct widget_instance *widget)
 {
@@ -5362,6 +5376,10 @@ static boolean widget_instance_text_box_is_focused(
 		}
 		while (ancestor);
 	}
+	/* the chosen clip stays lit while a bottom button has the pointer */
+	if (!focused && clips_row_number(widget) >= 0 &&
+		clips_row_number(widget) == clips_menu_focused_row())
+		focused = TRUE;
 
 	return focused;
 }
@@ -6758,13 +6776,11 @@ static void ui_mouse_note_target(
 			}
 		}
 	}
-	/* KEEP is a button that steps a number. a click on its left half
-	goes down, the right half goes up */
-	else if (widget->name && !strcmp(widget->name, "clips_keep"))
+	/* the keep arrows are the click targets. the pill and the words are not */
+	else if (widget->name && (!strcmp(widget->name, "clips_keep") ||
+		!strcmp(widget->name, "clips_keep_label")))
 	{
-		if (!widget_instance_can_receive_events(widget))
-			return;
-		kind = _ui_mouse_target_value;
+		return;
 	}
 	else if (ui_mouse_widget_is_item(widget))
 	{
@@ -7368,7 +7384,7 @@ static boolean ui_mouse_selection_row(
 {
 	return widget && widget->parent && pc_menu_tag(widget->parent->definition_tag_index) &&
 		(!strncmp(widget->name, "list_item_", 10) || !strncmp(widget->name, "server_item_", 12) ||
-			!strncmp(widget->name, "op_mod_", 7));
+			!strncmp(widget->name, "op_mod_", 7) || !strncmp(widget->name, "clip_row_", 9));
 }
 
 /* logs a tap the menus resolved: where it was and the target the click acts
@@ -8496,6 +8512,8 @@ static void column_list_update(
 
 	for (child = widget->child; child; child = child->next)
 	{
+		int chosen;
+
 		if (child == widget->focused_child)
 		{
 			if (child->animation.number_of_sprite_frames == 2)
@@ -8505,6 +8523,16 @@ static void column_list_update(
 		{
 			child->animation.current_frame_index = 0;
 		}
+		chosen = clips_menu_focused_row();
+		if (child->animation.number_of_sprite_frames == 2 &&
+			clips_row_number(child) >= 0 && clips_row_number(child) == chosen)
+			child->animation.current_frame_index = 1;
+		/* the keep pill stays dark. the arrow that has the cursor lights up */
+		if (child->name && !strcmp(child->name, "clips_keep"))
+			child->animation.current_frame_index = 0;
+		if (child->name && (!strcmp(child->name, "clips_keep_down") ||
+			!strcmp(child->name, "clips_keep_up")))
+			child->animation.current_frame_index = child == widget->focused_child ? 1 : 0;
 	}
 
 	return;
@@ -9269,6 +9297,10 @@ static boolean ui_check_for_pause_game(
 	boolean network_game = network_game_is_active();
 	short controller_index = NONE;
 
+	/* a clip's Start pauses the playback. the match pause screen would take B
+	as resume, and that screen's leave is not the clip's */
+	if (clips_replaying())
+		return FALSE;
 	if (game_in_progress() &&
 		!cinematic_in_progress() &&
 		game_connection() != _game_connection_film_playback &&

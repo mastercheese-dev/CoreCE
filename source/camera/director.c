@@ -131,6 +131,9 @@ symbols in this file:
 
 #include "editor/editor_stubs.h"
 #include "game/players.h"
+#include "game/game_globals.h"
+#include "scenario/scenario.h"
+#include "input/input_abstraction.h"
 #include "clips.h" /* port: a clip plays back with the recorded view */
 #include "halo_keyboard.h"
 #include "input/input.h"
@@ -187,6 +190,14 @@ static void director_process_variables(
 static boolean director_update_controls(
 	short local_player_index,
 	struct camera_control *controls);
+static void clips_fly_look(
+	short local_player_index,
+	real *yaw,
+	real *pitch);
+real evaluate_piecewise_linear_function(
+	short count,
+	real const *function,
+	real input);
 
 /* ---------- globals */
 
@@ -218,6 +229,9 @@ static real const ticks_per_millisecond = 0.03f;
 static real const friction = 5.f;
 static real const acceleration_scale = 25.f;
 static real const genius_boy = 1.3f;
+/* the debug crawl is a few tenths of a unit a second. eight times that
+is a walk on the keys, quick enough to cross a match and slow enough to stop on a player */
+static real const clips_fly_speed = 8.f;
 
 static struct director_variable_definition variables[NUMBER_OF_DIRECTOR_VARIABLES] =
 {
@@ -468,12 +482,21 @@ void director_clips_camera(
 	}
 	if (mode == 2)
 	{
+		real_point3d position;
+		real_vector3d forward;
+		long eyes;
+
 		if (director->camera_proc == (director_camera_update_proc)flying_camera_update)
 			return;
+		position = director->command.focus_position;
+		forward = director->command.forward;
+		eyes = player_control_get_unit_index(local_player_index);
+		if (!TEST_FLAG(director->command.flags, _observer_command_valid_bit) && eyes != NONE)
+			first_person_camera_deterministic(eyes, &position, &forward);
 		flying_camera_new_from_point_and_vector(
 			(struct flying_camera *)director->camera_data,
-			&director->command.focus_position,
-			&director->command.forward);
+			&position,
+			&forward);
 		director_set_camera(
 			local_player_index,
 			(director_camera_update_proc)flying_camera_update,
@@ -768,10 +791,21 @@ static void director_choose_camera_game(
 		boolean use_dead_camera = player->unit_index == NONE &&
 			(player->statistics.deaths > 0 || players_coop_waiting_to_start(player_index));
 
+		/* a clip's free camera stays up. the player view comes back when it leaves */
+		if (clips_replaying() && local_player_index == 0)
+		{
+			if (clips_flying())
+			{
+				director_clips_camera(local_player_index, 2, NONE);
+				return;
+			}
+			if (director->camera_proc == (director_camera_update_proc)flying_camera_update)
+				director_clips_camera(local_player_index, 0, NONE);
+		}
 		/* (port: not a client in another's game, the host's rules: a flying
 		camera would see all of it, and one behind the player round its
 		corners) */
-		if (key && !network_game_distributed_client())
+		if (key && !network_game_distributed_client() && !clips_replaying())
 			director_rotate_cameras(local_player_index, director_game_camera_modes, 3);
 		if (!*director_camera_scripted)
 		{
@@ -855,6 +889,79 @@ static void director_choose_camera_script_camera_record(
 	return;
 }
 
+/* the free camera turns with the profile's look rates, the same degrees a
+second the player uses. the stick is already on that profile's layout */
+static void clips_fly_look(
+	short local_player_index,
+	real *yaw,
+	real *pitch)
+{
+	short look_pad = local_player_index;
+	long player_index = local_player_get_player_index(local_player_index);
+	real look_yaw;
+	real look_pitch;
+	real absolute_yaw;
+	real absolute_pitch;
+	real look_scale;
+	real yaw_rate;
+	real pitch_rate;
+	struct game_globals_player_control *constants;
+
+	*yaw = 0.f;
+	*pitch = 0.f;
+	if (player_index != NONE)
+	{
+		short pad = player_get(player_index)->local_player_index;
+
+		if (pad >= 0 && pad < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS)
+			look_pad = pad;
+	}
+	input_abstraction_look_axes(look_pad, &look_yaw, &look_pitch);
+	yaw_rate = player_look_yaw_rate[look_pad];
+	pitch_rate = player_look_pitch_rate[look_pad];
+	if (yaw_rate <= 0.f)
+		yaw_rate = 120.f;
+	if (pitch_rate <= 0.f)
+		pitch_rate = 60.f;
+	absolute_yaw = fabs(look_yaw);
+	absolute_pitch = fabs(look_pitch);
+	look_scale = 1.f;
+	if (absolute_pitch > 0.1f && absolute_yaw > 0.1f)
+	{
+		if (absolute_pitch > absolute_yaw)
+		{
+			absolute_yaw /= absolute_pitch;
+			absolute_pitch = 1.f;
+		}
+		else
+		{
+			absolute_pitch /= absolute_yaw;
+			absolute_yaw = 1.f;
+		}
+		look_scale = square_root(
+			absolute_pitch * absolute_pitch + absolute_yaw * absolute_yaw);
+	}
+	look_yaw = PIN(look_yaw * look_scale, -1.f, 1.f);
+	look_pitch = PIN(look_pitch * look_scale, -1.f, 1.f);
+	constants = TAG_BLOCK_GET_ELEMENT(
+		&scenario_get_game_globals()->player_control,
+		0,
+		struct game_globals_player_control);
+	if (constants->look_function.count > 1)
+	{
+		look_yaw = evaluate_piecewise_linear_function(
+			(short)constants->look_function.count,
+			(real const *)constants->look_function.address,
+			look_yaw);
+		look_pitch = evaluate_piecewise_linear_function(
+			(short)constants->look_function.count,
+			(real const *)constants->look_function.address,
+			look_pitch);
+	}
+	*yaw = look_yaw * DEGREES_TO_RADIANS(yaw_rate) * director_globals.dtime;
+	*pitch = look_pitch * DEGREES_TO_RADIANS(pitch_rate) * director_globals.dtime;
+}
+
 static boolean director_update_controls(
 	short local_player_index,
 	struct camera_control *controls)
@@ -898,12 +1005,12 @@ static boolean director_update_controls(
 				(director_camera_update_proc)following_camera_update)
 		{
 			/* a clip's free camera flies with the sticks and the mouse.
-			the mouse is not a stick on this port, and the triggers change
-			the clip's speed */
-			boolean clips_fly = clips_replaying() &&
+			the mouse is not a stick on this port. ] and the right trigger
+			rise, and [ and the left trigger drop */
+			boolean clips_fly = clips_flying() && local_player_index == 0 &&
 				director->camera_proc == (director_camera_update_proc)flying_camera_update;
-			short mouse_x = 0;
-			short mouse_y = 0;
+			float look_yaw = 0.f;
+			float look_pitch = 0.f;
 
 			if (gamepad->buttons[_gamepad_binary_button_right_thumb] == 1)
 				director->debug_controls = !director->debug_controls;
@@ -912,9 +1019,12 @@ static boolean director_update_controls(
 				control_flags = 0;
 				if (clips_fly)
 				{
-					extern void halo_linux_mouse_sample(short *x, short *y);
+					extern void halo_linux_mouse_look_read(float *yaw, float *pitch);
+					extern int halo_linux_fly_up(void);
 					unsigned long keys = halo_keyboard_actions(0);
+					int rise = halo_linux_fly_up();
 
+					halo_linux_mouse_look_read(&look_yaw, &look_pitch);
 					SET_FLAG(control_flags, _camera_control_forward_bit,
 						TEST_FLAG(keys, HALO_KEYBOARD_MOVE_FORWARD));
 					SET_FLAG(control_flags, _camera_control_reverse_bit,
@@ -924,13 +1034,10 @@ static boolean director_update_controls(
 					SET_FLAG(control_flags, _camera_control_right_bit,
 						TEST_FLAG(keys, HALO_KEYBOARD_STRAFE_RIGHT));
 					SET_FLAG(control_flags, _camera_control_up_bit,
-						gamepad->buttons[_gamepad_binary_button_dpad_up] != 0 ||
-						input_key_is_down(_key_r));
+						gamepad->buttons[_gamepad_analog_button_right_trigger] != 0 || rise > 0);
 					SET_FLAG(control_flags, _camera_control_down_bit,
-						gamepad->buttons[_gamepad_binary_button_dpad_down] != 0 ||
-						input_key_is_down(_key_f));
+						gamepad->buttons[_gamepad_analog_button_left_trigger] != 0 || rise < 0);
 					controls->wheel_delta = 0;
-					halo_linux_mouse_sample(&mouse_x, &mouse_y);
 				}
 				else
 				{
@@ -950,14 +1057,20 @@ static boolean director_update_controls(
 					local_player_index,
 					control_flags,
 					controls->wheel_delta);
-				controls->facing_delta.yaw =
-					(real)gamepad->sticks[_gamepad_stick_right].x *
-						director_globals.dtime * -0.0000392699076f;
-				controls->facing_delta.pitch =
-					(real)gamepad->sticks[_gamepad_stick_right].y *
-						director_globals.dtime * 0.0000196349538f;
-				controls->facing_delta.yaw += (real)mouse_x * -0.0031415927f;
-				controls->facing_delta.pitch += (real)mouse_y * -0.0031415927f;
+				if (clips_fly)
+					clips_fly_look(local_player_index, &controls->facing_delta.yaw,
+						&controls->facing_delta.pitch);
+				else
+				{
+					controls->facing_delta.yaw =
+						(real)gamepad->sticks[_gamepad_stick_right].x *
+							director_globals.dtime * -0.0000392699076f;
+					controls->facing_delta.pitch =
+						(real)gamepad->sticks[_gamepad_stick_right].y *
+							director_globals.dtime * 0.0000196349538f;
+				}
+				controls->facing_delta.yaw += look_yaw;
+				controls->facing_delta.pitch += look_pitch;
 				controls->position_delta.i =
 					(real)gamepad->sticks[_gamepad_stick_left].y *
 						director->debug_input_scale * director_globals.dtime * 0.00005f;
@@ -973,26 +1086,43 @@ static boolean director_update_controls(
 				}
 				controls->position_delta.k +=
 					director->debug_variables[_variable_height].delta;
+				if (clips_fly)
+				{
+					controls->position_delta.i *= clips_fly_speed;
+					controls->position_delta.j *= clips_fly_speed;
+					controls->position_delta.k *= clips_fly_speed;
+				}
 				controls->active = TRUE;
 				director_inhibit_input(local_player_index);
 				director_inhibit_facing(local_player_index);
 			}
 		}
 	}
-	else if (input_get_mouse_state())
+	else if (input_get_mouse_state() || (clips_flying() && local_player_index == 0))
 	{
 		unsigned long control_flags = 0;
 		struct mouse_state const *mouse = input_get_mouse_state();
-		boolean clips_fly = clips_replaying() &&
+		boolean clips_fly = clips_flying() && local_player_index == 0 &&
 			director->camera_proc == (director_camera_update_proc)flying_camera_update;
 
 		switch_camera = input_key_is_down(_key_backspace) == TRUE;
-		if (clips_fly || (director->camera_proc !=
+		if (clips_fly || (mouse && director->camera_proc !=
 				(director_camera_update_proc)first_person_camera_update &&
 			mouse->buttons[1]) || input_key_is_down(_key_tab))
 		{
 			unsigned long keys = clips_fly ? halo_keyboard_actions(0) : 0;
+			float look_yaw = 0.f;
+			float look_pitch = 0.f;
+			int rise = 0;
 
+			if (clips_fly)
+			{
+				extern void halo_linux_mouse_look_read(float *yaw, float *pitch);
+				extern int halo_linux_fly_up(void);
+
+				halo_linux_mouse_look_read(&look_yaw, &look_pitch);
+				rise = halo_linux_fly_up();
+			}
 			SET_FLAG(control_flags, _camera_control_forward_bit,
 				input_key_is_down(_key_w) || TEST_FLAG(keys, HALO_KEYBOARD_MOVE_FORWARD));
 			SET_FLAG(control_flags, _camera_control_reverse_bit,
@@ -1002,9 +1132,9 @@ static boolean director_update_controls(
 			SET_FLAG(control_flags, _camera_control_right_bit,
 				input_key_is_down(_key_d) || TEST_FLAG(keys, HALO_KEYBOARD_STRAFE_RIGHT));
 			SET_FLAG(control_flags, _camera_control_up_bit,
-				input_key_is_down(_key_r));
+				input_key_is_down(_key_r) || rise > 0);
 			SET_FLAG(control_flags, _camera_control_down_bit,
-				input_key_is_down(_key_f));
+				input_key_is_down(_key_f) || rise < 0);
 			SET_FLAG(control_flags, _camera_control_roll_left_bit,
 				input_key_is_down(_key_t));
 			SET_FLAG(control_flags, _camera_control_roll_right_bit,
@@ -1012,20 +1142,32 @@ static boolean director_update_controls(
 			director_process_variables(
 				local_player_index,
 				control_flags,
-				clips_fly ? 0.0f : (real)mouse->wheel_delta);
-			controls->facing_delta.yaw =
-				(real)mouse->x * -0.0031415927f;
-			controls->facing_delta.pitch =
-				(real)mouse->y * -0.0031415927f;
+				clips_fly || !mouse ? 0.0f : (real)mouse->wheel_delta);
+			if (clips_fly)
+			{
+				controls->facing_delta.yaw = look_yaw;
+				controls->facing_delta.pitch = look_pitch;
+			}
+			else if (mouse)
+			{
+				controls->facing_delta.yaw = (real)mouse->x * -0.0031415927f;
+				controls->facing_delta.pitch = (real)mouse->y * -0.0031415927f;
+			}
 			controls->facing_delta.roll +=
 				director->debug_variables[_variable_roll].delta;
-			controls->wheel_delta = clips_fly ? 0.0f : (real)mouse->wheel_delta;
+			controls->wheel_delta = clips_fly || !mouse ? 0.0f : (real)mouse->wheel_delta;
 			controls->position_delta.i +=
 				director->debug_variables[_variable_forward].delta;
 			controls->position_delta.j +=
 				director->debug_variables[_variable_right].delta;
 			controls->position_delta.k +=
 				director->debug_variables[_variable_height].delta;
+			if (clips_fly)
+			{
+				controls->position_delta.i *= clips_fly_speed;
+				controls->position_delta.j *= clips_fly_speed;
+				controls->position_delta.k *= clips_fly_speed;
+			}
 			controls->active = TRUE;
 			director_inhibit_input(local_player_index);
 			director_inhibit_facing(local_player_index);
@@ -1103,11 +1245,12 @@ void director_update(
 			director->inhibited_input = FALSE;
 			switch_camera =
 				director_update_controls(local_player_index, &controls);
-			/* a clip's view is the one that was recorded. the sticks and the
-			   mouse do not steer it, and the camera does not change */
+			/* a player pane keeps the recorded view. the free camera is the
+			   one this machine can fly */
 			if (clips_replaying())
-			{
 				switch_camera = FALSE;
+			if (clips_replaying() && !(clips_flying() && local_player_index == 0))
+			{
 				controls.active = FALSE;
 				controls.facing_delta.yaw = 0.f;
 				controls.facing_delta.pitch = 0.f;

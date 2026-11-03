@@ -16,6 +16,15 @@ int clips_fill_options(char *map_name, long map_name_size, short *difficulty, un
 void clips_map_started(void);
 void clips_map_ended(void);
 int clips_replaying(void);
+/* the fullscreen free camera. the player panes are hidden while it is on */
+int clips_flying(void);
+/* the level is running forward to the tick a backward scrub will land on.
+the picture stays where it was until that tick is ready. */
+int clips_catching_up(void);
+/* a line for the free camera's text stream: pickups, deaths, and the rest */
+void clips_feed_note(wchar_t const *text);
+/* the same stream, with this player's name in front of an item message */
+void clips_feed_item(long player_index, long definition_index, short quantity, int message_offset);
 /* -1 when this frame is not limited. otherwise how many ticks it may run.
 *exact is 1 when the clip wants that many, not merely no more than that. */
 long clips_tick_allowance(int *exact);
@@ -36,6 +45,8 @@ void clips_menu_load(void);
 int clips_menu_count(void);
 void clips_menu_scroll(int delta);
 void clips_menu_note_focus(int visible_row);
+/* the clip row that stays highlighted, or -1 when the list is empty */
+int clips_menu_focused_row(void);
 void clips_menu_line(int visible_row, wchar_t *text, int length);
 int clips_menu_play(int visible_row, char *map_name, long map_name_size, short *difficulty);
 int clips_menu_delete(int visible_row);

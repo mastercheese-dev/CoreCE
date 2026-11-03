@@ -1513,7 +1513,8 @@ void compute_window_bounds(
 short main_get_window_count(
 	void)
 {
-	boolean single_window = game_engine_force_single_screen() || cinematic_in_progress();
+	boolean single_window = game_engine_force_single_screen() || cinematic_in_progress() ||
+		clips_flying();
 
 	if (!single_window)
 	{
@@ -3409,7 +3410,7 @@ static void main_game_render(
 	lock_global_random_seed();
 	collision_log_continue_period(TRUE);
 	sound_render();
-	force_single_screen = game_engine_force_single_screen();
+	force_single_screen = game_engine_force_single_screen() || clips_flying();
 	last_local_player_index = NONE;
 
 	/* port: a hardcore team game draws one team. the other team's local
@@ -3445,7 +3446,13 @@ static void main_game_render(
 			player_window_count,
 			&window->rasterizer_camera.viewport_bounds,
 			&window->rasterizer_camera.window_bounds);
-		if (force_single_screen)
+		if (clips_flying())
+		{
+			window->local_player_index = 0;
+			observer = observer_get_camera(0);
+			observer = render_interpolation_camera(0, observer);
+		}
+		else if (force_single_screen)
 		{
 			window->local_player_index = NONE;
 		}
@@ -3768,6 +3775,10 @@ void main_loop(
 						render_frame = TRUE;
 					else
 						render_frame &= !game_engine_running() || game_time_get()>=3;
+					/* a backward scrub runs the level up to its tick before the
+					picture moves, so the catch-up is not shown from the start */
+					if (clips_catching_up())
+						render_frame = FALSE;
 
 					profile_scope_enter(main_non_deterministic_update_section)
 					collision_log_continue_period(1);

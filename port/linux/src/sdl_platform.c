@@ -1241,6 +1241,7 @@ static void platform_input_clear(void)
 	memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
 	input_state.mouse_dx = input_state.mouse_dy = input_state.mouse_wheel = 0.0f;
 	input_state.pause_pressed = input_state.menu_back_pressed = FALSE;
+	input_state.escape_down = FALSE;
 	keystroke_head = keystroke_count = 0;
 }
 
@@ -1803,12 +1804,18 @@ void platform_pump_events(void)
 			if (event.key.scancode == SDL_SCANCODE_ESCAPE && !console_is_active() &&
 				!network_chat_typing())
 			{
-				if (event.key.down && !event.key.repeat)
+				if (!event.key.repeat)
 				{
-					BOOL menu = input_state.ui_pointer;
-					platform_mouse_released_set(TRUE);
-					input_state.menu_back_pressed = menu;
-					input_state.pause_pressed = !menu;
+					if (event.key.down)
+					{
+						BOOL menu = input_state.ui_pointer;
+						platform_mouse_released_set(TRUE);
+						input_state.menu_back_pressed = menu;
+						input_state.pause_pressed = !menu;
+						input_state.escape_down = TRUE;
+					}
+					else
+						input_state.escape_down = FALSE;
 				}
 				break;
 			}

@@ -27,6 +27,8 @@ struct platform_input_state
 	BOOL ui_pointer;
 	/* One-shot native Escape actions, independent of configurable gameplay bindings. */
 	BOOL pause_pressed, menu_back_pressed;
+	/* Escape held. It is not one of keys[]: a gameplay binding must not see it. */
+	BOOL escape_down;
 	/* a menu is up (platform_menus_set_active): the keys drive the first
 	controller, to move about it, instead of the player's actions */
 	BOOL menus;

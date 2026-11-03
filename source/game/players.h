@@ -294,6 +294,9 @@ void player_control_set_desired_weapon(
 void player_control_set_facing(
 	short local_player_index,
 	real_vector3d const *facing_direction);
+void player_control_set_facing_angles(
+	short local_player_index,
+	real_euler_angles2d const *angles);
 void player_control_new_unit(
 	short local_player_index,
 	long unit_index);

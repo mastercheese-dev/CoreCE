@@ -672,6 +672,8 @@ boolean game_engine_force_autopickup(
 
 void game_engine_play_multiplayer_sound(
 	long sound_index);
+/* while set, a message formatted for the text stream does not also announce */
+void game_engine_multiplayer_sound_silent(int silent);
 void game_engine_update_multiplayer_sound(
 	void);
 void game_engine_intialize_queued_sounds(

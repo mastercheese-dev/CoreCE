@@ -489,6 +489,26 @@ void input_abstraction_update_local_player_preferences(
 	return;
 }
 
+void input_abstraction_look_axes(
+	short controller_index,
+	real *yaw,
+	real *pitch)
+{
+	struct game_input_state *state;
+
+	if (yaw)
+		*yaw = 0.f;
+	if (pitch)
+		*pitch = 0.f;
+	if (controller_index < 0 || controller_index >= MAXIMUM_GAMEPADS)
+		return;
+	state = &input_abstraction_globals.input_states[controller_index];
+	if (yaw)
+		*yaw = state->yaw;
+	if (pitch)
+		*pitch = state->pitch;
+}
+
 struct game_input_state *input_abstraction_get_input_state(
 	short local_player_index)
 {

@@ -9,7 +9,7 @@
 	</widget>
 	<widget name="main_menu/clips/clips_title" type="text" controller="1" left="35" top="16" width="400" height="36" text="CLIPS" font="ui\large_ui" color="#FF2896FF" text_flags="no_focus_test">
 	</widget>
-	<widget name="main_menu/clips/clips_help" type="text" controller="1" left="68" top="364" width="482" height="48" text="A plays the clip. DELETE removes it. KEEP sets how many clips stay." font="ui\large_ui" color="#FFFFFFFF" text_flags="no_focus_test">
+	<widget name="main_menu/clips/clips_help" type="text" controller="1" left="68" top="364" width="482" height="48" text="VIEW plays the clip. Double click or double A plays it too. DELETE removes it." font="ui\large_ui" color="#FFFFFFFF" text_flags="no_focus_test">
 	</widget>
 	<widget name="main_menu/clips/clips_list" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_items" description="main_menu/clips/clips_help">
 		<data input="port clips list"/>
@@ -23,7 +23,7 @@
 		<child widget="main_menu/clips/clip_row_5" x="54" y="178"/>
 		<child widget="main_menu/clips/clip_row_6" x="54" y="198"/>
 		<child widget="main_menu/clips/clip_row_7" x="54" y="218"/>
-		<child widget="main_menu/clips/clips_keep" x="302" y="415"/>
+		<child widget="main_menu/clips/clips_keep" x="146" y="415"/>
 		<child widget="main_menu/clips/clips_button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/clips/clip_row_0" type="text" width="512" height="20" bitmap="bitmaps/option_bkds_short" text="" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
@@ -66,16 +66,33 @@
 		<on event="start" run="port clips play"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/clips/clips_keep" type="text" width="96" height="20" flags="left_right_tabs_items" bitmap="bitmaps/text_button_background" text="KEEP 20" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
-		<on event="left" run="port clips keep down"/>
-		<on event="right" run="port clips keep up"/>
-		<on event="stick_left" run="port clips keep down"/>
-		<on event="stick_right" run="port clips keep up"/>
+	<widget name="main_menu/clips/clips_keep" type="column_list" width="148" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" bitmap="bitmaps/text_button_background">
+		<child widget="main_menu/clips/clips_keep_down" x="14" y="5"/>
+		<child widget="main_menu/clips/clips_keep_label" x="38" y="0"/>
+		<child widget="main_menu/clips/clips_keep_up" x="118" y="5"/>
+	</widget>
+	<widget name="main_menu/clips/clips_keep_down" width="16" height="14" bitmap="bitmaps/arrow_sm_left">
+		<on event="a" run="port clips keep down"/>
+		<on event="start" run="port clips keep down"/>
+		<on event="left_mouse" run="port clips keep down"/>
+	</widget>
+	<widget name="main_menu/clips/clips_keep_label" type="text" width="72" height="20" text="KEEP 20" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1" text_flags="no_focus_test">
+	</widget>
+	<widget name="main_menu/clips/clips_keep_up" width="16" height="14" bitmap="bitmaps/arrow_sm_right">
+		<on event="a" run="port clips keep up"/>
+		<on event="start" run="port clips keep up"/>
+		<on event="left_mouse" run="port clips keep up"/>
 	</widget>
 	<widget name="main_menu/clips/clips_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
+		<child widget="main_menu/clips/clips_button_view" x="302" y="1"/>
 		<child widget="main_menu/clips/clips_button_delete" x="406" y="1"/>
 		<child widget="main_menu/clips/clips_button_back" x="510" y="1"/>
 		<on event="right_trigger" run="mouse emit accept event"/>
+	</widget>
+	<widget name="main_menu/clips/clips_button_view" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="VIEW" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
+		<on event="a" run="port clips play"/>
+		<on event="start" run="port clips play"/>
+		<on event="left_mouse" run="port clips play"/>
 	</widget>
 	<widget name="main_menu/clips/clips_button_delete" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="DELETE" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="port clips delete"/>

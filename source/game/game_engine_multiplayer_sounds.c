@@ -232,9 +232,18 @@ static long get_sound_length_in_ticks(
 	return (long)(sound_definition_get(sound->index)->longest_permutation_length * TICKS_PER_SECOND) / 1000;
 }
 
+static int multiplayer_sound_silent;
+
+void game_engine_multiplayer_sound_silent(int silent)
+{
+	multiplayer_sound_silent = silent;
+}
+
 void game_engine_play_multiplayer_sound(
 	long sound_index)
 {
+	if (multiplayer_sound_silent)
+		return;
 	if (sound_is_queueable[sound_index])
 	{
 		push_queued_sound(

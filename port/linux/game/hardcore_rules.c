@@ -29,6 +29,7 @@ a data message an older build ignores. */
 #include "halo_port_limits.h"
 #include "performance_options.h"
 #include "hardcore_rules.h"
+#include "clips.h"
 #include "networking/network_game_globals.h"
 #include "networking/network_game_manager.h"
 #include "networking/network_client_manager.h"
@@ -701,7 +702,8 @@ boolean hardcore_rules_opening_world_ready(void)
 			return FALSE;
 		return TRUE;
 	}
-	if (!game_engine_opening_items_placed())
+	/* a campaign clip has no game type, so it has no items to wait on */
+	if (game_engine_running() && !game_engine_opening_items_placed())
 		return FALSE;
 	if (!race_opening_vehicles_ready())
 		return FALSE;
@@ -796,7 +798,8 @@ void hardcore_rules_opening_before_tick(void)
 {
 	if (!opening_hold)
 		return;
-	if (!game_engine_running() || !game_in_progress())
+	/* a clip is a local game. a campaign clip has no game type, and the ring still holds */
+	if (!game_in_progress() || (!game_engine_running() && !clips_replaying()))
 	{
 		opening_finish();
 		return;
@@ -824,7 +827,7 @@ void hardcore_rules_opening_frame(void)
 
 	if (!opening_hold)
 		return;
-	if (!game_engine_running() || !game_in_progress())
+	if (!game_in_progress() || (!game_engine_running() && !clips_replaying()))
 	{
 		opening_finish();
 		return;

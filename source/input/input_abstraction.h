@@ -59,6 +59,12 @@ void input_abstraction_set_look_rates(
 	real pitch_rate);
 struct game_input_state *input_abstraction_get_input_state(
 	short local_player_index);
+/* the stick look this frame, already on the profile's stick and invert.
+each axis is -1 to 1 */
+void input_abstraction_look_axes(
+	short controller_index,
+	real *yaw,
+	real *pitch);
 /* port: the keyboard and mouse's own controls (input_abstraction.c) */
 boolean input_abstraction_port_reload(
 	short controller_index);

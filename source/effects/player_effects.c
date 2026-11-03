@@ -109,6 +109,7 @@ symbols in this file:
 
 #include <stddef.h>
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
+#include "clips.h" /* port: a free camera does not play the watched player's flashes */
 
 /* ---------- constants */
 
@@ -364,6 +365,9 @@ void player_effect_add_continuous_effect(
 	struct continuous_damage_effect_definition *definition =
 		continuous_damage_effect_definition_get(effect_index);
 
+	/* the free camera is not the player's eyes */
+	if (clips_flying())
+		return;
 	if (distance < definition->cutoff_radius)
 	{
 		struct player_effect_datum *effect = player_effect_get(local_player_index);
@@ -729,6 +733,9 @@ void player_effect_screen_flash(
 	struct screen_flash_definition const *screen_flash,
 	real scale)
 {
+	/* overshield, camouflage, and the other full-screen flashes */
+	if (clips_flying())
+		return;
 	if (player_index != NONE)
 	{
 		long local_player_index = player_get(player_index)->local_player_index;
@@ -748,6 +755,20 @@ void player_effect_get_screen_flash(
 	short local_player_index,
 	struct render_screen_flash *screen_flash)
 {
+	/* a flash already running when the free camera opens stops with it */
+	if (clips_flying())
+	{
+		struct player_effect_datum *effect;
+
+		if (local_player_index != NONE)
+		{
+			effect = player_effect_get(local_player_index);
+			effect->screen_flash_time_left = 0;
+			SET_FLAG(effect->flags, _player_effect_screen_flash_just_started_bit, FALSE);
+		}
+		screen_flash->intensity = 0.0f;
+		return;
+	}
 	match_assert("c:\\halo\\SOURCE\\effects\\player_effects.c", 484, screen_flash);
 
 	if (!console_is_active())
@@ -1245,7 +1266,7 @@ void player_effect_start(
 
 	lock_global_random_seed();
 
-	if (local_player_index != NONE)
+	if (local_player_index != NONE && !clips_flying())
 	{
 		struct damage_effect_definition *definition =
 			damage_effect_definition_get(damage->definition_index);

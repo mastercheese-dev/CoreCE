@@ -476,8 +476,10 @@ void game_time_update(
 				allow = clips_tick_allowance(&exact);
 				if (allow >= 0 && exact)
 				{
-					if (allow > connection)
-						allow = connection;
+					/* a live frame stays at the connection cap. a backward
+					scrub names its own batch, kept inside the 128 update queue */
+					if (allow > 64)
+						allow = 64;
 					ticks_elapsed = allow;
 					ticks_elapsed_real = (real)allow;
 					if (ticks_per_second > 0.f)

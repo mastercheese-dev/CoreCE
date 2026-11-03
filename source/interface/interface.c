@@ -1238,7 +1238,7 @@ static void interface_splitscreen_render(
 	whose middle the windows split at (compute_window_bounds) */
 	short width = (short)halo_screen_width();
 
-	if (game_engine_force_single_screen() || cinematic_in_progress())
+	if (game_engine_force_single_screen() || cinematic_in_progress() || clips_flying())
 		return;
 
 	/* port: the bar is the panes this screen draws. a hardcore team

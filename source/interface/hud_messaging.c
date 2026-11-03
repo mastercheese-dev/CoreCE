@@ -124,6 +124,7 @@ symbols in this file:
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/players.h"
+#include "clips.h" /* port: the free camera hides one player's lines */
 #include "input/input_abstraction.h"
 #include "interface/hud_draw.h"
 #include "bitmaps/bitmap_color_conversion.h"
@@ -1429,6 +1430,12 @@ static void hud_messaging_draw(
 			objective_active = FALSE;
 			help_active = FALSE;
 		}
+		/* one player's pickup line stays off the free camera */
+		if (clips_flying())
+		{
+			help_active = FALSE;
+			state_active = FALSE;
+		}
 
 		if (objective_active || help_active || state_active)
 		{
@@ -1838,6 +1845,10 @@ static void hud_messaging_draw(
 			}
 			maximum_message_count--;
 		}
+
+		/* the free camera keeps the killed-by lines off the glass */
+		if (clips_flying())
+			maximum_message_count = 0;
 
 		if (!state_only)
 		{

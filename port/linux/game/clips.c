@@ -8,6 +8,7 @@ that tick. A hash that does not match stops on the last tick that did. */
 
 #include "cseries.h"
 #include "clips.h"
+#include "hardcore_rules.h"
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/players.h"
@@ -27,6 +28,8 @@ that tick. A hash that does not match stops on the last tick that did. */
 #include "text/draw_string.h"
 #include "text/unicode.h"
 #include "interface/player_ui.h"
+#include "interface/hud.h"
+#include "items/item_definitions.h"
 #include "networking/network_game_globals.h"
 #include "halo_keyboard.h"
 #include "hardcore_views.h"
@@ -55,7 +58,8 @@ extern void halo_linux_mouse_sample(short *x, short *y);
 extern void halo_linux_pad_sample(short port, short *lx, short *ly, short *rx, short *ry,
 	unsigned char *left_trigger, unsigned char *right_trigger, unsigned short *buttons,
 	unsigned char *face);
-/* space, left, right, [, ], V, escape: bits 1, 2, 4, 8, 16, 32, 64 */
+/* space, left, right, [, ], V, escape, C, up, down:
+bits 1, 2, 4, 8, 16, 32, 64, 128, 256, 512 */
 extern unsigned long halo_linux_theatre_keys(void);
 extern unsigned long system_milliseconds(void);
 extern int halo_linux_mouse_is_aim_device(short gamepad_index);
@@ -128,6 +132,9 @@ static struct
 	int stopped;
 	int ended;
 	int show_inputs;
+	/* the free camera's stream of every player's text, on the picture control */
+	int show_feed;
+	int flying;
 	int camera_mode;
 	int watch;
 	int hold_camera;
@@ -140,6 +147,11 @@ static struct
 	int speed_index;
 	int scrubbing;
 	int scrub_dir;
+	/* the scrub started while the clip was still running, so the hold
+	steps at once instead of waiting out a tap */
+	int scrub_from_play;
+	/* backward hold: the target walks back from the tick it started at */
+	int scrub_aimed;
 	int scrub_wait;
 	int scrub_limit;
 	int scrub_exact;
@@ -1054,8 +1066,94 @@ static void clips_spawn_roster(void)
 	clips.spawned = 1;
 }
 
+#define CLIPS_FEED_LINES 12
+#define CLIPS_FEED_CHARS 96
+
+static wchar_t clips_feed_text[CLIPS_FEED_LINES][CLIPS_FEED_CHARS];
+static long clips_feed_when[CLIPS_FEED_LINES];
+static int clips_feed_count;
+static int clips_feed_next;
+
+static void clips_feed_clear(void)
+{
+	clips_feed_count = 0;
+	clips_feed_next = 0;
+}
+
+void clips_feed_note(wchar_t const *text)
+{
+	int last;
+	long now;
+
+	if (!clips.replaying || !text || !text[0])
+		return;
+	now = game_time_get();
+	if (clips_feed_count > 0)
+	{
+		last = clips_feed_next - 1;
+		if (last < 0)
+			last = CLIPS_FEED_LINES - 1;
+		if (clips_feed_when[last] == now && ustrcmp(clips_feed_text[last], text) == 0)
+			return;
+	}
+	ustrncpy_terminated(clips_feed_text[clips_feed_next], text, CLIPS_FEED_CHARS);
+	clips_feed_when[clips_feed_next] = now;
+	clips_feed_next++;
+	if (clips_feed_next >= CLIPS_FEED_LINES)
+		clips_feed_next = 0;
+	if (clips_feed_count < CLIPS_FEED_LINES)
+		clips_feed_count++;
+}
+
+void clips_feed_item(long player_index, long definition_index, short quantity, int message_offset)
+{
+	struct player_datum *player;
+	struct item_definition *item;
+	wchar_t const *item_text;
+	wchar_t body[CLIPS_FEED_CHARS];
+	wchar_t line[CLIPS_FEED_CHARS];
+	short string_index;
+	short value_scale;
+	char used;
+
+	if (!clips.replaying || player_index == NONE || definition_index == NONE)
+		return;
+	player = player_try_and_get(player_index);
+	if (!player)
+		return;
+	item = item_definition_get(definition_index);
+	if (!item || item->item.hud_message_index == NONE)
+		return;
+	if (message_offset < 0)
+		used = quantity > 1;
+	else
+		used = (char)message_offset;
+	string_index = (short)(item->item.hud_message_index + used);
+	item_text = hud_get_item_string(string_index);
+	if (!item_text || !item_text[0])
+		return;
+	if ((message_offset < 0 && used) || quantity)
+	{
+		value_scale = item->item.hud_message_value_scale;
+		if (value_scale < 1)
+			value_scale = 1;
+		if (ustring_format_takes(item_text, "d"))
+			usnprintf(body, CLIPS_FEED_CHARS, item_text, quantity / value_scale);
+		else
+			ustrncpy_terminated(body, item_text, CLIPS_FEED_CHARS);
+	}
+	else
+		ustrncpy_terminated(body, item_text, CLIPS_FEED_CHARS);
+	body[CLIPS_FEED_CHARS - 1] = 0;
+	usnprintf(line, CLIPS_FEED_CHARS, L"%s  %s", player->name, body);
+	line[CLIPS_FEED_CHARS - 1] = 0;
+	clips_feed_note(line);
+}
+
 static void clips_begin_playback(void)
 {
+	int fresh;
+
 	if (!clips.header_ok && !clips_read_header(clips.pending, &clips.header))
 	{
 		clips.pending[0] = 0;
@@ -1077,6 +1175,12 @@ static void clips_begin_playback(void)
 		clips.slot_count = clips.header.player_count;
 	clips.replaying = 1;
 	clips.recording = 0;
+	clips_feed_clear();
+	if (!clips.rewinding)
+	{
+		clips.flying = 0;
+		clips.show_feed = 0;
+	}
 	clips.camera_mode = 0;
 	clips.watch = clips_watched_slot();
 	clips.seeking = 0;
@@ -1091,8 +1195,9 @@ static void clips_begin_playback(void)
 		if (clips.rewind_to > 0)
 		{
 			clips.seeking = 1;
-			clips.scrub_allow = clips.rewind_to;
+			clips.scrub_allow = clips.rewind_to > 64 ? 64 : clips.rewind_to;
 			clips.scrub_limit = 1;
+			clips.scrub_exact = 1;
 			game_time_set_speed(16.0f);
 		}
 		else
@@ -1101,18 +1206,25 @@ static void clips_begin_playback(void)
 	else
 	{
 		clips.show_inputs = 1;
+		clips.show_feed = 0;
 		clips.speed_index = 2;
 		clips.arm = 30;
 		clips.scrubbing = 0;
 		clips.scrub_dir = 0;
+		clips.scrub_from_play = 0;
+		clips.scrub_aimed = 0;
 		clips.scrub_wait = 0;
 		clips.scrub_debt = 0.0f;
 		clips.scrub_clock = 0;
 		game_time_set_speed(1.0f);
 	}
+	fresh = !clips.rewinding;
 	clips.rewinding = 0;
 	clips.rewind_to = 0;
 	clips_spawn_roster();
+	/* the same ring a match holds after the map is in. a rewind keeps the picture it is catching up to */
+	if (fresh)
+		hardcore_rules_hold_pregame();
 }
 
 static int clips_slot_for(long datum, struct player_datum *player)
@@ -1572,6 +1684,16 @@ int clips_replaying(void)
 	return clips.replaying;
 }
 
+int clips_flying(void)
+{
+	return clips.replaying && clips.flying;
+}
+
+int clips_catching_up(void)
+{
+	return clips.replaying && clips.seeking;
+}
+
 int clips_clock_held(void)
 {
 	return clips.replaying && clips.hold_clock;
@@ -1625,11 +1747,14 @@ static int clips_edge(int down, int *was)
 }
 
 /* one tick on the press. nothing more until the hold is past a tap,
-then twice as fast every 400ms. 240 ticks a second is eight times normal. */
-static long clips_scrub_step(unsigned long held_ms, unsigned long dt_ms, float *debt, int first)
+then twice as fast every 400ms. forward tops out at 240 ticks a second.
+backward tops out at the pace of the match, so a hold stays on the tick
+it has reached. */
+static long clips_scrub_step(unsigned long held_ms, unsigned long dt_ms, float *debt, int first, int back)
 {
 	long step;
 	int rate;
+	int cap;
 	unsigned long span;
 
 	if (first)
@@ -1640,14 +1765,15 @@ static long clips_scrub_step(unsigned long held_ms, unsigned long dt_ms, float *
 	if (held_ms < 600)
 		return 0;
 	span = held_ms - 600;
-	rate = 4;
-	while (span >= 400 && rate < 240)
+	rate = back ? 8 : 4;
+	cap = back ? 30 : 240;
+	while (span >= 400 && rate < cap)
 	{
 		span -= 400;
 		rate *= 2;
 	}
-	if (rate > 240)
-		rate = 240;
+	if (rate > cap)
+		rate = cap;
 	*debt += (float)rate * (float)dt_ms / 1000.0f;
 	step = (long)*debt;
 	if (step > 7)
@@ -1679,6 +1805,9 @@ static long clips_scrub_shown(long tick)
 	if (clips.seeking)
 		return clips.seek_tick;
 	if (clips.rewinding)
+		return clips.scrub_target;
+	/* a backward hold keeps the tick it has walked to */
+	if (clips.scrub_aimed && clips.scrub_dir < 0)
 		return clips.scrub_target;
 	return tick;
 }
@@ -1712,6 +1841,8 @@ static void clips_scrub_move(long tick, int dir, long count)
 		clips.seeking = 0;
 		clips.scrub_limit = 0;
 		clips.scrub_exact = 0;
+		clips.scrub_target = next;
+		clips.scrub_aimed = 1;
 		game_time_set_speed(0.0f);
 		return;
 	}
@@ -1735,7 +1866,7 @@ static void clips_scrub_move(long tick, int dir, long count)
 void clips_frame(void)
 {
 	static int was_pause, was_slow, was_fast;
-	static int was_hide, was_back;
+	static int was_hide, was_back, was_camera;
 	short lx, ly, rx, ry;
 	unsigned char lt, rt, face;
 	unsigned short buttons;
@@ -1758,7 +1889,8 @@ void clips_frame(void)
 	tick = game_time_get();
 	clips.scrub_limit = 0;
 	clips.scrub_exact = 0;
-	if (clips.seeking && tick >= clips.seek_tick)
+	/* the file tick, not the clock: the landing is the sample on screen */
+	if (clips.seeking && clips.play_tick >= clips.seek_tick)
 	{
 		clips.seeking = 0;
 		game_time_set_speed(clips.resume_speed);
@@ -1767,11 +1899,14 @@ void clips_frame(void)
 	}
 	if (clips.seeking)
 	{
-		room = clips.seek_tick - tick;
+		room = clips.seek_tick - clips.play_tick;
 		if (room < 0)
 			room = 0;
+		if (room > 64)
+			room = 64;
 		clips.scrub_allow = room;
 		clips.scrub_limit = 1;
+		clips.scrub_exact = 1;
 	}
 	lx = ly = rx = ry = 0;
 	lt = rt = face = 0;
@@ -1784,13 +1919,19 @@ void clips_frame(void)
 	if ((keys & 4UL) != 0 || (buttons & 0x0008) != 0)
 		dir = dir < 0 ? 0 : 1;
 	if (dir == 0)
+	{
 		clips.scrub_wait = 0;
+		clips.scrub_from_play = 0;
+		clips.scrub_aimed = 0;
+	}
 	pause_edge = clips_edge((keys & 1UL) != 0 || (buttons & 0x0010) != 0, &was_pause);
 	if (pause_edge)
 	{
 		if (clips.scrub_dir != 0 || clips.scrubbing || clips.seeking)
 		{
 			clips.scrub_dir = 0;
+			clips.scrub_from_play = 0;
+			clips.scrub_aimed = 0;
 			clips.scrub_debt = 0.0f;
 			clips.scrubbing = 0;
 			clips.seeking = 0;
@@ -1805,8 +1946,10 @@ void clips_frame(void)
 			game_time_set_speed(0.0f);
 		input_suppress();
 	}
-	else if (!clips.scrub_wait && dir != 0)
+	else if (!clips.scrub_wait && dir != 0 && !clips.seeking && !clips.rewinding)
 	{
+		long base;
+
 		now = system_milliseconds();
 		if (clips.scrub_clock == 0 || now < clips.scrub_clock)
 			dt = 16;
@@ -1823,18 +1966,25 @@ void clips_frame(void)
 			clips.scrub_dir = dir;
 			clips.scrub_mark = now;
 			clips.scrub_debt = 0.0f;
+			clips.scrub_aimed = 0;
+			/* still running: the hold moves at once. a paused tap stays one tick */
+			clips.scrub_from_play = game_time_get_speed() > 0.0f ? 1 : 0;
 		}
-		step = clips_scrub_step(now - clips.scrub_mark, dt, &clips.scrub_debt, first);
+		step = clips_scrub_step(now - clips.scrub_mark, dt, &clips.scrub_debt, first, dir < 0);
 		clips.scrubbing = 1;
+		/* backward steps from the tick on the bar. forward follows the clock */
+		base = dir < 0 ? clips.play_tick : tick;
 		if (first)
-			clips_scrub_move(tick, dir, 1);
+			clips_scrub_move(base, dir, 1);
 		else if (step > 0)
-			clips_scrub_move(tick, dir, step);
+			clips_scrub_move(base, dir, step);
+		else if (dir > 0 && clips.scrub_from_play && !clips.seeking && !clips.rewinding)
+			clips_scrub_move(base, dir, 1);
 		else if (dir > 0 && !clips.seeking && !clips.rewinding)
 			clips_scrub_forward(0);
 		input_suppress();
 	}
-	else if (clips.scrub_dir != 0)
+	else if (dir == 0 && clips.scrub_dir != 0)
 	{
 		int back;
 		long target;
@@ -1842,9 +1992,11 @@ void clips_frame(void)
 		back = clips.scrub_dir < 0;
 		target = clips.scrub_target;
 		clips.scrub_dir = 0;
+		clips.scrub_from_play = 0;
+		clips.scrub_aimed = 0;
 		clips.scrub_debt = 0.0f;
 		clips.scrub_exact = 0;
-		if (back && target < tick)
+		if (back && target < clips.play_tick)
 		{
 			clips.scrubbing = 1;
 			clips.resume_speed = 0.0f;
@@ -1865,10 +2017,21 @@ void clips_frame(void)
 		}
 	}
 	speed_down = 0;
-	if (clips_edge((keys & 8UL) != 0 || lt >= 128, &was_slow))
-		speed_down = -1;
-	if (clips_edge((keys & 16UL) != 0 || rt >= 128, &was_fast))
-		speed_down = 1;
+	/* free camera: the old speed controls rise and drop. up and down set the speed */
+	if (clips.flying)
+	{
+		if (clips_edge((keys & 512UL) != 0 || (buttons & 0x0002) != 0, &was_slow))
+			speed_down = -1;
+		if (clips_edge((keys & 256UL) != 0 || (buttons & 0x0001) != 0, &was_fast))
+			speed_down = 1;
+	}
+	else
+	{
+		if (clips_edge((keys & 8UL) != 0 || lt >= 128, &was_slow))
+			speed_down = -1;
+		if (clips_edge((keys & 16UL) != 0 || rt >= 128, &was_fast))
+			speed_down = 1;
+	}
 	if (speed_down && !clips.stopped && !clips.ended)
 	{
 		clips.speed_index += speed_down;
@@ -1882,7 +2045,17 @@ void clips_frame(void)
 	}
 	if (clips_edge((keys & 32UL) != 0 || (face & 0x10) != 0, &was_hide))
 	{
-		clips.show_inputs = !clips.show_inputs;
+		/* in the free camera this is the text stream. the input pictures stay as they were */
+		if (clips.flying)
+			clips.show_feed = !clips.show_feed;
+		else
+			clips.show_inputs = !clips.show_inputs;
+		input_suppress();
+	}
+	/* C and Y swap the player panes for one free camera, or back */
+	if (clips_edge((keys & 128UL) != 0 || (face & 0x08) != 0, &was_camera))
+	{
+		clips.flying = !clips.flying;
 		input_suppress();
 	}
 	back_down = (keys & 64UL) != 0 || (face & 0x02) != 0 || (buttons & 0x0020) != 0;
@@ -2130,6 +2303,41 @@ static void clips_draw_inputs(short x, short y, real scale, long font,
 	rasterizer_text_set_scale(1.0f, 0.0f, 0.0f);
 }
 
+static void clips_feed_draw(long font, real scale, short margin, short top, short pane_w)
+{
+	int shown;
+	int index;
+	int row;
+	short line_h;
+	short y;
+	rectangle2d bounds;
+
+	if (!clips.flying || !clips.show_feed || clips_feed_count < 1 || font == NONE)
+		return;
+	shown = clips_feed_count < 8 ? clips_feed_count : 8;
+	line_h = clips_px(scale, 19);
+	y = (short)(top - clips_px(scale, 6) - shown * line_h);
+	if (y < clips_px(scale, 4))
+		y = clips_px(scale, 4);
+	index = clips_feed_next - shown;
+	if (index < 0)
+		index += CLIPS_FEED_LINES;
+	for (row = 0; row < shown; row++)
+	{
+		bounds.x0 = margin;
+		bounds.x1 = (short)(pane_w - margin);
+		bounds.y0 = y;
+		bounds.y1 = (short)(y + 18);
+		rasterizer_text_set_scale(scale, bounds.x0, bounds.y0);
+		clips_text(font, &bounds, clips_feed_text[index]);
+		index++;
+		if (index >= CLIPS_FEED_LINES)
+			index = 0;
+		y = (short)(y + line_h);
+	}
+	rasterizer_text_set_scale(1.0f, 0.0f, 0.0f);
+}
+
 void clips_draw(short local_player_index, union rectangle2d const *window)
 {
 	rectangle2d bounds;
@@ -2198,6 +2406,11 @@ void clips_draw(short local_player_index, union rectangle2d const *window)
 	/* the sample on screen, not the clock. the opening holds several
 	samples on one tick, and a scrub used to follow the landing tick */
 	tick = clips.play_tick;
+	/* the backward hold, and the catch-up after it, show the tick they will land on */
+	if (clips.seeking)
+		tick = clips.seek_tick;
+	else if ((clips.scrub_dir < 0 && clips.scrub_aimed) || clips.rewinding)
+		tick = clips.scrub_target;
 	if (tick < 0)
 		tick = 0;
 	shown = tick;
@@ -2215,17 +2428,21 @@ void clips_draw(short local_player_index, union rectangle2d const *window)
 	if (clips.message[0])
 		snprintf(text, sizeof(text), "%s", clips.message);
 	else
-		snprintf(text, sizeof(text), "%ld / %ld   %ld:%02ld / %ld:%02ld   %s%s",
+		snprintf(text, sizeof(text), "%ld / %ld   %ld:%02ld / %ld:%02ld   %s%s%s",
 			shown, total, seconds / 60, seconds % 60, length / 60, length % 60, rate,
+			clips.flying ? "   FREE" : "",
 			clips.ended ? "   END" : "");
 	clips_widen(line, 160, text);
-	clips_widen(keys_help, 160,
-		"KEYS   SPACE pause    ARROWS scrub    [ ] speed    V picture    ESC leave");
-	clips_widen(pad_help, 160,
-		"PAD    START pause    DPAD scrub    LT RT speed    RB picture    B / BACK leave");
+	clips_widen(keys_help, 160, clips.flying ?
+		"KEYS   SPACE pause    LEFT RIGHT scrub    UP DOWN speed    [ ] height    V text    C camera    B ESC leave" :
+		"KEYS   SPACE pause    ARROWS scrub    [ ] speed    V picture    C camera    B ESC leave");
+	clips_widen(pad_help, 160, clips.flying ?
+		"PAD    START pause    LEFT RIGHT scrub    UP DOWN speed    LT RT height    RB text    Y camera    B / BACK leave" :
+		"PAD    START pause    DPAD scrub    LT RT speed    RB picture    Y camera    B / BACK leave");
 	fit = rasterizer_screen_fit_drawing();
 	if (fit)
 		rasterizer_screen_fit_suspend(TRUE);
+	clips_feed_draw(font, scale, margin, top, pane_w);
 	clips_quad(0, top, pane_w, pane_h, 0xF0101824);
 	track_h = clips_px(scale, 4);
 	track_y = (short)(top + clips_px(scale, 4));
@@ -2279,7 +2496,7 @@ void clips_draw(short local_player_index, union rectangle2d const *window)
 	rasterizer_text_set_scale(scale, bounds.x0, bounds.y0);
 	clips_text(font, &bounds, pad_help);
 	rasterizer_text_set_scale(1.0f, 0.0f, 0.0f);
-	if (clips.show_inputs)
+	if (clips.show_inputs && !clips.flying)
 	{
 		int panes;
 		int pane;
@@ -2444,6 +2661,13 @@ void clips_menu_note_focus(int visible_row)
 		clips.menu_focus = visible_row;
 }
 
+int clips_menu_focused_row(void)
+{
+	if (clips.menu_count <= 0 || clips.menu_focus < 0)
+		return -1;
+	return clips.menu_focus;
+}
+
 void clips_menu_line(int visible_row, wchar_t *text, int length)
 {
 	int index;
@@ -2485,6 +2709,9 @@ int clips_menu_play(int visible_row, char *map_name, long map_name_size, short *
 	char path[260];
 
 	clips_menu_load();
+	/* the VIEW button names no row. it plays the highlighted one */
+	if (visible_row < 0)
+		visible_row = clips.menu_focus;
 	index = clips.menu_offset + visible_row;
 	if (index < 0 || index >= clips.menu_count || !map_name || map_name_size < 2)
 		return 0;

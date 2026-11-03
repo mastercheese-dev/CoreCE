@@ -114,6 +114,7 @@ symbols in this file:
 #include "hardcore_timer.h" /* port: the match clock, on each pane */
 #include "hardcore_views.h" /* port: a teammate pane draws that player's HUD */
 #include "network_chat.h" /* port: port/linux/game/network_chat.c */
+#include "clips.h" /* port: the free camera leaves the watched player's HUD */
 #include "text/text_group.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
@@ -1224,7 +1225,8 @@ void hud_draw_screen(
 					hud_render_damage_indicators(render.local_player_index);
 				}
 			}
-			else if (!(teammate_pane && unit_dead && player->unit_index != NONE))
+			else if (!clips_flying() &&
+				!(teammate_pane && unit_dead && player->unit_index != NONE))
 			{
 				hud_show_action_response(player_index);
 				if (!teammate_pane)
@@ -1234,7 +1236,7 @@ void hud_draw_screen(
 			performance_options_render();
 #endif
 		}
-		else if (!teammate_pane)
+		else if (!teammate_pane && !clips_flying())
 		{
 			hud_play_unit_sounds(player, FALSE);
 		}

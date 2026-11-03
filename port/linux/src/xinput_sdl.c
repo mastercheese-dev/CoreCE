@@ -61,6 +61,8 @@ extern unsigned char console_is_active(void);
 /* port/linux/game/network_chat.c: a chat line is typed, which takes the
 keyboard as the console does */
 extern unsigned char network_chat_typing(void);
+/* port/linux/game/clips.c: a clip is playing, so Escape leaves it */
+extern int clips_replaying(void);
 /* ... and its on-screen keyboard is up, which takes the first controller
 and the touch controls' stick and look */
 extern unsigned char network_chat_keyboard_open(void);
@@ -205,6 +207,8 @@ static float mouse_sensitivity(void)
 once, so a clip can record it without taking the look away from the player */
 static short mouse_sample_x;
 static short mouse_sample_y;
+static float mouse_look_yaw;
+static float mouse_look_pitch;
 
 /* radians of yaw and pitch for the mouse motion since the last call; the
 game adds these to the facing change of the player on gamepad 0 */
@@ -255,10 +259,26 @@ int halo_linux_mouse_look(short gamepad_index, float *yaw, float *pitch)
 	mouse_sample_x = (short)x;
 	mouse_sample_y = (short)y;
 	if (x == 0.0f && y == 0.0f)
+	{
+		mouse_look_yaw = 0.0f;
+		mouse_look_pitch = 0.0f;
 		return FALSE;
+	}
 	*yaw = -x * mouse_sensitivity();
 	*pitch = (invert ? y : -y) * vertical_sensitivity;
+	mouse_look_yaw = *yaw;
+	mouse_look_pitch = *pitch;
 	return TRUE;
+}
+
+void halo_linux_mouse_look_read(float *yaw, float *pitch)
+{
+	if (yaw)
+		*yaw = mouse_look_yaw;
+	if (pitch)
+		*pitch = mouse_look_pitch;
+	mouse_look_yaw = 0.0f;
+	mouse_look_pitch = 0.0f;
 }
 
 void halo_linux_mouse_sample(short *x, short *y)
@@ -1341,9 +1361,10 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		keyboard_actions_held = 0;
 		keys_held_over_switch(&input);
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-		if (input.pause_pressed)
+		/* a clip takes Escape as its own leave. it must not also open the pause menu */
+		if (input.pause_pressed && !(clips_replaying() && input.escape_down))
 			state->Gamepad.wButtons |= XINPUT_GAMEPAD_START;
-		if (input.menu_back_pressed)
+		if (input.menu_back_pressed && !clips_replaying())
 			state->Gamepad.bAnalogButtons[XINPUT_GAMEPAD_B] = 0xff;
 #endif
 		/* (a chat line typed takes the keyboard as the console does) */
@@ -1411,15 +1432,38 @@ unsigned long halo_linux_theatre_keys(void)
 		mask |= 2UL;
 	if (input.keys[SDL_SCANCODE_RIGHT])
 		mask |= 4UL;
+	if (input.keys[SDL_SCANCODE_UP])
+		mask |= 256UL;
+	if (input.keys[SDL_SCANCODE_DOWN])
+		mask |= 512UL;
 	if (input.keys[SDL_SCANCODE_LEFTBRACKET])
 		mask |= 8UL;
 	if (input.keys[SDL_SCANCODE_RIGHTBRACKET])
 		mask |= 16UL;
 	if (input.keys[SDL_SCANCODE_V])
 		mask |= 32UL;
-	if (input.keys[SDL_SCANCODE_ESCAPE])
+	/* Escape is not stored with the other keys. B on the keyboard leaves too */
+	if (input.keys[SDL_SCANCODE_ESCAPE] || input.escape_down)
 		mask |= 64UL;
+	if (!console_is_active() && !network_chat_typing() && input.keys[SDL_SCANCODE_B])
+		mask |= 64UL;
+	if (input.keys[SDL_SCANCODE_C])
+		mask |= 128UL;
 	return mask;
+}
+
+/* the free camera rises on R and ] and drops on F and [. the game's own
+key poll is quiet during a match */
+int halo_linux_fly_up(void)
+{
+	struct platform_input_state input;
+
+	platform_input_read(&input, FALSE);
+	if (input.keys[SDL_SCANCODE_R] || input.keys[SDL_SCANCODE_RIGHTBRACKET])
+		return 1;
+	if (input.keys[SDL_SCANCODE_F] || input.keys[SDL_SCANCODE_LEFTBRACKET])
+		return -1;
+	return 0;
 }
 
 void halo_linux_pad_sample(short port, short *lx, short *ly, short *rx, short *ry,

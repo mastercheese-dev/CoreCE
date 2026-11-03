@@ -1960,6 +1960,7 @@ static boolean player_handle_action(
 			hud_picked_up_powerup(
 				player->local_player_index,
 				equipment->definition_index);
+			clips_feed_item(player_index, equipment->definition_index, 0, 0);
 			player_network_picked_up(player, player_index, _network_pickup_equipment, equipment->definition_index, 0);
 		}
 		result = TRUE;
@@ -3841,6 +3842,7 @@ static boolean player_handle_weapon_swap(
 			hud_picked_up_weapon(
 				player->local_player_index,
 				weapon->definition_index);
+			clips_feed_item(player_index, weapon->definition_index, 0, 0);
 			player_network_picked_up(player, player_index, _network_pickup_weapon, weapon->definition_index, 0);
 			player_control_unzoom(player->unit_index);
 		}
@@ -3857,6 +3859,7 @@ static boolean player_handle_weapon_swap(
 			hud_picked_up_weapon(
 				player->local_player_index,
 				weapon->definition_index);
+			clips_feed_item(player_index, weapon->definition_index, 0, 0);
 			player_network_picked_up(player, player_index, _network_pickup_weapon, weapon->definition_index, 0);
 		}
 		break;
@@ -4267,6 +4270,9 @@ static void player_examine_nearby_item(
 						player->local_player_index,
 						weapon_get(inventory_item_index)->definition_index,
 						ammunition_count);
+					clips_feed_item(player_index,
+						weapon_get(inventory_item_index)->definition_index,
+						ammunition_count, 1);
 					player_network_picked_up(player, player_index, _network_pickup_ammunition,
 						weapon_get(inventory_item_index)->definition_index, ammunition_count);
 				}
@@ -4286,6 +4292,7 @@ static void player_examine_nearby_item(
 				hud_picked_up_grenade(
 					player->local_player_index,
 					equipment->definition_index);
+				clips_feed_item(player_index, equipment->definition_index, 1, -1);
 				player_network_picked_up(player, player_index, _network_pickup_grenade, equipment->definition_index, 0);
 			}
 		}
@@ -4383,6 +4390,7 @@ static void player_examine_nearby_item(
 				hud_picked_up_weapon(
 					player->local_player_index,
 					weapon_get(weapon_item_index)->definition_index);
+				clips_feed_item(player_index, weapon_get(weapon_item_index)->definition_index, 0, 0);
 				player_network_picked_up(player, player_index, _network_pickup_weapon,
 					weapon_get(weapon_item_index)->definition_index, 0);
 				player_control_unzoom(player->unit_index);
@@ -4524,6 +4532,7 @@ static void player_handle_powerup_equipment(
 	hud_picked_up_powerup(
 		(unsigned short)player->local_player_index,
 		equipment->definition_index);
+	clips_feed_item(player_index, equipment->definition_index, 0, 0);
 	player_network_picked_up(player, player_index, _network_pickup_powerup, equipment->definition_index, 0);
 	if (player->local_player_index != NONE)
 		equipment_handle_pickup(equipment_index);
@@ -4890,6 +4899,20 @@ void players_update_before_game(
 				"c:\\halo\\SOURCE\\game\\players.c",
 				0x262,
 				(NONE == action->desired_zoom_level) || ((action->desired_zoom_level >= 0)));
+
+			/* the pane looks where this player looked in the clip, including
+			the one this machine is watching */
+			if (clips_replaying() &&
+				player->local_player_index >= 0 &&
+				player->local_player_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS)
+			{
+				player_control_set_facing_angles(
+					player->local_player_index,
+					&action->desired_facing);
+				player_control_port_set_zoom_level(
+					player->local_player_index,
+					action->desired_zoom_level);
+			}
 
 			if (player->unit_index == NONE && !game_in_editor())
 			{
