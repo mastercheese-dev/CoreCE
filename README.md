@@ -1,4 +1,4 @@
-# CoreCE: Halo: Combat Evolved for Linux, Windows, and macOS
+# CoreCE: Halo: Combat Evolved for MacOS, Windows, and Linux
 
 <p align="center">
   <a href="https://discord.gg/NRFA2NAqx2"><img src="https://img.shields.io/badge/Discord-join-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
