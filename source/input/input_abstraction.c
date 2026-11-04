@@ -61,7 +61,6 @@ symbols in this file:
 #include "input/input.h"
 #include "input/input_abstraction.h"
 #include "interface/player_ui.h"
-#include "saved games/player_profile.h"
 #include "interface/ui_widget.h"
 #include "interface/virtual_keyboard.h"
 #include "math/real_math.h"
@@ -547,7 +546,7 @@ void input_abstraction_update_device_changes(
 }
 
 /* a d-pad direction a layout uses for an action is not also movement.
-recon and fishsticks talk on d-pad down (network_voice.c) */
+d-pad down is push to talk on every layout (network_voice.c) */
 static boolean dpad_direction_is_action(
 	short controller_index,
 	short button)
@@ -555,30 +554,13 @@ static boolean dpad_direction_is_action(
 	short control;
 	byte const *bound =
 		input_abstraction_globals.player_control_preferences[controller_index].game_control_to_xbox_buttons;
-	short player;
 
 	for (control = 0; control < NUMBER_OF_GAME_CONTROLS; control++)
 	{
 		if (bound[control] == button)
 			return TRUE;
 	}
-	if (button != _gamepad_binary_button_dpad_down)
-		return FALSE;
-	for (player = 0; player < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; player++)
-	{
-		struct player_profile profile;
-		short controller = player_ui_get_single_player_local_player_controller((short)player);
-
-		if (controller == NONE)
-			controller = (short)player;
-		if (controller != controller_index)
-			continue;
-		player_ui_get_active_player_profile((short)player, &profile);
-		if (profile.controller_settings.button_preset == _button_preset_recon ||
-			profile.controller_settings.button_preset == _button_preset_fishsticks)
-			return TRUE;
-	}
-	return FALSE;
+	return button == _gamepad_binary_button_dpad_down;
 }
 
 static boolean dpad_moves(

@@ -931,11 +931,14 @@ void rasterizer_lens_flares_submit_occlusion_tests(
 /* port: the plasma pistol's two front lights are one fixed sprite, 0.0188
 across, on each prong. The player looks at those from behind the gun, so
 they stay on the view other players have. The needler's smoke light is
-0.003 and the flashlight is 0.05, so this band is those two prongs. */
+0.003 and the flashlight is 0.05, so this band is those two prongs.
+The plasma rifle's front light is a fixed 0.05 sprite marked to scale
+with occlusion. The flashlight's 0.05 sprite is not, so it still shows. */
 static boolean lens_flare_first_person_front_light(
 	struct lens_flare_definition *definition)
 {
 	real largest = 0.0f;
+	boolean occlusion_scaled = FALSE;
 	short index;
 
 	for (index = 0; index < definition->reflections.count; index++)
@@ -947,11 +950,15 @@ static boolean lens_flare_first_person_front_light(
 
 		if (reflection->radius_upper_bounds > reflection->radius_lower_bounds)
 			return FALSE;
+		if (TEST_FLAG(reflection->flags, _lens_flare_reflection_radius_scaled_by_occlusion_bit))
+			occlusion_scaled = TRUE;
 		if (reflection->radius_upper_bounds > largest)
 			largest = reflection->radius_upper_bounds;
 	}
 
-	return largest >= 0.01f && largest < 0.02f;
+	if (largest >= 0.01f && largest < 0.02f)
+		return TRUE;
+	return occlusion_scaled && largest >= 0.04f && largest < 0.06f;
 }
 
 /* port: a charge grows with the light (the pistol's reaches 0.175). The

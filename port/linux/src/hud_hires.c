@@ -27,6 +27,9 @@ zlib (port/third_party/zlib).
 #include "platform.h"
 #include "port_config.h"
 #include "xgpu.h"
+#if !defined(HALO_MACOS_NATIVE_METAL)
+#include "metal_hud_mipmap.h"
+#endif
 
 #include "zlib_prefixed.h"
 
@@ -180,7 +183,10 @@ int hud_hires_override_coverage(long asset)
 
 /* the placeholders of the textures drawn for some of a bitmap's sprites
 (port/linux/game/hud_hires_tags.c): their D3D textures' Data */
-#define MAXIMUM_PLACEHOLDERS 8
+/* faces, triggers, stick frames, and the message-icon sheets that share
+this table. 8 filled up on the sheets and the later buttons kept the
+empty placeholder. */
+#define MAXIMUM_PLACEHOLDERS 32
 
 static struct
 {
@@ -282,23 +288,31 @@ void hud_hires_register_placeholder(long asset, const unsigned long *texture)
 	placeholder_filter_build();
 }
 
-#if !defined(HALO_MACOS_NATIVE_METAL)
-unsigned int hud_hires_placeholder_texture(unsigned long data, unsigned long *levels)
+long hud_hires_placeholder_asset(unsigned long data)
 {
 	long index;
 	unsigned char *byte;
 	unsigned char bit;
 
 	bit = placeholder_filter_bit(data, &byte);
-	if (!(*byte & bit))
-		return 0;
-
-	for (index = 0; data && index < placeholder_count; index++)
+	if (!data || !(*byte & bit))
+		return -1;
+	for (index = 0; index < placeholder_count; index++)
 	{
 		if (placeholders[index].data == data)
-			return hud_hires_override_texture(placeholders[index].asset, levels);
+			return placeholders[index].asset;
 	}
-	return 0;
+	return -1;
+}
+
+#if !defined(HALO_MACOS_NATIVE_METAL)
+unsigned int hud_hires_placeholder_texture(unsigned long data, unsigned long *levels)
+{
+	long asset = hud_hires_placeholder_asset(data);
+
+	if (asset < 0)
+		return 0;
+	return hud_hires_override_texture(asset, levels);
 }
 #endif
 
@@ -500,7 +514,7 @@ unsigned char *hud_hires_png_pixels(const void *png, unsigned long size, unsigne
 static unsigned int png_pixels_texture(unsigned char *pixels, unsigned long width, unsigned long height,
 	unsigned long *levels)
 {
-	unsigned long largest;
+	unsigned long largest, mip, mip_width, mip_height;
 	GLuint texture;
 
 	if (!pixels)
@@ -517,9 +531,24 @@ static unsigned int png_pixels_texture(unsigned char *pixels, unsigned long widt
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, (GLint)*levels - 1);
+	/* the PNG is straight RGBA. Sample those channels, and fill every
+	level here (the same reduction as the Metal HUD) so a missing level
+	is not what a small icon samples. */
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_RED);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_GREEN);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_BLUE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ALPHA);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)width, (GLsizei)height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-	if (*levels > 1)
-		glGenerateMipmap(GL_TEXTURE_2D);
+	mip_width = width;
+	mip_height = height;
+	for (mip = 1; mip < *levels; mip++)
+	{
+		metal_hud_mip_reduce_rgba(pixels, (uint32_t)mip_width, (uint32_t)mip_height);
+		mip_width = mip_width > 1 ? mip_width / 2 : 1;
+		mip_height = mip_height > 1 ? mip_height / 2 : 1;
+		glTexImage2D(GL_TEXTURE_2D, (GLint)mip, GL_RGBA8, (GLsizei)mip_width, (GLsizei)mip_height, 0,
+			GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+	}
 	xgpu_gl_state_invalidate();
 	free(pixels);
 	return texture;

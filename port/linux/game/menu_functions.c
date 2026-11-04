@@ -2681,7 +2681,9 @@ the PC version's nine the Xbox's five of the button settings */
 #define PROFILE_GAMEPAD_FRAME 2
 /* frame 9 is Mods' card. The five button layouts follow it. */
 #define PROFILE_FIRST_LAYOUT_FRAME 10
-#define PROFILE_LAYOUT_FRAMES (NUMBER_OF_BUTTON_PRESETS)
+/* the Xbox picture has these five. Bumper Jumper, Recon and Fishsticks
+have none, so they keep the gamepad row's picture. */
+#define PROFILE_LAYOUT_PICTURES 5
 
 /* "port gamepad layout preview" (the picture's own): on Gamepad Setup's
 row, the edited profile's button settings; the port's own (Bumper Jumper),
@@ -2692,11 +2694,11 @@ static void profile_gamepad_layout(struct widget_instance *picture)
 	short frame = picture->animation.current_frame_index;
 
 	if (frame == PROFILE_GAMEPAD_FRAME ||
-		(frame >= PROFILE_FIRST_LAYOUT_FRAME && frame < PROFILE_FIRST_LAYOUT_FRAME + PROFILE_LAYOUT_FRAMES))
+		(frame >= PROFILE_FIRST_LAYOUT_FRAME && frame < PROFILE_FIRST_LAYOUT_FRAME + PROFILE_LAYOUT_PICTURES))
 	{
 		byte preset = profile ? profile->controller_settings.button_preset : (byte)_button_preset_standard;
 
-		picture->animation.current_frame_index = preset < PROFILE_LAYOUT_FRAMES ?
+		picture->animation.current_frame_index = preset < PROFILE_LAYOUT_PICTURES ?
 			(short)(PROFILE_FIRST_LAYOUT_FRAME + preset) : PROFILE_GAMEPAD_FRAME;
 	}
 }

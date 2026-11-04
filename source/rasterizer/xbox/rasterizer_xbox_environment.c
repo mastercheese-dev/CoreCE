@@ -1108,7 +1108,8 @@ void _rasterizer_environment_lightmap_begin(
 			D3DDevice_SetTextureState_Deferred(2, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
 			D3DDevice_SetTextureState_Deferred(2, D3DTSS_MAGFILTER, (rasterizer_debug_options.lightmap_filtering_enabled != FALSE) + 1);
 			D3DDevice_SetTextureState_Deferred(2, D3DTSS_MINFILTER, (rasterizer_debug_options.lightmap_filtering_enabled != FALSE) + 1);
-			D3DDevice_SetTextureState_Deferred(2, D3DTSS_MIPFILTER, (rasterizer_debug_options.lightmap_filtering_enabled != FALSE) + 1);
+			/* level 0 only. a lower mip averages each island with the empty texels packed beside it */
+			D3DDevice_SetTextureState_Deferred(2, D3DTSS_MIPFILTER, D3DTEXF_NONE);
 			rasterizer_environment_globals.lightmap_missing = FALSE;
 		}
 		else
@@ -2180,7 +2181,8 @@ void _rasterizer_environment_specular_lightmap_begin(
 			D3DDevice_SetTextureState_Deferred(1, _d3d_texture_state_address_v, _d3d_texture_address_clamp);
 			D3DDevice_SetTextureState_Deferred(1, _d3d_texture_state_mag_filter, (rasterizer_debug_options.lightmap_filtering_enabled != FALSE) + 1);
 			D3DDevice_SetTextureState_Deferred(1, _d3d_texture_state_min_filter, (rasterizer_debug_options.lightmap_filtering_enabled != FALSE) + 1);
-			D3DDevice_SetTextureState_Deferred(1, _d3d_texture_state_mip_filter, (rasterizer_debug_options.lightmap_filtering_enabled != FALSE) + 1);
+			/* level 0 only. a lower mip averages each island with the empty texels packed beside it */
+			D3DDevice_SetTextureState_Deferred(1, _d3d_texture_state_mip_filter, D3DTEXF_NONE);
 			rasterizer_environment_globals.lightmap_missing = FALSE;
 		}
 		else
@@ -2402,7 +2404,8 @@ void _rasterizer_environment_reflection_lightmap_mask_begin(
 			D3DDevice_SetTextureState_Deferred(0, _d3d_texture_state_address_v, _d3d_texture_address_clamp);
 			D3DDevice_SetTextureState_Deferred(0, _d3d_texture_state_mag_filter, (rasterizer_debug_options.lightmap_filtering_enabled != FALSE) + 1);
 			D3DDevice_SetTextureState_Deferred(0, _d3d_texture_state_min_filter, (rasterizer_debug_options.lightmap_filtering_enabled != FALSE) + 1);
-			D3DDevice_SetTextureState_Deferred(0, _d3d_texture_state_mip_filter, (rasterizer_debug_options.lightmap_filtering_enabled != FALSE) + 1);
+			/* level 0 only. a lower mip averages each island with the empty texels packed beside it */
+			D3DDevice_SetTextureState_Deferred(0, _d3d_texture_state_mip_filter, D3DTEXF_NONE);
 			rasterizer_environment_globals.lightmap_missing = FALSE;
 		}
 		else

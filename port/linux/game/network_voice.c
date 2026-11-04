@@ -51,7 +51,6 @@ player's voice.
 #include "main/console.h"
 #include "input/input.h"
 #include "interface/player_ui.h"
-#include "saved games/player_profile.h"
 #include "networking/network_game_globals.h"
 #include "networking/network_game_manager.h"
 #include "networking/network_client_manager.h"
@@ -927,7 +926,8 @@ static void voice_end_session(
 	csmemset(voice_heard, 0, sizeof(voice_heard));
 }
 
-/* recon and fishsticks: d-pad down is push to talk */
+/* every layout: d-pad down is push to talk. that button moves
+the pause menu, so it does not also open the microphone */
 static boolean layout_dpad_talks(
 	void)
 {
@@ -935,13 +935,10 @@ static boolean layout_dpad_talks(
 
 	for (player = 0; player < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; player++)
 	{
-		struct player_profile profile;
 		short controller;
 		struct gamepad_state const *pad;
 
-		player_ui_get_active_player_profile(player, &profile);
-		if (profile.controller_settings.button_preset != _button_preset_recon &&
-			profile.controller_settings.button_preset != _button_preset_fishsticks)
+		if (game_in_progress() && ui_widgets_active_for_local_player(player))
 			continue;
 		controller = player_ui_get_single_player_local_player_controller(player);
 		if (controller == NONE)
@@ -1004,8 +1001,9 @@ void network_voice_update(
 		voice_send(NULL, 0);
 	}
 	/* the microphone: open mic, open while voice is on; push to talk, from
-	the first press (none asked for until then). Recon and Fishsticks talk
-	on d-pad down as well as the keyboard binding */
+	the first press (none asked for until then). Every layout talks on
+	d-pad down as well as the keyboard binding, except while that player's
+	pause menu is open */
 	held = push_to_talk && (halo_push_to_talk_held() || layout_dpad_talks()) &&
 		!console_is_active() && !network_chat_typing();
 	if (!voice_may_talk() || (!open_mic && !push_to_talk))

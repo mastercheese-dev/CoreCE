@@ -1703,6 +1703,15 @@ static struct native_resource *texture_get(D3DBaseTexture *texture,D3DPalette *p
     if (text) return text;
     struct native_resource *menu=menu_texture_get(texture->Data);
     if (menu) return menu;
+    /* A button or message-icon placeholder is an empty bitmap. Its picture
+    is the PNG registered for that texture, as on OpenGL. */
+    {
+        long placeholder_asset=hud_hires_placeholder_asset(texture->Data);
+        if (placeholder_asset>=0) {
+            struct native_resource *hud=hud_texture_get(placeholder_asset);
+            if (hud) return hud;
+        }
+    }
     struct native_resource *entry=rendered_alias(texture->Data);
     /* Device-owned indexed history is GPU storage even before its first
        Present. Resolve/initialize it without uploading undefined CPU bytes

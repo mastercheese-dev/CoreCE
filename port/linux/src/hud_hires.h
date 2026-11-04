@@ -86,6 +86,9 @@ void hud_hires_map_loaded(const long *assets, long count);
 void hud_hires_map_unloaded(void);
 /* whether its green is its coverage (d3d8_gl.c, nv2a_psh.c: coverage_alpha) */
 int hud_hires_override_coverage(long asset);
+/* the embedded texture whose placeholder has this D3D Data, or -1. The
+texture cache draws that picture instead of the placeholder's own texels. */
+long hud_hires_placeholder_asset(unsigned long data);
 /* the GL texture of the texture drawn for some of a bitmap's sprites whose
 placeholder's D3D texture has this Data, and the number of its mip levels;
 0 if data is no placeholder's */
