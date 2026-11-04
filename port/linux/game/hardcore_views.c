@@ -10,6 +10,9 @@ wants the panes. In other matchmaking the host and a machine that
 joined the lobby link get panes of the machines that sat in the lobby,
 and a search does not. A seat the service filled is not in those panes.
 In matchmaking a pane stays black when that player's setting is off.
+display.split_shared_only leaves out a teammate who has said Split
+Screen is off, and the panes left are the split for how many remain.
+A machine that has not said keeps its pane.
 A second player on this machine is a local pane, not one of these.
 Which pane is the local player's is this machine's
 display.teammate_view_slot. Each
@@ -19,6 +22,7 @@ between frames. The slot is a local player only while that pane is drawn. */
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/players.h"
+#include "game/bots.h"
 #include "camera/observer.h"
 #include "camera/first_person_camera.h"
 #include "items/weapons.h"
@@ -85,7 +89,14 @@ static real_point3d death_focus[HARDCORE_VIEW_MAXIMUM];
 /* The teammates in the order the split first drew them. A later arrival
 sorts into the middle of the player list and would move every pane. */
 static long roster_player[HARDCORE_VIEW_MAXIMUM - 1];
+/* that roster slot was a teammate who had said Split Screen is off.
+kept after the player record is gone, so the pane does not come back
+empty and move the others. */
+static boolean roster_hidden[HARDCORE_VIEW_MAXIMUM - 1];
 static short roster_count = 0;
+/* this refresh left a teammate out. force split does not then add a
+black pane on top of that. */
+static boolean views_hid_teammate = FALSE;
 static long roster_team = NONE;
 static boolean roster_locked = FALSE;
 
@@ -283,7 +294,10 @@ static void hardcore_views_roster_clear(void)
 	roster_count = 0;
 	roster_team = NONE;
 	for (index = 0; index < HARDCORE_VIEW_MAXIMUM - 1; index++)
+	{
 		roster_player[index] = NONE;
+		roster_hidden[index] = FALSE;
+	}
 	for (index = 0; index < HARDCORE_VIEW_MAXIMUM; index++)
 		death_on[index] = FALSE;
 }
@@ -295,9 +309,12 @@ static void hardcore_views_roster_take(long local_index, long team, int party_on
 {
 	struct data_iterator iterator;
 	struct player_datum *player;
+	short index;
 
 	roster_count = 0;
 	roster_team = team;
+	for (index = 0; index < HARDCORE_VIEW_MAXIMUM - 1; index++)
+		roster_hidden[index] = FALSE;
 	data_iterator_new(&iterator, player_data);
 	while (roster_count < HARDCORE_VIEW_MAXIMUM - 1 &&
 		(player = data_iterator_next(&iterator)) != NULL)
@@ -320,6 +337,20 @@ static void hardcore_views_roster_take(long local_index, long team, int party_on
 	}
 }
 
+/* display.split_shared_only: a teammate who has said Split Screen is off
+is not a pane. one who has not said keeps it. a bot has no such setting. */
+static boolean hardcore_views_mate_unshared(struct player_datum *player)
+{
+	if (!player)
+		return FALSE;
+	if (bot_controller_is_bot(player->network_player_data.machine_index,
+		player->network_player_data.controller_index))
+		return FALSE;
+	if (!distributed_machine_screen_share_known(player->network_player_data.machine_index))
+		return FALSE;
+	return !distributed_machine_shares_screen(player->network_player_data.machine_index);
+}
+
 static void hardcore_views_refresh(void)
 {
 	struct player_datum *player;
@@ -336,6 +367,7 @@ static void hardcore_views_refresh(void)
 	which one and clear a different player. */
 	if (view_borrowed)
 		return;
+	views_hid_teammate = FALSE;
 	view_count = 1;
 	local_slot = 0;
 	view_unit[0] = NONE;
@@ -356,7 +388,8 @@ static void hardcore_views_refresh(void)
 	still means this machine wants the panes. other matchmaking keeps
 	panes for the host and a lobby link, of the machines that sat here,
 	and a search does not get them. a pane in matchmaking stays black
-	when that player is not sharing. */
+	when that player is not sharing. display.split_shared_only leaves
+	that teammate out instead, and the panes left are the smaller split. */
 	if (!matchmaking || hardcore_views_client_split_applies())
 	{
 		if (!config_boolean("display.teammate_views"))
@@ -406,23 +439,112 @@ static void hardcore_views_refresh(void)
 		else
 			mates[index] = player->unit_index;
 	}
-	view_count = (short)(roster_count + 1);
-	local_slot = hardcore_views_slot(view_count);
-	for (index = 0; index < HARDCORE_VIEW_MAXIMUM; index++)
+	/* a pane that moves, because someone was left out, keeps the camera
+	and the weapon slot it had */
 	{
-		view_unit[index] = NONE;
-		view_player[index] = NONE;
-	}
-	placed = 0;
-	for (index = 0; index < view_count; index++)
-	{
-		if (index == local_slot)
-			continue;
-		view_player[index] = roster_player[placed];
-		view_unit[index] = mates[placed++];
-		player = player_try_and_get(view_player[index]);
-		view_blank[index] = matchmaking && player &&
-			!distributed_machine_shares_screen(player->network_player_data.machine_index);
+		long kept_player[HARDCORE_VIEW_MAXIMUM];
+		short kept_slot[HARDCORE_VIEW_MAXIMUM];
+		struct hardcore_view_camera kept_camera[HARDCORE_VIEW_MAXIMUM];
+		boolean kept_death[HARDCORE_VIEW_MAXIMUM];
+		long kept_body[HARDCORE_VIEW_MAXIMUM];
+		long kept_since[HARDCORE_VIEW_MAXIMUM];
+		real kept_yaw[HARDCORE_VIEW_MAXIMUM];
+		real_point3d kept_focus[HARDCORE_VIEW_MAXIMUM];
+		long shown_player[HARDCORE_VIEW_MAXIMUM - 1];
+		long shown_unit[HARDCORE_VIEW_MAXIMUM - 1];
+		short shown;
+		short from;
+		boolean hide_unshared;
+
+		hide_unshared = config_boolean("display.split_shared_only");
+		for (index = 0; index < HARDCORE_VIEW_MAXIMUM; index++)
+		{
+			kept_player[index] = view_player[index];
+			kept_slot[index] = view_hud_slot[index];
+			kept_camera[index] = view_camera[index];
+			kept_death[index] = death_on[index];
+			kept_body[index] = death_body[index];
+			kept_since[index] = death_since[index];
+			kept_yaw[index] = death_yaw[index];
+			kept_focus[index] = death_focus[index];
+		}
+		shown = 0;
+		for (index = 0; index < roster_count; index++)
+		{
+			player = player_try_and_get(roster_player[index]);
+			if (player)
+				roster_hidden[index] = hardcore_views_mate_unshared(player);
+			if (hide_unshared && roster_hidden[index])
+			{
+				views_hid_teammate = TRUE;
+				continue;
+			}
+			shown_player[shown] = roster_player[index];
+			shown_unit[shown] = mates[index];
+			shown++;
+		}
+		view_count = (short)(shown + 1);
+		local_slot = hardcore_views_slot(view_count);
+		for (index = 0; index < HARDCORE_VIEW_MAXIMUM; index++)
+		{
+			view_unit[index] = NONE;
+			view_player[index] = NONE;
+			view_blank[index] = FALSE;
+			death_on[index] = FALSE;
+			view_camera[index].valid = FALSE;
+			view_hud_slot[index] = NONE;
+		}
+		placed = 0;
+		for (index = 0; index < view_count; index++)
+		{
+			if (index == local_slot)
+				continue;
+			view_player[index] = shown_player[placed];
+			view_unit[index] = shown_unit[placed];
+			placed++;
+			player = player_try_and_get(view_player[index]);
+			/* a bot has no Split Screen setting. with hide unshared on, its
+			pane stays, so matchmaking does not black it with the machine. */
+			view_blank[index] = matchmaking && player &&
+				!(hide_unshared && bot_controller_is_bot(
+					player->network_player_data.machine_index,
+					player->network_player_data.controller_index)) &&
+				!distributed_machine_shares_screen(player->network_player_data.machine_index);
+			for (from = 0; from < HARDCORE_VIEW_MAXIMUM; from++)
+			{
+				if (kept_player[from] != view_player[index])
+					continue;
+				view_camera[index] = kept_camera[from];
+				death_on[index] = kept_death[from];
+				death_body[index] = kept_body[from];
+				death_since[index] = kept_since[from];
+				death_yaw[index] = kept_yaw[from];
+				death_focus[index] = kept_focus[from];
+				view_hud_slot[index] = kept_slot[from];
+				break;
+			}
+		}
+		/* a pane that was left out drops the weapon pose it was borrowing */
+		for (from = 0; from < HARDCORE_VIEW_MAXIMUM; from++)
+		{
+			boolean still;
+			short window;
+
+			if (kept_slot[from] == NONE ||
+				local_player_get_player_index(kept_slot[from]) != NONE)
+				continue;
+			still = FALSE;
+			for (window = 0; window < HARDCORE_VIEW_MAXIMUM; window++)
+			{
+				if (view_hud_slot[window] == kept_slot[from])
+				{
+					still = TRUE;
+					break;
+				}
+			}
+			if (!still)
+				first_person_weapon_observe_clear(kept_slot[from]);
+		}
 	}
 	hardcore_views_slots_assign();
 }
@@ -476,7 +598,7 @@ static boolean hardcore_views_force_wanted(void)
 boolean hardcore_views_blank_split(void)
 {
 	hardcore_views_refresh();
-	if (view_count > 1)
+	if (view_count > 1 || views_hid_teammate)
 		return FALSE;
 	/* the scoreboard is one full window. the empty pane's index is then
 	   the console window, and that clear replaces the carnage report */

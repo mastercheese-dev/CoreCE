@@ -6,3 +6,4 @@ halo_fork_update_notice
 host_sdl_audio_device_count
 host_sdl_audio_device_name
 host_sdl_audio_device_id
+host_sdl_audio_stream_device_name

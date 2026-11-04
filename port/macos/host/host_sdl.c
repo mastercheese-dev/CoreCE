@@ -845,6 +845,17 @@ void host_sdl_audio_device_name(int recording, int index, char *name, uint32_t s
     SDL_free(devices);
 }
 
+/* the opened stream's device, copied into guest memory. The guest cannot
+call SDL_GetAudioStreamDevice: that symbol is not a host import. */
+void host_sdl_audio_stream_device_name(uint32_t stream, char *name, uint32_t size) {
+    SDL_AudioStream *object = handle_get(stream, _handle_audio);
+    const char *found = object ? SDL_GetAudioDeviceName(SDL_GetAudioStreamDevice(object)) : "";
+
+    if (!name || !size)
+        return;
+    SDL_strlcpy(name, found ? found : "", size);
+}
+
 uint32_t host_sdl_audio_device_id(int recording, const char *name) {
     int count = 0, index;
     SDL_AudioDeviceID *devices = audio_device_list(recording, &count);

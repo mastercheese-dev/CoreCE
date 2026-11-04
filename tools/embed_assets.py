@@ -5,7 +5,8 @@ tools/title_assets.py), their controller button icons (port/assets/buttons,
 made by tools/button_assets.py), the fonts the text is drawn with
 (port/assets/fonts), the menus' files (port/assets/menus, made by
 tools/ce_menus.py) and SMAA's shader and lookup textures
-(port/third_party/smaa) in the game as C data:
+(port/third_party/smaa), and the headphone responses
+(port/assets/hrtf/sadie_d2_48k.hrtf) in the game as C data:
 
     python tools/embed_assets.py OUTPUT.c
 
@@ -50,6 +51,8 @@ SMAA_FILES = (("SMAA.hlsl", "xgpu_smaa_shader"), ("area_tex.zlib", "xgpu_smaa_ar
               ("search_tex.zlib", "xgpu_smaa_search_texture"))
 # the desktop windows' icon (tools/app_icon.py; port/linux/src/sdl_platform.c)
 WINDOW_ICON = Path("port/assets/icon/corece-icon-256.png")
+# headphone responses for 3D voices (port/linux/src/dsound_sdl.c, tools/hrtf_assets.py)
+HRTF_ASSET = Path("port/assets/hrtf/sadie_d2_48k.hrtf")
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -92,7 +95,8 @@ def hud_asset_inputs() -> List[Path]:
     return [*inputs, *(folder / f"{asset['name']}.png" for folder, asset, _ in textures()),
             *(FONT_ASSETS / name for name in font_files()), *(MENU_ASSETS / name for name in menu_files()),
             *(SMAA_ASSETS / name for name, _ in smaa_files()),
-            *([WINDOW_ICON] if (ROOT / WINDOW_ICON).is_file() else [])]
+            *([WINDOW_ICON] if (ROOT / WINDOW_ICON).is_file() else []),
+            *([HRTF_ASSET] if (ROOT / HRTF_ASSET).is_file() else [])]
 
 
 def hud_configure_inputs() -> List[Path]:
@@ -253,6 +257,14 @@ def main() -> None:
     lines.append(f"const unsigned long platform_window_icon_size = {len(data)};")
     lines.append("")
     lines.append("#endif")
+    # headphone responses (dsound_sdl.c). Size 0 where the checkout has none:
+    # 3D voices stay on the stereo pan.
+    data = (ROOT / HRTF_ASSET).read_bytes() if (ROOT / HRTF_ASSET).is_file() else b""
+    lines.append("")
+    lines.append("const unsigned int dsound_hrtf_data[] = {")
+    lines.extend(words(data) if data else ["\t0,"])
+    lines.append("};")
+    lines.append(f"const unsigned long dsound_hrtf_data_size = {len(data)};")
     output = Path(sys.argv[1])
     output.parent.mkdir(parents=True, exist_ok=True)
     text = "\n".join(lines) + "\n"

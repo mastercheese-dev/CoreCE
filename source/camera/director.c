@@ -210,13 +210,6 @@ static char const *director_camera_mode_names[NUMBER_OF_DIRECTOR_CAMERA_MODES] =
 	"first person"
 };
 
-static short const director_game_camera_modes[3] =
-{
-	_camera_first_person,
-	_camera_flying,
-	_camera_following
-};
-
 static short const director_script_camera_record_camera_modes[4] =
 {
 	_camera_first_person,
@@ -802,11 +795,8 @@ static void director_choose_camera_game(
 			if (director->camera_proc == (director_camera_update_proc)flying_camera_update)
 				director_clips_camera(local_player_index, 0, NONE);
 		}
-		/* (port: not a client in another's game, the host's rules: a flying
-		camera would see all of it, and one behind the player round its
-		corners) */
-		if (key && !network_game_distributed_client() && !clips_replaying())
-			director_rotate_cameras(local_player_index, director_game_camera_modes, 3);
+		/* the player camera stays put. a clip's free camera is the one that
+		leaves it, on C and Y */
 		if (!*director_camera_scripted)
 		{
 			director_choose_game_perspective(local_player_index, initialize);

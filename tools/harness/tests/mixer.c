@@ -55,6 +55,18 @@ static const char *config_string(const char *name)
 	return !strcmp(name, "audio.resampler") ? resampler_setting : NULL;
 }
 
+/* audio.volume and the group volumes (audio_setting_volume): full, as the
+mixer starts */
+static double config_real(const char *name)
+{
+	(void)name;
+	return 1.0;
+}
+
+/* headphone responses (embed_assets.py): none in this test, so 3D voices stay panned */
+const unsigned int dsound_hrtf_data[] = { 0 };
+const unsigned long dsound_hrtf_data_size = 0;
+
 /* the players' voices (voice_audio.c): none */
 static void voice_audio_mix(float *output, unsigned long frames)
 {

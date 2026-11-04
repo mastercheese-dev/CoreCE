@@ -222,15 +222,18 @@ _graphics = {"display.high_res_hud", "display.hud_button_style", "display.campai
 # (the visual modifiers: a screen of their own, Extra Effects)
 _extra_effects = {"display.shield_glow", "display.shield_glow_intensity"}
 SCREENS["video_settings/graphics"] = {
-    # 20, not 22: TEXTURE FILTERING is a fourteenth row, and 22 would run it into the help.
+    # 20, not 22: the rows run to the help. HIDE UNSHARED is the fifteenth,
+    # so the help sits at 376.
     "screen": "graphics_settings_screen", "header": _video["header"], "spacing": 20,
-    "help_top": 364, "button_y": 430,
+    "help_top": 376, "help_height": 48, "button_y": 430,
     "same_place": ["anti_aliasing_android"],
     "rows": [row for row in _video["rows"] if row[1] in _graphics] + [
         ("SPLIT SCREEN:", "display.teammate_views", ON_OFF,
          "In a team game, one player sees teammates from\ntheir own eyes, up to four panes.", None),
         ("FORCE SPLIT:", "display.force_split", ON_OFF,
          "One local multiplayer player gets two panes, the\nother black. Campaign needs a second player.", None),
+        ("HIDE UNSHARED:", "display.split_shared_only", ON_OFF,
+         "A teammate with split screen off gets no pane.\nThe panes left are the split for that many.", None),
         ("YOUR VIEW:", "display.teammate_view_slot",
          [("TOP", "top"), ("BOTTOM", "bottom"), ("TOP LEFT", "top_left"), ("TOP RIGHT", "top_right"),
           ("BOTTOM LEFT", "bottom_left"), ("BOTTOM RIGHT", "bottom_right")],
@@ -247,14 +250,20 @@ _video["categories"] = [
     ("GRAPHICS:", "video_settings/graphics", "The HUD, the match clock, anti-aliasing,\nshadows, lighting and streamer mode."),
 ]
 
-# Audio Setup's sound processing (port/linux/src/dsound_sdl.c): the reverb
-# and the resampler, a screen of their own (a category, as Video Setup's);
-# the devices and the volumes stay on Audio Setup
+# Audio Setup's sound processing (port/linux/src/dsound_sdl.c): the reverb,
+# headphone 3D, Doppler and the resampler, a screen of their own (a category,
+# as Video Setup's); the devices and the volumes stay on Audio Setup
 _audio = SCREENS["audio_settings"]
 _processing = {"audio.reverb"}
 SCREENS["audio_settings/sound_processing"] = {
     "screen": "sound_processing_settings_screen", "header": _audio["header"], "spacing": 20,
     "rows": [row for row in _audio["rows"] if row[1] in _processing] + [
+        ("HEADPHONE 3D:", "audio.hrtf", [("ON", "on"), ("OFF", "off"), ("AUTO", "auto")],
+         "Place 3D sounds around the head, as the Xbox did.\nAUTO on headphones. OFF keeps the stereo pan.",
+         None),
+        ("DOPPLER:", "audio.doppler", ON_OFF,
+         "Shift the pitch of a sound moving past, as the\nXbox did. OFF keeps every sound at its pitch.",
+         None),
         ("RESAMPLER:", "audio.resampler", [("SINC", "sinc"), ("LINEAR", "linear")],
          "How sounds are converted to the output's rate:\nsinc is clean; linear is brighter, with aliasing.",
          None),
@@ -266,7 +275,7 @@ _audio["rows"] = [row for row in _audio["rows"] if row[1] not in _processing]
 # HUD's, on Network Setup)
 _audio["categories"] = [
     ("SOUND PROCESSING:", "audio_settings/sound_processing",
-     "The reverb, and how sounds are converted to the\noutput's rate."),
+     "The reverb, headphone 3D, Doppler, and how\nsounds are converted to the output's rate."),
 ]
 
 # Network Setup's map sharing (port/linux/game/map_share.c): this machine's

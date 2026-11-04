@@ -19,8 +19,10 @@ resampling) and applies:
 	  and occlusion levels, their high frequency levels a low pass at the
 	  environment's HF reference: a sound behind a wall is muffled.
 3D voices also send to an I3DL2 reverb of the environment the listener is in
-(reverb). Doppler and cones are not modelled. A look-ahead limiter keeps the
-sum under full scale (limit).
+(reverb). A moving 3D voice is Doppler shifted (audio.doppler), and a voice
+whose tag gives it a sound cone is quieter facing away. On stereo output
+with audio.hrtf on, 3D voices are rendered for headphones (binaural
+rendering). A look-ahead limiter keeps the sum under full scale (limit).
 
 Packets the mixer has finished are completed from DirectSoundDoWork, which
 the game calls every frame, and from Flush, never from the audio thread:
@@ -30,9 +32,11 @@ Without an audio device, a clock thread runs the same mixer into a scratch
 buffer, so streams still drain at their real rate.
 
 audio.volume sets the master volume (default 1.0); audio.reverb = false
-turns the reverb off; audio.resampler = "linear" resamples between
-neighbouring frames instead of with the sinc low pass; audio.enabled = false
-skips opening a device (port_config.c).
+turns the reverb off; audio.hrtf is "on", "off" or "auto" (headphones);
+audio.doppler = false leaves every 3D voice at its own pitch;
+audio.resampler = "linear" resamples between neighbouring frames instead of
+with the sinc low pass; audio.enabled = false skips opening a device
+(port_config.c).
 */
 
 #include "platform.h"
@@ -69,6 +73,12 @@ skips opening a device (port_config.c).
 #else
 #define RESAMPLER_ALIGNED
 #endif
+
+/* the binaural rendering (hrtf) */
+#define HRTF_MAXIMUM_TAPS 64
+#define HRTF_MAXIMUM_DELAY 48
+#define HRTF_INPUT 2048 /* a mix and the longest delay before it, a power of 2 */
+#define HRTF_FADE_SECONDS 0.1f
 
 /* ---------- voices */
 
@@ -121,6 +131,16 @@ struct sdl_stream
 	millibels with occlusion, and its rolloff factor (SetI3DL2Source) */
 	LONG room, room_hf;
 	float room_rolloff_factor;
+	/* SetVelocity (units a second), and the Doppler shift the mixer is at,
+	gliding to (doppler_glide) and the frames left to get there
+	(doppler_ratio); SetConeAngles (degrees), SetConeOrientation and
+	SetConeOutsideVolume (millibels): voice_cone_gain */
+	float velocity[3];
+	float current_doppler, target_doppler;
+	unsigned long doppler_frames_left;
+	DWORD cone_inside, cone_outside;
+	float cone_orientation[3];
+	LONG cone_outside_volume;
 
 	struct voice_packet packets[MAXIMUM_STREAM_PACKETS];
 	unsigned long packet_head;
@@ -146,6 +166,17 @@ struct sdl_stream
 	/* the direct path's low pass, for each channel, and the room send's */
 	float direct_lowpass[2];
 	float room_lowpass;
+	/* the binaural rendering's (hrtf): the voice's mono direct path, the
+	last taps - 1 samples of each ear's copy of it delayed by its interaural
+	delay, where the input is written next, and the filters, delays and
+	gain it is moving from (none yet while hrtf_valid is FALSE) */
+	float hrtf_input[HRTF_INPUT];
+	float hrtf_tail[2][HRTF_MAXIMUM_TAPS];
+	unsigned long hrtf_position;
+	float hrtf_filters[2][HRTF_MAXIMUM_TAPS];
+	float hrtf_delays[2];
+	float current_hrtf;
+	BOOL hrtf_valid;
 };
 
 static pthread_mutex_t mixer_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -159,9 +190,12 @@ static struct
 	float top[3];
 	float rolloff_factor;
 	/* meters a unit (SetDistanceFactor): the game sets 3.048, a world unit
-	being 10 feet. Only Doppler, which is not modelled, would use it */
+	being 10 feet. Only Doppler uses it (doppler_ratio) */
 	float distance_factor;
-} listener = { { 0, 0, 0 }, { 0, 0, 1 }, { 0, 1, 0 }, 1.0f, 1.0f };
+	/* SetVelocity: units a second (the game leaves it 0, giving each
+	voice's velocity relative to the listener) */
+	float velocity[3];
+} listener = { { 0, 0, 0 }, { 0, 0, 1 }, { 0, 1, 0 }, 1.0f, 1.0f, { 0, 0, 0 } };
 
 static float master_volume = 1.0f;
 
@@ -183,6 +217,12 @@ static DSI3DL2LISTENER environment =
 static unsigned long environment_serial;
 /* audio.reverb */
 static BOOL reverb_enabled = TRUE;
+/* audio.hrtf: whether 3D voices are rendered for headphones (hrtf_update),
+and how far the mixer has faded to it (0 to 1) */
+static volatile BOOL hrtf_wanted = FALSE;
+/* audio.doppler */
+static BOOL doppler_enabled = TRUE;
+static float hrtf_level = 0.0f;
 
 static float gain_from_millibels(LONG millibels)
 {
@@ -349,6 +389,132 @@ static float distance_attenuation(const struct sdl_stream *stream, float distanc
 	return minimum / (minimum + rolloff_factor * (distance - minimum));
 }
 
+static float clamp_real(float value, float minimum, float maximum);
+
+/* where a 3D voice is from the listener: to the right, up and ahead, in the
+game's units */
+static void voice_direction(const struct sdl_stream *stream, float *side, float *up, float *ahead)
+{
+	float offset[3], right_axis[3];
+	int axis;
+
+	if (stream->mode == DS3DMODE_HEADRELATIVE)
+	{
+		*side = stream->position[0];
+		*up = stream->position[1];
+		*ahead = stream->position[2];
+		return;
+	}
+	for (axis = 0; axis < 3; axis++)
+		offset[axis] = stream->position[axis] - listener.position[axis];
+	/* left-handed: right = top x front */
+	right_axis[0] = listener.top[1] * listener.front[2] - listener.top[2] * listener.front[1];
+	right_axis[1] = listener.top[2] * listener.front[0] - listener.top[0] * listener.front[2];
+	right_axis[2] = listener.top[0] * listener.front[1] - listener.top[1] * listener.front[0];
+	*side = dot3(offset, right_axis);
+	*up = dot3(offset, listener.top);
+	*ahead = dot3(offset, listener.front);
+}
+
+/* DirectSound's sound cone: a voice is at its full level inside half its
+inside angle of where it faces, at its outside volume beyond half its
+outside angle, and between the two in between. The game sets each sound's
+cone from its tag; angles of 0, and 360, are no cone. The room send is not
+coned: the room still hears a sound facing away */
+static float voice_cone_gain(const struct sdl_stream *stream)
+{
+	float to_listener[3], length, facing, angle, inside, outside, fraction;
+	int axis;
+
+	if (!stream->cone_outside || (stream->cone_inside >= 360 && stream->cone_outside >= 360))
+		return 1.0f;
+	for (axis = 0; axis < 3; axis++)
+	{
+		to_listener[axis] = stream->mode == DS3DMODE_HEADRELATIVE ? -stream->position[axis] :
+			listener.position[axis] - stream->position[axis];
+	}
+	length = sqrtf(dot3(to_listener, to_listener)) * sqrtf(dot3(stream->cone_orientation, stream->cone_orientation));
+	if (length <= 1.0e-6f)
+		return 1.0f;
+	facing = dot3(to_listener, stream->cone_orientation) / length;
+	angle = acosf(facing < -1.0f ? -1.0f : facing > 1.0f ? 1.0f : facing) * 57.29578f;
+	inside = 0.5f * (float)stream->cone_inside;
+	outside = 0.5f * (float)(stream->cone_outside > stream->cone_inside ? stream->cone_outside : stream->cone_inside);
+	if (angle <= inside)
+		return 1.0f;
+	if (angle >= outside || outside <= inside)
+		return gain_from_millibels(stream->cone_outside_volume);
+	fraction = (angle - inside) / (outside - inside);
+	return gain_from_millibels((LONG)(fraction * (float)stream->cone_outside_volume));
+}
+
+/* DirectSound's Doppler shift of a 3D voice, the factor its frequency is
+played at. The Xbox shifted the game's moving sounds so (a Warthog, a
+Banshee, a projectile going past). Held within a factor of 2 either way,
+the speeds below the speed of sound */
+#define DOPPLER_SPEED_OF_SOUND 343.0f
+#define DOPPLER_MAXIMUM 2.0f
+
+static float doppler_ratio(const struct sdl_stream *stream)
+{
+	float to_listener[3], length, listener_speed = 0.0f, source_speed, ratio;
+	int axis;
+
+	if (!doppler_enabled || !stream->has_3d || stream->mode == DS3DMODE_DISABLE)
+		return 1.0f;
+	for (axis = 0; axis < 3; axis++)
+	{
+		to_listener[axis] = stream->mode == DS3DMODE_HEADRELATIVE ? -stream->position[axis] :
+			listener.position[axis] - stream->position[axis];
+	}
+	length = sqrtf(dot3(to_listener, to_listener));
+	if (length <= 1.0e-4f)
+		return 1.0f;
+	/* towards the listener: the voice's velocity along the line, and the
+	listener's along it the other way. The distance factor turns the game's
+	units into meters a second */
+	source_speed = dot3(stream->velocity, to_listener) / length * listener.distance_factor;
+	if (stream->mode != DS3DMODE_HEADRELATIVE)
+		listener_speed = -dot3(listener.velocity, to_listener) / length * listener.distance_factor;
+	source_speed = clamp_real(source_speed, -0.9f * DOPPLER_SPEED_OF_SOUND, 0.9f * DOPPLER_SPEED_OF_SOUND);
+	listener_speed = clamp_real(listener_speed, -0.9f * DOPPLER_SPEED_OF_SOUND, 0.9f * DOPPLER_SPEED_OF_SOUND);
+	ratio = (DOPPLER_SPEED_OF_SOUND + listener_speed) / (DOPPLER_SPEED_OF_SOUND - source_speed);
+	return clamp_real(ratio, 1.0f / DOPPLER_MAXIMUM, DOPPLER_MAXIMUM);
+}
+
+/* A voice's Doppler shift glides to a new one over a game tick. The game
+moves its sounds once a tick: taken a mix at a time, a voice going past
+would otherwise step in pitch at each tick. start takes the new shift at
+once (a voice just heard) */
+#define DOPPLER_GLIDE_FRAMES (OUTPUT_RATE / 30)
+
+static float doppler_glide(float *current, float *glide_target, unsigned long *frames_left,
+	float target, unsigned long frames, BOOL start)
+{
+	if (start || *current <= 0.0f)
+	{
+		*current = *glide_target = target;
+		*frames_left = 0;
+		return target;
+	}
+	if (target != *glide_target)
+	{
+		*glide_target = target;
+		*frames_left = DOPPLER_GLIDE_FRAMES;
+	}
+	if (*frames_left > frames)
+	{
+		*current += (*glide_target - *current) * (float)frames / (float)*frames_left;
+		*frames_left -= frames;
+	}
+	else
+	{
+		*current = *glide_target;
+		*frames_left = 0;
+	}
+	return *current;
+}
+
 /* the gains of a 3D voice to the left and right, and the room rolloff's
 attenuation of its room send */
 static void spatialize(const struct sdl_stream *stream, float *left, float *right, float *room)
@@ -395,8 +561,9 @@ static void spatialize(const struct sdl_stream *stream, float *left, float *righ
 		*left = cosf(angle) * 1.41421356f * 0.70710678f;
 		*right = sinf(angle) * 1.41421356f * 0.70710678f;
 	}
-	*left *= attenuation * gain_from_millibels(stream->direct);
-	*right *= attenuation * gain_from_millibels(stream->direct);
+	attenuation *= gain_from_millibels(stream->direct) * voice_cone_gain(stream);
+	*left *= attenuation;
+	*right *= attenuation;
 }
 
 /* the voice's gains to the left and right, and to the reverb (only 3D voices
@@ -464,6 +631,324 @@ static void voice_gains(const struct sdl_stream *stream, float *left, float *rig
 	*left *= stream->volume * master_volume;
 	*right *= stream->volume * master_volume;
 	*room *= stream->volume * master_volume;
+}
+
+/* ---------- binaural rendering
+
+audio.hrtf = "on" (or "auto", on an output whose name says it is
+headphones) renders 3D voices for headphones: each one is heard through
+the head-related impulse responses of its direction, so a sound is placed
+around the listener, above and behind too, instead of between the ears.
+The Xbox's DirectSound filtered 3D voices with HRTFs of its own
+(DirectSoundUseFullHRTF). These are measured ones, the SADIE II database's
+KEMAR, diffuse-field equalized (port/assets/hrtf, tools/hrtf_assets.py).
+
+The responses are a grid of directions, each ear's made minimum phase and
+HRTF taps long, its delay apart. A voice's filter is the four directions
+around it blended by how near each is, and its delays blended the same way.
+Each mix the filter and the delays move to the voice's direction. Inside
+its minimum distance a voice blends towards the centered stereo pan (the
+player's own footsteps and weapons stay in the head). Turning audio.hrtf
+on or off fades over HRTF_FADE_SECONDS. 2D voices and the reverb stay as
+they were. */
+
+extern const unsigned int dsound_hrtf_data[];
+extern const unsigned long dsound_hrtf_data_size;
+
+static struct
+{
+	BOOL loaded;
+	unsigned long taps, elevations, azimuths;
+	float first_elevation, elevation_step, azimuth_step;
+	float *filters;
+	float *delays;
+} hrtf;
+
+static unsigned long hrtf_read_u32(const unsigned char *data)
+{
+	return (unsigned long)data[0] | ((unsigned long)data[1] << 8) | ((unsigned long)data[2] << 16) |
+		((unsigned long)data[3] << 24);
+}
+
+static float hrtf_read_float(const unsigned char *data)
+{
+	unsigned int bits = (unsigned int)hrtf_read_u32(data);
+	float value;
+
+	memcpy(&value, &bits, sizeof(value));
+	return value;
+}
+
+static int hrtf_read_s16(const unsigned char *data)
+{
+	return (short)(data[0] | (data[1] << 8));
+}
+
+/* the embedded responses (the file tools/hrtf_assets.py describes); FALSE
+without them */
+static BOOL hrtf_load(void)
+{
+	const unsigned char *data = (const unsigned char *)dsound_hrtf_data;
+	unsigned long size = (unsigned long)dsound_hrtf_data_size, count, index, ear, tap, record, file_taps;
+	float scale;
+
+	if (hrtf.loaded)
+		return TRUE;
+	if (size < 40 || memcmp(data, "HRTF", 4) || hrtf_read_u32(data + 4) != 1 ||
+		hrtf_read_u32(data + 8) != OUTPUT_RATE)
+	{
+		return FALSE;
+	}
+	file_taps = hrtf_read_u32(data + 12);
+	hrtf.taps = (file_taps + 3) & ~3UL;
+	hrtf.elevations = hrtf_read_u32(data + 16);
+	hrtf.first_elevation = hrtf_read_float(data + 20) * 0.017453293f;
+	hrtf.elevation_step = hrtf_read_float(data + 24) * 0.017453293f;
+	hrtf.azimuths = hrtf_read_u32(data + 28);
+	hrtf.azimuth_step = hrtf_read_float(data + 32) * 0.017453293f;
+	scale = hrtf_read_float(data + 36);
+	count = hrtf.elevations * hrtf.azimuths;
+	record = 4 + 4 * file_taps;
+	if (!file_taps || hrtf.taps > HRTF_MAXIMUM_TAPS || !count || hrtf.elevation_step <= 0.0f ||
+		hrtf.azimuth_step <= 0.0f || size < 40 + count * record)
+	{
+		return FALSE;
+	}
+	{
+		float *filters = calloc(count * 2 * hrtf.taps, sizeof(float));
+		float *delays = malloc(count * 2 * sizeof(float));
+
+		if (!filters || !delays)
+		{
+			free(filters);
+			free(delays);
+			return FALSE;
+		}
+		for (index = 0; index < count; index++)
+		{
+			const unsigned char *entry = data + 40 + index * record;
+
+			for (ear = 0; ear < 2; ear++)
+			{
+				float delay = (float)hrtf_read_s16(entry + 2 * ear) / 256.0f;
+
+				delays[index * 2 + ear] = delay < 0.0f ? 0.0f : delay > HRTF_MAXIMUM_DELAY ?
+					HRTF_MAXIMUM_DELAY : delay;
+				for (tap = 0; tap < file_taps; tap++)
+				{
+					filters[(index * 2 + ear) * hrtf.taps + hrtf.taps - 1 - tap] =
+						(float)hrtf_read_s16(entry + 4 + 2 * (ear * file_taps + tap)) * scale;
+				}
+			}
+		}
+		/* published under the mixer's lock, so a mix that sees them loaded
+		sees the filters that go with them */
+		pthread_mutex_lock(&mixer_lock);
+		if (hrtf.loaded)
+		{
+			pthread_mutex_unlock(&mixer_lock);
+			free(filters);
+			free(delays);
+			return TRUE;
+		}
+		hrtf.filters = filters;
+		hrtf.delays = delays;
+		hrtf.loaded = TRUE;
+		pthread_mutex_unlock(&mixer_lock);
+	}
+	return TRUE;
+}
+
+/* the filters and delays of a voice from a direction (side to the right, up,
+ahead): the four grid directions around it, blended */
+static void hrtf_direction(float side, float up, float ahead, float filters[2][HRTF_MAXIMUM_TAPS], float *delays)
+{
+	float horizontal = sqrtf(side * side + ahead * ahead);
+	float azimuth = atan2f(-side, ahead), elevation = atan2f(up, horizontal);
+	float ring, step, ring_fraction, step_fraction;
+	unsigned long rings[2], steps[2], ear, tap;
+	int corner;
+
+	if (azimuth < 0.0f)
+		azimuth += 6.28318531f;
+	ring = (elevation - hrtf.first_elevation) / hrtf.elevation_step;
+	if (ring < 0.0f)
+		ring = 0.0f;
+	if (ring > (float)(hrtf.elevations - 1))
+		ring = (float)(hrtf.elevations - 1);
+	rings[0] = (unsigned long)ring;
+	rings[1] = rings[0] + 1 < hrtf.elevations ? rings[0] + 1 : rings[0];
+	ring_fraction = ring - (float)rings[0];
+	step = azimuth / hrtf.azimuth_step;
+	steps[0] = (unsigned long)step % hrtf.azimuths;
+	steps[1] = (steps[0] + 1) % hrtf.azimuths;
+	step_fraction = step - floorf(step);
+	memset(filters, 0, 2 * sizeof(filters[0]));
+	delays[0] = delays[1] = 0.0f;
+	for (corner = 0; corner < 4; corner++)
+	{
+		unsigned long index = rings[corner >> 1] * hrtf.azimuths + steps[corner & 1];
+		float weight = ((corner >> 1) ? ring_fraction : 1.0f - ring_fraction) *
+			((corner & 1) ? step_fraction : 1.0f - step_fraction);
+
+		if (weight <= 0.0f)
+			continue;
+		for (ear = 0; ear < 2; ear++)
+		{
+			const float *source = hrtf.filters + (index * 2 + ear) * hrtf.taps;
+
+			for (tap = 0; tap < hrtf.taps; tap++)
+				filters[ear][tap] += source[tap] * weight;
+			delays[ear] += hrtf.delays[index * 2 + ear] * weight;
+		}
+	}
+}
+
+/* how much of a 3D voice the binaural rendering takes (0 to 1), the rest
+the stereo pan's */
+static float hrtf_share(const struct sdl_stream *stream)
+{
+	if (hrtf_level <= 0.0f || !stream->has_3d || stream->mode == DS3DMODE_DISABLE)
+		return 0.0f;
+	return hrtf_level;
+}
+
+/* a voice's filters, delays and gain for this mix. Inside its minimum
+distance the filters blend towards a centered sound and the delays towards
+none */
+static float hrtf_target(const struct sdl_stream *stream, float share, float filters[2][HRTF_MAXIMUM_TAPS],
+	float *delays)
+{
+	float side, up, ahead, distance;
+
+	voice_direction(stream, &side, &up, &ahead);
+	distance = sqrtf(side * side + up * up + ahead * ahead);
+	hrtf_direction(side, up, ahead, filters, delays);
+	if (stream->minimum_distance > 0.0f && distance < stream->minimum_distance)
+	{
+		float near = distance / stream->minimum_distance;
+		unsigned long ear, tap;
+
+		for (ear = 0; ear < 2; ear++)
+		{
+			for (tap = 0; tap < hrtf.taps; tap++)
+				filters[ear][tap] *= near;
+			filters[ear][hrtf.taps - 1] += (1.0f - near) * 0.70710678f;
+			delays[ear] *= near;
+		}
+	}
+	return share * distance_attenuation(stream, distance, listener.rolloff_factor) *
+		gain_from_millibels(stream->direct) * voice_cone_gain(stream) * stream->volume * master_volume;
+}
+
+static void hrtf_reset(struct sdl_stream *stream)
+{
+	memset(stream->hrtf_input, 0, sizeof(stream->hrtf_input));
+	memset(stream->hrtf_tail, 0, sizeof(stream->hrtf_tail));
+	stream->hrtf_position = 0;
+	stream->current_hrtf = 0.0f;
+	stream->hrtf_valid = FALSE;
+}
+
+/* the sample of input delay + 1 samples before position (a cubic Hermite
+interpolation between the four around it) */
+static float hrtf_delayed(const float *input, unsigned long position, float delay)
+{
+	int whole = (int)delay;
+	float fraction = delay - (float)whole;
+	unsigned long newest = position - 1 - (unsigned long)whole;
+	float y0 = input[(newest + 1) & (HRTF_INPUT - 1)];
+	float y1 = input[newest & (HRTF_INPUT - 1)];
+	float y2 = input[(newest - 1) & (HRTF_INPUT - 1)];
+	float y3 = input[(newest - 2) & (HRTF_INPUT - 1)];
+	float c1 = 0.5f * (y2 - y0);
+	float c2 = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
+	float c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
+
+	return ((c3 * fraction + c2) * fraction + c1) * fraction + y1;
+}
+
+/* adds to sums (frames of them) the filter (taps of it, last first) run
+over samples (taps - 1 before the first frame's, then the frames') */
+static void hrtf_convolve(const float *filter, const float *samples, float *sums, unsigned long frames,
+	unsigned long taps)
+{
+	unsigned long tap, frame;
+
+	for (tap = 0; tap < taps; tap++)
+	{
+		float weight = filter[tap];
+		const float *source = samples + tap;
+
+		for (frame = 0; frame < frames; frame++)
+			sums[frame] += weight * source[frame];
+	}
+}
+
+/* the binaural rendering of a voice's mono direct path, added to output
+(frames of stereo). frames is at most MIX_CHUNK_FRAMES */
+static void hrtf_mix(struct sdl_stream *stream, const float *mono, float *output, unsigned long frames,
+	float target_gain, float filters[2][HRTF_MAXIMUM_TAPS], const float *delays)
+{
+	unsigned long taps = hrtf.taps, position = stream->hrtf_position, frame, ear;
+	BOOL fading;
+	float gain, ramp_gain;
+	float samples[HRTF_MAXIMUM_TAPS + MIX_CHUNK_FRAMES], old_sums[MIX_CHUNK_FRAMES], new_sums[MIX_CHUNK_FRAMES];
+
+	if (!taps || taps > HRTF_MAXIMUM_TAPS)
+	{
+		hrtf_reset(stream);
+		return;
+	}
+	if (!stream->hrtf_valid)
+	{
+		memcpy(stream->hrtf_filters, filters, sizeof(stream->hrtf_filters));
+		stream->hrtf_delays[0] = delays[0];
+		stream->hrtf_delays[1] = delays[1];
+		stream->hrtf_valid = TRUE;
+	}
+	fading = memcmp(stream->hrtf_filters, filters, sizeof(stream->hrtf_filters)) != 0;
+	gain = stream->current_hrtf;
+	ramp_gain = (target_gain - gain) / (float)frames;
+	for (frame = 0; frame < frames; frame++)
+	{
+		stream->hrtf_input[(position + frame) & (HRTF_INPUT - 1)] = mono[frame] * gain;
+		gain += ramp_gain;
+	}
+	for (ear = 0; ear < 2; ear++)
+	{
+		float delay = stream->hrtf_delays[ear], ramp_delay = (delays[ear] - delay) / (float)frames;
+		float *delayed = samples + taps - 1;
+
+		memcpy(samples, stream->hrtf_tail[ear], (taps - 1) * sizeof(float));
+		for (frame = 0; frame < frames; frame++)
+		{
+			delayed[frame] = hrtf_delayed(stream->hrtf_input, position + frame, delay);
+			delay += ramp_delay;
+		}
+		memset(old_sums, 0, frames * sizeof(float));
+		hrtf_convolve(stream->hrtf_filters[ear], samples, old_sums, frames, taps);
+		if (fading)
+		{
+			float fade = 0.0f, ramp_fade = 1.0f / (float)frames;
+
+			memset(new_sums, 0, frames * sizeof(float));
+			hrtf_convolve(filters[ear], samples, new_sums, frames, taps);
+			for (frame = 0; frame < frames; frame++)
+			{
+				old_sums[frame] += (new_sums[frame] - old_sums[frame]) * fade;
+				fade += ramp_fade;
+			}
+		}
+		for (frame = 0; frame < frames; frame++)
+			output[frame * 2 + ear] += old_sums[frame];
+		memcpy(stream->hrtf_tail[ear], samples + frames, (taps - 1) * sizeof(float));
+	}
+	stream->hrtf_position = position + frames;
+	memcpy(stream->hrtf_filters, filters, sizeof(stream->hrtf_filters));
+	stream->hrtf_delays[0] = delays[0];
+	stream->hrtf_delays[1] = delays[1];
+	stream->current_hrtf = target_gain;
 }
 
 /* ---------- resampling
@@ -718,7 +1203,8 @@ static BOOL voice_has_frames(struct sdl_stream *stream)
 send (frames of mono) */
 static void mix_voice(struct sdl_stream *stream, float *output, float *send, unsigned long frames)
 {
-	double step;
+	double step, ramp_step, base_step;
+	float doppler, target_doppler;
 	float target_left, target_right, target_room, left, right, room, ramp_left, ramp_right, ramp_room, scale;
 	float target_direct_lowpass, target_room_lowpass, direct_lowpass, room_lowpass;
 	float ramp_direct_lowpass, ramp_room_lowpass;
@@ -727,13 +1213,33 @@ static void mix_voice(struct sdl_stream *stream, float *output, float *send, uns
 	unsigned long frame;
 	/* (a stereo voice panned towards its sound: voice_gains) */
 	BOOL positioned = stream->channels == 2 && stream->stereo_positioned;
+	/* on stereo output with audio.hrtf, the binaural rendering's share of a
+	3D voice, and its targets (hrtf) */
+	float share, target_hrtf = 0.0f, hrtf_filters[2][HRTF_MAXIMUM_TAPS], hrtf_delays[2];
+	float hrtf_mono[MIX_CHUNK_FRAMES];
+	BOOL binaural;
 
 	if (stream->paused || !stream->packet_count || !stream->sample_rate)
 		return;
-	step = (double)(stream->frequency ? stream->frequency : stream->sample_rate) / OUTPUT_RATE;
+	base_step = (double)(stream->frequency ? stream->frequency : stream->sample_rate) / OUTPUT_RATE;
+	/* the Doppler shift, moving from where it was to where it glides to by
+	the end of the mix (doppler_glide) */
+	doppler = stream->current_doppler;
+	target_doppler = doppler_glide(&stream->current_doppler, &stream->target_doppler,
+		&stream->doppler_frames_left, doppler_ratio(stream), frames, !stream->gains_valid);
+	if (!stream->gains_valid || doppler <= 0.0f)
+		doppler = target_doppler;
+	step = base_step * doppler;
+	ramp_step = base_step * (target_doppler - doppler) / (double)frames;
 	/* the low pass narrowed for a voice taking frames faster than the output
-	rate, and the frames it reaches on each side */
-	scale = step > 1.0 ? (float)(1.0 / (step < RESAMPLER_MAXIMUM_STRETCH ? step : RESAMPLER_MAXIMUM_STRETCH)) : 1.0f;
+	rate (at the fastest it is in this mix), and the frames it reaches on
+	each side */
+	{
+		double fastest = step > base_step * target_doppler ? step : base_step * target_doppler;
+
+		scale = fastest > 1.0 ? (float)(1.0 / (fastest < RESAMPLER_MAXIMUM_STRETCH ? fastest :
+			RESAMPLER_MAXIMUM_STRETCH)) : 1.0f;
+	}
 	width = (long)ceilf(RESAMPLER_ZERO_CROSSINGS / scale);
 	/* a voice that ran dry and stopped (below) starts over once it has
 	frames again: stream_process starts over only a stream with no packets,
@@ -744,8 +1250,35 @@ static void mix_voice(struct sdl_stream *stream, float *output, float *send, uns
 			return;
 		resampler_reset(stream);
 		stream->gains_valid = FALSE;
+		/* a voice that ran dry takes the shift it has now. the glide is for
+		a voice that kept playing */
+		doppler = target_doppler = doppler_glide(&stream->current_doppler, &stream->target_doppler,
+			&stream->doppler_frames_left, doppler_ratio(stream), frames, TRUE);
+		step = base_step * doppler;
+		ramp_step = 0.0;
+		{
+			double fastest = step > base_step * target_doppler ? step : base_step * target_doppler;
+
+			scale = fastest > 1.0 ? (float)(1.0 / (fastest < RESAMPLER_MAXIMUM_STRETCH ? fastest :
+				RESAMPLER_MAXIMUM_STRETCH)) : 1.0f;
+		}
+		width = (long)ceilf(RESAMPLER_ZERO_CROSSINGS / scale);
 	}
 	voice_gains(stream, &target_left, &target_right, &target_room, &target_direct_lowpass, &target_room_lowpass);
+	share = frames <= MIX_CHUNK_FRAMES ? hrtf_share(stream) : 0.0f;
+	if (!stream->gains_valid)
+		hrtf_reset(stream);
+	/* a voice fading out still needs this mix's filters: its gain is on the
+	way to 0 while the pan comes back */
+	memset(hrtf_filters, 0, sizeof(hrtf_filters));
+	hrtf_delays[0] = hrtf_delays[1] = 0.0f;
+	if (frames <= MIX_CHUNK_FRAMES && (share > 0.0f || stream->current_hrtf > 0.0f))
+	{
+		target_hrtf = hrtf_target(stream, share, hrtf_filters, hrtf_delays);
+		target_left *= 1.0f - share;
+		target_right *= 1.0f - share;
+	}
+	binaural = frames <= MIX_CHUNK_FRAMES && (target_hrtf > 0.0f || stream->current_hrtf > 0.0f);
 	if (!stream->gains_valid)
 	{
 		stream->current_left = target_left;
@@ -801,7 +1334,7 @@ static void mix_voice(struct sdl_stream *stream, float *output, float *send, uns
 		if (stream->silence > (unsigned long)(2 * width))
 			break;
 
-		if (!left && !right && !room && !ramp_left && !ramp_right && !ramp_room)
+		if (!left && !right && !room && !ramp_left && !ramp_right && !ramp_room && !binaural)
 		{
 			/* a voice turned all the way down (out of earshot), and not
 			sending to the reverb, only moves on */
@@ -869,6 +1402,8 @@ static void mix_voice(struct sdl_stream *stream, float *output, float *send, uns
 		}
 		direct_state[0] = sample_left;
 		direct_state[1] = sample_right;
+		if (binaural)
+			hrtf_mono[frame] = stream->channels == 1 ? sample_left : 0.5f * (sample_left + sample_right);
 		if (stream->channels == 1)
 		{
 			output[frame * 2] += sample_left * left;
@@ -897,12 +1432,17 @@ static void mix_voice(struct sdl_stream *stream, float *output, float *send, uns
 		direct_lowpass += ramp_direct_lowpass;
 		room_lowpass += ramp_room_lowpass;
 		stream->phase += step;
+		step += ramp_step;
 		while (stream->phase >= 1.0)
 		{
 			stream->phase -= 1.0;
 			stream->center++;
 		}
 	}
+	if (binaural && frame)
+		hrtf_mix(stream, hrtf_mono, output, frame, target_hrtf, hrtf_filters, hrtf_delays);
+	else if (!binaural && stream->hrtf_valid)
+		hrtf_reset(stream);
 	stream->direct_lowpass[0] = direct_state[0];
 	stream->direct_lowpass[1] = direct_state[1];
 	stream->room_lowpass = room_state;
@@ -1295,6 +1835,15 @@ static void limit(float *output, unsigned long frames)
 	}
 }
 
+/* hrtf_level moved towards audio.hrtf's (hrtf_update) */
+static void hrtf_fade(unsigned long frames)
+{
+	float target = hrtf_wanted && hrtf.loaded ? 1.0f : 0.0f;
+	float step = (float)frames / (HRTF_FADE_SECONDS * OUTPUT_RATE);
+
+	hrtf_level = clamp_real(target, hrtf_level - step, hrtf_level + step);
+}
+
 static void mix(float *output, unsigned long frames)
 {
 	struct sdl_stream *stream;
@@ -1304,6 +1853,7 @@ static void mix(float *output, unsigned long frames)
 
 	memset(output, 0, frames * OUTPUT_CHANNELS * sizeof(float));
 	memset(reverb.send, 0, frames * sizeof(float));
+	hrtf_fade(frames);
 	pthread_mutex_lock(&mixer_lock);
 	for (stream = streams; stream; stream = stream->next)
 		mix_voice(stream, output, reverb.send, frames);
@@ -1388,6 +1938,86 @@ static void *silent_clock_thread(void *parameter)
 	return NULL;
 }
 
+/* whether the output's name says it is headphones (a headset, earbuds),
+for audio.hrtf = "auto": SDL does not say what is plugged in, but the
+systems name a headphone output so */
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+/* the opened stream's device name, copied by the host (host_sdl.c) */
+void host_sdl_audio_stream_device_name(unsigned int stream, char *name, unsigned int size);
+#endif
+
+static BOOL audio_output_is_headphones(char *name, unsigned long name_size)
+{
+	static const char *const words[] = { "headphone", "headset", "airpods", "earbuds", "earphone", "buds", "beats" };
+	char lowered[256];
+	const char *device_name;
+	unsigned long index;
+
+	name[0] = '\0';
+	if (!audio_stream)
+		return FALSE;
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	host_sdl_audio_stream_device_name((unsigned int)audio_stream, name, (unsigned int)name_size);
+	device_name = name;
+#elif defined(HALO_ANDROID) || defined(HALO_IOS)
+	/* those guests have no name for the opened device. auto stays the pan */
+	(void)name_size;
+	return FALSE;
+#else
+	device_name = SDL_GetAudioDeviceName(SDL_GetAudioStreamDevice(audio_stream));
+	if (!device_name)
+		return FALSE;
+	snprintf(name, name_size, "%s", device_name);
+#endif
+	for (index = 0; device_name[index] && index + 1 < sizeof(lowered); index++)
+		lowered[index] = (char)(device_name[index] >= 'A' && device_name[index] <= 'Z' ? device_name[index] + 32 :
+			device_name[index]);
+	lowered[index] = '\0';
+	for (index = 0; index < sizeof(words) / sizeof(words[0]); index++)
+	{
+		if (strstr(lowered, words[index]))
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* audio.hrtf read again (the game's thread, or the one that opened the
+device): "on", "off", or "auto" for on when the output is headphones.
+The responses are loaded here, not on the mixer's thread */
+static BOOL hrtf_automatic = FALSE;
+
+static void hrtf_update(void)
+{
+	static int logged = -1;
+	const char *setting = config_string("audio.hrtf");
+	char name[256] = "";
+	BOOL wanted;
+
+	if (!setting)
+		setting = "auto";
+	hrtf_automatic = !strcmp(setting, "auto");
+	if (!strcmp(setting, "on"))
+		wanted = TRUE;
+	else if (hrtf_automatic)
+		wanted = audio_output_is_headphones(name, sizeof(name));
+	else
+		wanted = FALSE;
+	if (wanted && !hrtf_load())
+	{
+		if (logged != 2)
+			platform_log("audio: the HRTF data is missing; 3D sounds are panned");
+		logged = 2;
+		wanted = FALSE;
+	}
+	if ((int)wanted != logged && logged != 2)
+	{
+		platform_log("audio: headphone 3D (audio.hrtf \"%s\") %s%s%s%s", setting, wanted ? "on" : "off",
+			name[0] ? " (output \"" : "", name, name[0] ? "\")" : "");
+		logged = (int)wanted;
+	}
+	hrtf_wanted = wanted;
+}
+
 static void audio_start(void)
 {
 	SDL_AudioSpec spec;
@@ -1397,6 +2027,7 @@ static void audio_start(void)
 	audio_started = TRUE;
 	halo_audio_apply_settings();
 	reverb_enabled = config_boolean("audio.reverb");
+	doppler_enabled = config_boolean("audio.doppler");
 	resampler_mode = resampler_mode_read();
 	resampler_initialize();
 	resampler_phases_initialize();
@@ -1425,6 +2056,7 @@ static void audio_start(void)
 		if (audio_stream)
 		{
 			SDL_ResumeAudioStreamDevice(audio_stream);
+			hrtf_update();
 			return;
 		}
 		platform_log("cannot open an audio device (%s); sound is silent", SDL_GetError());
@@ -1435,6 +2067,7 @@ static void audio_start(void)
 		pthread_create(&thread, NULL, silent_clock_thread, NULL);
 		pthread_detach(thread);
 	}
+	hrtf_update();
 }
 
 /* (the event thread, each frame: sdl_platform.c) audio.output_device
@@ -1473,6 +2106,7 @@ void dsound_sdl_output_device_check(void)
 		pthread_create(&thread, NULL, silent_clock_thread, NULL);
 		pthread_detach(thread);
 	}
+	hrtf_update();
 }
 
 /* ---------- completion */
@@ -1727,15 +2361,17 @@ VOID WINAPI DirectSoundDoWork(void)
 {
 	static unsigned long volume_read_at = (unsigned long)-1;
 
-	/* (audio.volume, audio.reverb and audio.resampler read again when the
-	settings change: on the game's thread, not the mixer's, whose lock the
-	config's file I/O would hold) */
+	/* (audio.volume, audio.reverb, audio.doppler, audio.hrtf and
+	audio.resampler read again when the settings change: on the game's
+	thread, not the mixer's, whose lock the config's file I/O would hold) */
 	if (volume_read_at != config_changes())
 	{
 		volume_read_at = config_changes();
 		halo_audio_apply_settings();
 		reverb_enabled = config_boolean("audio.reverb");
+		doppler_enabled = config_boolean("audio.doppler");
 		resampler_mode = resampler_mode_read();
+		hrtf_update();
 	}
 	streams_complete_finished();
 }
@@ -1819,7 +2455,17 @@ HRESULT WINAPI IDirectSound_SetPosition(LPDIRECTSOUND sound, FLOAT x, FLOAT y, F
 	return DS_OK;
 }
 
-HRESULT WINAPI IDirectSound_SetVelocity(LPDIRECTSOUND sound, FLOAT x, FLOAT y, FLOAT z, DWORD apply) { (void)sound; (void)x; (void)y; (void)z; (void)apply; return DS_OK; }
+HRESULT WINAPI IDirectSound_SetVelocity(LPDIRECTSOUND sound, FLOAT x, FLOAT y, FLOAT z, DWORD apply)
+{
+	(void)sound;
+	(void)apply;
+	pthread_mutex_lock(&mixer_lock);
+	listener.velocity[0] = x;
+	listener.velocity[1] = y;
+	listener.velocity[2] = z;
+	pthread_mutex_unlock(&mixer_lock);
+	return DS_OK;
+}
 
 static void normalize3(float *vector)
 {
@@ -1878,6 +2524,10 @@ HRESULT WINAPI IDirectSound_CreateSoundStream(LPDIRECTSOUND sound, LPCDSSTREAMDE
 	stream->mode = DS3DMODE_NORMAL;
 	stream->minimum_distance = DS3D_DEFAULTMINDISTANCE;
 	stream->maximum_distance = DS3D_DEFAULTMAXDISTANCE;
+	/* DirectSound's defaults: no cone, facing +z, no Doppler shift yet */
+	stream->cone_inside = stream->cone_outside = 360;
+	stream->cone_orientation[2] = 1.0f;
+	stream->current_doppler = stream->target_doppler = 1.0f;
 	resampler_reset(stream);
 	pthread_mutex_lock(&mixer_lock);
 	stream->next = streams;
@@ -2008,10 +2658,26 @@ HRESULT WINAPI IDirectSoundStream_Pause(LPDIRECTSOUNDSTREAM stream, DWORD pause)
 	STREAM_SETTER(record->paused = pause == DSSTREAMPAUSE_PAUSE)
 }
 
-HRESULT WINAPI IDirectSoundStream_SetVelocity(LPDIRECTSOUNDSTREAM stream, FLOAT x, FLOAT y, FLOAT z, DWORD apply) { (void)stream; (void)x; (void)y; (void)z; (void)apply; return DS_OK; }
-HRESULT WINAPI IDirectSoundStream_SetConeAngles(LPDIRECTSOUNDSTREAM stream, DWORD inside, DWORD outside, DWORD apply) { (void)stream; (void)inside; (void)outside; (void)apply; return DS_OK; }
-HRESULT WINAPI IDirectSoundStream_SetConeOrientation(LPDIRECTSOUNDSTREAM stream, FLOAT x, FLOAT y, FLOAT z, DWORD apply) { (void)stream; (void)x; (void)y; (void)z; (void)apply; return DS_OK; }
-HRESULT WINAPI IDirectSoundStream_SetConeOutsideVolume(LPDIRECTSOUNDSTREAM stream, LONG volume, DWORD apply) { (void)stream; (void)volume; (void)apply; return DS_OK; }
+HRESULT WINAPI IDirectSoundStream_SetVelocity(LPDIRECTSOUNDSTREAM stream, FLOAT x, FLOAT y, FLOAT z, DWORD apply)
+{
+	(void)apply;
+	STREAM_SETTER(record->velocity[0] = x; record->velocity[1] = y; record->velocity[2] = z)
+}
+HRESULT WINAPI IDirectSoundStream_SetConeAngles(LPDIRECTSOUNDSTREAM stream, DWORD inside, DWORD outside, DWORD apply)
+{
+	(void)apply;
+	STREAM_SETTER(record->cone_inside = inside; record->cone_outside = outside)
+}
+HRESULT WINAPI IDirectSoundStream_SetConeOrientation(LPDIRECTSOUNDSTREAM stream, FLOAT x, FLOAT y, FLOAT z, DWORD apply)
+{
+	(void)apply;
+	STREAM_SETTER(record->cone_orientation[0] = x; record->cone_orientation[1] = y; record->cone_orientation[2] = z)
+}
+HRESULT WINAPI IDirectSoundStream_SetConeOutsideVolume(LPDIRECTSOUNDSTREAM stream, LONG volume, DWORD apply)
+{
+	(void)apply;
+	STREAM_SETTER(record->cone_outside_volume = volume)
+}
 
 /* ---------- buffers
 

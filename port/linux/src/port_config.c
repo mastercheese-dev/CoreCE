@@ -203,6 +203,12 @@ static const struct config_setting config_settings[] =
 		"In multiplayer, split this screen when only one local player is in the\n"
 		"game. The other pane stays black. Your pane is display.teammate_view_slot.\n"
 		"Campaign stays one pane. A second local player there is a real split." },
+	{ "display.split_shared_only", _config_boolean, "false", "HALO_SPLIT_SHARED_ONLY", _environment_value,
+		_platform_all,
+		"When split screen is on, leave out a teammate whose own split screen\n"
+		"is off. Two players with one off is one pane. Three with one off is\n"
+		"the two-pane split. A machine that has not said keeps its pane\n"
+		"(black in matchmaking until it does)." },
 	{ "display.scoreboard_team_layout", _config_string, "\"teams\"", "HALO_SCOREBOARD_TEAM_LAYOUT", _environment_value,
 		_platform_all,
 		"How the scoreboard lists a team game's players: \"teams\" in a column for\n"
@@ -271,6 +277,13 @@ static const struct config_setting config_settings[] =
 		"Reverberate the world's sounds as the place the player is in does (the\n"
 		"maps' sound environments, as the Xbox's I3DL2 reverb did); false keeps\n"
 		"them dry." },
+	{ "audio.hrtf", _config_string, "\"auto\"", "HALO_AUDIO_HRTF", _environment_value, _platform_all,
+		"Place 3D sounds around the head on stereo output, as the Xbox did:\n"
+		"\"on\", \"off\", or \"auto\" (on when the output's name says it is\n"
+		"headphones). \"off\" and \"auto\" on speakers keep the stereo pan." },
+	{ "audio.doppler", _config_boolean, "true", "HALO_AUDIO_DOPPLER", _environment_value, _platform_all,
+		"Shift the pitch of a moving sound, like a vehicle or a shot going\n"
+		"past, as the Xbox did. false keeps every sound at its own pitch." },
 	{ "audio.resampler", _config_string, "\"sinc\"", "HALO_AUDIO_RESAMPLER", _environment_value, _platform_all,
 		"How sounds are converted to the output's rate: \"sinc\" with a\n"
 		"band-limited low pass; \"linear\" between neighbouring samples,\n"

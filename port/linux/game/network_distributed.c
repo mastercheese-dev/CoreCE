@@ -3902,12 +3902,13 @@ void distributed_screen_share_client_tick(void)
 	} message;
 	unsigned char share;
 
-	if (global_network_game_server_get() || !matchmaking_game_port())
-		return;
-	if (distributed_screen_share_time != NONE &&
-		game_time_get() - distributed_screen_share_time < TICKS_PER_SECOND)
+	if (global_network_game_server_get())
 		return;
 	share = config_boolean("display.teammate_views") ? 1 : 0;
+	if (distributed_screen_share_time != NONE &&
+		game_time_get() - distributed_screen_share_time < TICKS_PER_SECOND &&
+		share == distributed_screen_share_sent)
+		return;
 	distributed_screen_share_time = game_time_get();
 	distributed_screen_share_sent = share;
 	csmemset(&message, 0, sizeof(message));
@@ -3916,18 +3917,44 @@ void distributed_screen_share_client_tick(void)
 		_distributed_to_host_reliably);
 }
 
+/* this machine's Split Screen, and each answer already heard, to every
+client. matchmaking also sends the lobby set (the caller). */
+static void distributed_screen_share_broadcast(unsigned char share, short local)
+{
+	short machine;
+
+	if (local >= 0 && local < HALO_PORT_MAXIMUM_NETWORK_MACHINES)
+		distributed_screen_share_send_down((unsigned char)local, share);
+	for (machine = 0; machine < HALO_PORT_MAXIMUM_NETWORK_MACHINES; machine++)
+	{
+		if (machine == local || !distributed_screen_share_known[machine])
+			continue;
+		distributed_screen_share_send_down((unsigned char)machine, distributed_screen_share[machine]);
+	}
+}
+
 void distributed_screen_share_host_tick(void)
 {
 	unsigned char bits[16];
 	unsigned char share;
 	short local;
-	short machine;
 
-	if (!global_network_game_server_get() || !matchmaking_game_port())
+	if (!global_network_game_server_get())
 		return;
-	distributed_screen_party_compute(bits);
 	share = config_boolean("display.teammate_views") ? 1 : 0;
 	local = network_game_client_get_local_machine_index();
+	if (!matchmaking_game_port())
+	{
+		if (distributed_screen_share_time != NONE &&
+			game_time_get() - distributed_screen_share_time < TICKS_PER_SECOND &&
+			share == distributed_screen_share_sent)
+			return;
+		distributed_screen_share_time = game_time_get();
+		distributed_screen_share_sent = share;
+		distributed_screen_share_broadcast(share, local);
+		return;
+	}
+	distributed_screen_party_compute(bits);
 	if (distributed_screen_share_time != NONE &&
 		game_time_get() - distributed_screen_share_time < TICKS_PER_SECOND &&
 		!csmemcmp(bits, distributed_screen_party_sent, sizeof(bits)) &&
@@ -3950,14 +3977,7 @@ void distributed_screen_share_host_tick(void)
 		distributed_send(&message, _distributed_message_screen_party, 1, (word)sizeof(message),
 			_distributed_to_clients_reliably);
 	}
-	if (local >= 0 && local < HALO_PORT_MAXIMUM_NETWORK_MACHINES)
-		distributed_screen_share_send_down((unsigned char)local, share);
-	for (machine = 0; machine < HALO_PORT_MAXIMUM_NETWORK_MACHINES; machine++)
-	{
-		if (machine == local || !distributed_screen_share_known[machine])
-			continue;
-		distributed_screen_share_send_down((unsigned char)machine, distributed_screen_share[machine]);
-	}
+	distributed_screen_share_broadcast(share, local);
 }
 
 int distributed_machine_shares_screen(short machine_index)
@@ -3971,6 +3991,17 @@ int distributed_machine_shares_screen(short machine_index)
 	if (!distributed_screen_share_known[machine_index])
 		return 0;
 	return distributed_screen_share[machine_index] ? 1 : 0;
+}
+
+int distributed_machine_screen_share_known(short machine_index)
+{
+	short local = network_game_client_get_local_machine_index();
+
+	if (machine_index == local)
+		return 1;
+	if (machine_index < 0 || machine_index >= HALO_PORT_MAXIMUM_NETWORK_MACHINES)
+		return 0;
+	return distributed_screen_share_known[machine_index] ? 1 : 0;
 }
 
 void distributed_screen_party_bits(unsigned char bits[16])
