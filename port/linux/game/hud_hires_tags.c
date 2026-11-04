@@ -34,6 +34,7 @@ When the texture cannot be drawn, the sprites are drawn from their bitmap.
 #include "rasterizer/rasterizer.h"
 #include "text/draw_string.h"
 #include "hud_button_layout.h"
+#include "hud_hires_crosshairs.h"
 #include "scenario/scenario_definitions.h"
 
 /* the platform layer's (port/linux/src) */
@@ -50,6 +51,7 @@ void hud_hires_register_placeholder(long asset, unsigned long const *texture);
 int hud_hires_asset_custom_edition(long asset);
 /* (custom_edition_cache.c) */
 boolean custom_edition_cache_stock_tag(long tag_index);
+boolean custom_edition_cache_tags_loaded(void);
 
 void hud_hires_map_loaded(const long *assets, long count);
 void hud_hires_map_unloaded(void);
@@ -229,8 +231,10 @@ void hud_hires_register_bitmap(
 		{
 			platform_log("high-res hud: %s bitmap %ld is %dx%d here, which its texture does not fit",
 				tag_name, bitmap_index, bitmap->width, bitmap->height);
-			return;
+			continue;
 		}
+		/* the same bitmap can have two textures: the Xbox sheet, and the
+		Custom Edition sheet whose pixels are its own. both are named here */
 		if (hud_hires_asset_sprites(asset))
 		{
 			for (index = 0; index < hires_sprite_bitmap_count; index++)
@@ -238,31 +242,36 @@ void hud_hires_register_bitmap(
 				if (hires_sprite_bitmaps[index].asset == asset)
 				{
 					hires_sprite_bitmaps[index].bitmap = bitmap;
-					return;
+					break;
 				}
 			}
+			if (index < hires_sprite_bitmap_count)
+				continue;
 			if (hires_sprite_bitmap_count >= MAXIMUM_HIRES_SPRITE_BITMAPS)
-				return;
+				continue;
 			csmemset(&hires_sprite_bitmaps[hires_sprite_bitmap_count], 0, sizeof(hires_sprite_bitmaps[0]));
 			hires_sprite_bitmaps[hires_sprite_bitmap_count].bitmap = bitmap;
 			hires_sprite_bitmaps[hires_sprite_bitmap_count].asset = asset;
 			hires_sprite_bitmap_count++;
-			return;
+			continue;
 		}
 		for (index = 0; index < hires_bitmap_count; index++)
 		{
 			if (hires_bitmaps[index].asset == asset)
 			{
 				hires_bitmaps[index].bitmap = bitmap;
-				return;
+				hires_bitmaps[index].stock_custom_edition = FALSE;
+				break;
 			}
 		}
+		if (index < hires_bitmap_count)
+			continue;
 		if (hires_bitmap_count >= MAXIMUM_HIRES_BITMAPS)
-			return;
+			continue;
 		hires_bitmaps[hires_bitmap_count].bitmap = bitmap;
 		hires_bitmaps[hires_bitmap_count].asset = asset;
+		hires_bitmaps[hires_bitmap_count].stock_custom_edition = FALSE;
 		hires_bitmap_count++;
-		return;
 	}
 
 	return;
@@ -345,6 +354,35 @@ struct bitmap_data const *hud_hires_sprite_bitmap(
 	return bitmap;
 }
 
+/* CE packs its 2x and its 8x on this one sheet. The supplied pictures
+replace the 2x and the reticle. The 8x keeps the map's pixels. A whole
+sheet would replace that 8x too. */
+struct bitmap_data const *hud_hires_crosshair_bitmap(
+	struct bitmap_data const *bitmap,
+	short sequence_index,
+	short frame_index)
+{
+	long index;
+
+	if (!bitmap || !custom_edition_cache_tags_loaded() ||
+		!config_boolean("display.high_res_hud") ||
+		frame_index != 0 ||
+		(sequence_index != 0 && sequence_index != 1))
+	{
+		return bitmap;
+	}
+	for (index = 0; index < hires_sprite_bitmap_count; index++)
+	{
+		if (hires_sprite_bitmaps[index].bitmap == bitmap &&
+			!strcmp(hud_hires_asset_tag(hires_sprite_bitmaps[index].asset),
+				"ui\\hud\\bitmaps\\sniper\\hud_reticles_scope"))
+		{
+			return hud_hires_sprite_bitmap(bitmap, sequence_index);
+		}
+	}
+	return bitmap;
+}
+
 /* whether the bitmap at address that `asset` stands for is a Custom Edition
 map's stock one (its pixels are not those the texture was drawn from) */
 long hud_hires_asset_stock_custom_edition(
@@ -369,14 +407,20 @@ long hud_hires_asset_stock_custom_edition(
 	return FALSE;
 }
 
-long hud_hires_asset_at(
+/* the next texture registered for the bitmap whose pixels are at address,
+after slot (NONE starts at the first). two textures can name one bitmap:
+the Xbox sheet and the Custom Edition sheet */
+long hud_hires_asset_next(
 	unsigned long address,
 	long width,
-	long height)
+	long height,
+	long *slot)
 {
 	long index;
 
-	for (index = 0; index < hires_bitmap_count; index++)
+	if (!slot)
+		return NONE;
+	for (index = *slot + 1; index < hires_bitmap_count; index++)
 	{
 		struct bitmap_data *bitmap = hires_bitmaps[index].bitmap;
 
@@ -385,11 +429,22 @@ long hud_hires_asset_at(
 			bitmap->width == width &&
 			bitmap->height == height)
 		{
+			*slot = index;
 			return hires_bitmaps[index].asset;
 		}
 	}
 
 	return NONE;
+}
+
+long hud_hires_asset_at(
+	unsigned long address,
+	long width,
+	long height)
+{
+	long slot = NONE;
+
+	return hud_hires_asset_next(address, width, height, &slot);
 }
 
 /* the high-res controller button, by its place among the HUD's button

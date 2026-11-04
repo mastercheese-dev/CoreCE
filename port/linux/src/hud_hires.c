@@ -42,6 +42,7 @@ zlib (port/third_party/zlib).
 
 /* the game's (port/linux/game/hud_hires_tags.c) */
 long hud_hires_asset_at(unsigned long address, long width, long height);
+long hud_hires_asset_next(unsigned long address, long width, long height, long *slot);
 long hud_hires_asset_stock_custom_edition(unsigned long address, long width, long height, long asset);
 
 #define MAXIMUM_TEXTURES 128
@@ -151,27 +152,35 @@ long hud_hires_override_find(unsigned long address, unsigned long width, unsigne
 	}
 	if (!hud_enabled && !titles_enabled)
 		return -1;
-	asset = hud_hires_asset_at(address, (long)width, (long)height);
-	if (asset < 0 || asset >= hud_hires_asset_count())
-		return -1;
-	if (!(hud_hires_embedded[asset].title ? titles_enabled : hud_enabled))
-		return -1;
-	/* (a Custom Edition map's stock HUD bitmap, laid out as this texture's,
-	has its own pixels) */
-	if (hud_hires_asset_stock_custom_edition(address, (long)width, (long)height, asset))
-		return asset;
-	if (crc32(0L, (const Bytef *)address, (uInt)level0_size) != hud_hires_embedded[asset].crc)
+	/* one bitmap can have the Xbox texture and the Custom Edition texture.
+	the pixels choose which, and a changed sheet keeps its own */
 	{
-		if (!textures[asset].other_pixels_logged)
+		long slot = -1;
+		long logged = -1;
+
+		for (asset = hud_hires_asset_next(address, (long)width, (long)height, &slot);
+			asset >= 0 && asset < hud_hires_asset_count();
+			asset = hud_hires_asset_next(address, (long)width, (long)height, &slot))
+		{
+			if (!(hud_hires_embedded[asset].title ? titles_enabled : hud_enabled))
+				continue;
+			/* (a Custom Edition map's stock HUD bitmap, laid out as this texture's,
+			has its own pixels) */
+			if (hud_hires_asset_stock_custom_edition(address, (long)width, (long)height, asset) ||
+				crc32(0L, (const Bytef *)address, (uInt)level0_size) == hud_hires_embedded[asset].crc)
+				return asset;
+			if (logged < 0)
+				logged = asset;
+		}
+		if (logged >= 0 && !textures[logged].other_pixels_logged)
 		{
 			platform_log("high-res hud: %s bitmap %d is not the one its texture was drawn for here "
 				"(another language's or a modified map): drawn as it is",
-				hud_hires_embedded[asset].tag, hud_hires_embedded[asset].bitmap);
-			textures[asset].other_pixels_logged = 1;
+				hud_hires_embedded[logged].tag, hud_hires_embedded[logged].bitmap);
+			textures[logged].other_pixels_logged = 1;
 		}
-		return -1;
 	}
-	return asset;
+	return -1;
 }
 
 int hud_hires_override_coverage(long asset)

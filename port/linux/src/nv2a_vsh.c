@@ -273,10 +273,13 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 {
 	struct xgpu_text text = { 0 };
 	unsigned long index;
-	int capture_clip = metal;
+	/* Keep the clip position on every backend. A later pass tests depth
+	equal to the surface (a dynamic light, fog, a shadow). Rebuilding the
+	screen position from that clip value, in the same steps, is what makes
+	the two shaders write one depth. */
+	int capture_clip = 1;
 
 #ifdef HALO_ANDROID
-	capture_clip = 1;
 	if (!metal) xgpu_text_append(&text, "#version %s\n", xgpu_capabilities.shading_language);
 #endif
 	if (metal)
@@ -384,13 +387,10 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 		case _mac_mul: xgpu_text_append(&text, "\tmac = A * B;\n"); break;
 		case _mac_add: xgpu_text_append(&text, "\tmac = A + C;\n"); break;
 		case _mac_mad:
-			/* Keep the multiply and add as separate expression stages. Under
-			invariant Metal compilation this also preserves weighted matrix
-			results produced by the original GLSL compiler's temporaries. */
-			if (metal)
-				xgpu_text_append(&text, "\tvec4 mac_product_%lu = A * B;\n\tmac = mac_product_%lu + C;\n", index, index);
-			else
-				xgpu_text_append(&text, "\tmac = A * B + C;\n");
+			/* Keep the multiply and add as separate stages on every backend.
+			One expression lets the compiler fuse them, and a light pass then
+			writes a different depth from the surface it has to match. */
+			xgpu_text_append(&text, "\tvec4 mac_product_%lu = A * B;\n\tmac = mac_product_%lu + C;\n", index, index);
 			break;
 		case _mac_dp3: xgpu_text_append(&text, "\tmac = vec4(dot(A.xyz, B.xyz));\n"); break;
 		case _mac_dph: xgpu_text_append(&text, "\tmac = vec4(dot(A.xyz, B.xyz) + B.w);\n"); break;
@@ -416,12 +416,12 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 		default: xgpu_text_append(&text, "\tilu = vec4(0.0);\n"); break;
 		}
 		/* the screen-space conversion takes the reciprocal of the clip-space
-		position's w (rcc of r12.w); keep the position it converts. The Metal
-		backend checks the scalar swizzle so RCC of another component cannot
-		be mistaken for the viewport conversion. */
+		position's w (rcc of r12.w); keep the position it converts. The
+		source has to be that w, so RCC of another component is not taken
+		for the viewport conversion. */
 		if (capture_clip && ilu == _ilu_rcc && field(instruction, 3, 28, 2) == _mux_temporary &&
 			((field(instruction, 2, 0, 2) << 2) | field(instruction, 3, 30, 2)) == 12 &&
-			(!metal || (field(instruction, 2, 8, 2) == 3 && !field(instruction, 2, 10, 1))))
+			field(instruction, 2, 8, 2) == 3 && !field(instruction, 2, 10, 1))
 		{
 			xgpu_text_append(&text, "\tclip_position = oPos;\n\tclip_captured = true;\n");
 		}
@@ -475,10 +475,14 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 		rcc clamps and 1/w rounds differently on each GPU (Mali put vertices
 		of the first-person weapon at the vanishing point). Where the clip
 		position was kept, the same result is computed without dividing. */
-	if (capture_clip && metal)
+	if (capture_clip)
+	{
 		/* Keep the viewport arithmetic in its original evaluation stages.
-		 * Combining it into a single vector expression lets fast floating-
-		 * point compilation change rounding before invariant rasterization. */
+		Combining it into a single vector expression lets the compiler change
+		the rounding before the depth is rasterized, so a light pass misses
+		the surface. */
+		const char *position_out = metal ? "output.position" : "gl_Position";
+
 		xgpu_text_append(&text,
 			"\tif (clip_captured) {\n"
 			"\t\tvec3 scaled_clip = clip_position.xyz * c[%d].xyz;\n"
@@ -488,7 +492,7 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 			"\t\tvec3 clip_delta = origin_delta * clip_position.w;\n"
 			"\t\tvec3 numerator = scaled_clip + clip_delta;\n"
 			"\t\tvec3 position = numerator / scale;\n"
-			"\t\toutput.position = vec4(position, clip_position.w);\n"
+			"\t\t%s = vec4(position, clip_position.w);\n"
 			"\t} else {\n"
 			"\t\tvec2 pixel_offset = vec2(0.5 + screen_offset, 0.5);\n"
 			"\t\tvec2 pixel_xy = oPos.xy + pixel_offset;\n"
@@ -496,17 +500,10 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 			"\t\tvec3 delta = screen_position - viewport_offset.xyz;\n"
 			"\t\tvec3 ndc = delta / scale;\n"
 			"\t\tvec3 position = ndc * oPos.w;\n"
-			"\t\toutput.position = vec4(position, oPos.w);\n"
-			"\t}\n", XGPU_VERTEX_CONSTANT_BIAS - 38, XGPU_VERTEX_CONSTANT_BIAS - 37);
-	else if (capture_clip)
-		xgpu_text_append(&text,
-			"\tif (clip_captured)\n"
-			"\t\t%s = vec4((clip_position.xyz * c[%d].xyz + (c[%d].xyz + vec3(0.5 + screen_offset, 0.5, 0.0)\n"
-			"\t\t\t- viewport_offset.xyz) * clip_position.w) / scale, clip_position.w);\n"
-			"\telse\n"
-			"\t\t%s = vec4((vec3(oPos.xy + vec2(0.5 + screen_offset, 0.5), oPos.z) - viewport_offset.xyz) / scale * oPos.w, oPos.w);\n",
-			metal ? "output.position" : "gl_Position", XGPU_VERTEX_CONSTANT_BIAS - 38,
-			XGPU_VERTEX_CONSTANT_BIAS - 37, metal ? "output.position" : "gl_Position");
+			"\t\t%s = vec4(position, oPos.w);\n"
+			"\t}\n", XGPU_VERTEX_CONSTANT_BIAS - 38, XGPU_VERTEX_CONSTANT_BIAS - 37,
+			position_out, position_out);
+	}
 	else
 		xgpu_text_append(&text,
 			"\tvec3 ndc = (vec3(oPos.xy + vec2(0.5 + screen_offset, 0.5), oPos.z) - viewport_offset.xyz) / scale;\n"

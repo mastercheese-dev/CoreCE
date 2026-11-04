@@ -641,6 +641,10 @@ def reticles(arguments) -> None:
             # (named as layout names them)
             name = tag[len(HUD):].replace("combined\\", "").replace("\\", "__").replace(" ", "_") + f"__{index}"
             old = next((entry for entry in entries if entry["name"] == name), None)
+            if old and old.get("correction"):
+                # The supplied pictures stay where they were placed. Re-fitting
+                # them would put the traced redraw back.
+                continue
             cells = {}
             for sequence_index, sequence in enumerate(group["sequences"]):
                 for sprite_index, sprite in enumerate(sequence):
@@ -699,7 +703,7 @@ def reticles(arguments) -> None:
                 if position is None:
                     position = max(i for i, e in enumerate(entries) if e["tag"].startswith(folder))
                 entries.insert(position + 1, entry)
-    used = {cell["svg"] for entry in entries for cell in entry["cells"]}
+    used = {cell["svg"] for entry in entries for cell in entry["cells"] if "svg" in cell}
     for svg in (ASSETS / "svg").glob("*.svg"):
         if svg.name not in used:
             svg.unlink()
@@ -817,6 +821,25 @@ def build_asset(entry: dict, renders: dict) -> np.ndarray:
     scale = entry["scale"]
     image = np.zeros((entry["height"] * scale, entry["width"] * scale, 4), np.uint8)
     for cell in entry["cells"]:
+        if "source_png" in cell:
+            # A supplied monochrome picture. Its luminance is the coverage,
+            # antialiasing and holes included. It is scaled to fit the cell
+            # and centred there. The HUD tints the white.
+            source = Image.open(ASSETS / cell["source_png"]).convert("L")
+            left, top, right, bottom = cell["crop"]
+            if not 0 <= left < right <= source.width or not 0 <= top < bottom <= source.height:
+                raise ValueError("correction crop outside supplied image")
+            alpha = source.crop(cell["crop"])
+            x0, y0, x1, y1 = [round(value * scale) for value in cell["xbox"]]
+            if not 0 <= x0 < x1 <= image.shape[1] or not 0 <= y0 < y1 <= image.shape[0]:
+                raise ValueError("correction cell outside atlas")
+            ratio = min((x1 - x0) / alpha.width, (y1 - y0) / alpha.height)
+            alpha = alpha.resize((max(1, round(alpha.width * ratio)), max(1, round(alpha.height * ratio))),
+                                 Image.Resampling.LANCZOS)
+            x0 += (x1 - x0 - alpha.width) // 2
+            y0 += (y1 - y0 - alpha.height) // 2
+            image[y0:y0 + alpha.height, x0:x0 + alpha.width] = np.asarray(alpha)[..., None]
+            continue
         # (the redraw drawn at the texture's scale, its coordinates with it:
         # a whole multiple of the redraw's for the PC sheets', any for the
         # reticles')

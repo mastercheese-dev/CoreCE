@@ -1635,6 +1635,7 @@
    "format": "ay8",
    "scale": 8,
    "crc": 1857742423,
+   "correction": true,
    "cells": [
     {
      "xbox": [
@@ -1643,20 +1644,14 @@
       64,
       64
      ],
-     "svg": "hud2_left_reticles__reticle_27.svg",
-     "source_scale": 1.34157,
-     "source": [
-      1.8447,
-      1.0062
+     "source_png": "corrections/rocket.png",
+     "crop": [
+      92,
+      92,
+      1188,
+      1188
      ],
-     "clip": [
-      0,
-      0,
-      89,
-      89
-     ],
-     "kind": "alpha",
-     "score": 0.97
+     "kind": "alpha"
     }
    ]
   },
@@ -3185,6 +3180,7 @@
    "format": "a8y8",
    "scale": 8,
    "crc": 2373183232,
+   "correction": true,
    "cells": [
     {
      "xbox": [
@@ -3193,20 +3189,14 @@
       31,
       24
      ],
-     "svg": "label__Overpass-900__2x.svg",
-     "source_scale": 5.20673,
-     "source": [
-      -22.7794,
-      -9.7626
+     "source_png": "corrections/scope.png",
+     "crop": [
+      50,
+      26,
+      188,
+      112
      ],
-     "clip": [
-      0,
-      0,
-      117,
-      127
-     ],
-     "kind": "alpha",
-     "score": 0.972
+     "kind": "alpha"
     },
     {
      "xbox": [
@@ -3215,42 +3205,112 @@
       43,
       48
      ],
-     "svg": "label__Overpass-900__10x.svg",
-     "source_scale": 5.28894,
-     "source": [
-      -36.3615,
-      -11.239
+     "source_png": "corrections/scope.png",
+     "crop": [
+      50,
+      168,
+      247,
+      253
      ],
-     "clip": [
-      0,
-      0,
-      171,
-      127
-     ],
-     "kind": "alpha",
-     "score": 0.937
+     "kind": "alpha"
     },
     {
      "xbox": [
-      32,
+      35.5,
+      3.5,
+      45.5,
+      13.5
+     ],
+     "source_png": "corrections/scope.png",
+     "crop": [
+      241,
+      12,
+      301,
+      73
+     ],
+     "kind": "alpha"
+    }
+   ]
+  },
+  {
+   "name": "ce_sniper_scope",
+   "tag": "ui\\hud\\bitmaps\\sniper\\hud_reticles_scope",
+   "bitmap": 0,
+   "width": 64,
+   "height": 64,
+   "format": "a8r8g8b8",
+   "scale": 8,
+   "crc": 3359213591,
+   "correction": true,
+   "cells": [
+    {
+     "xbox": [
       0,
-      50,
+      0,
+      25,
       18
      ],
-     "svg": "hud2_left_reticles__reticle_18.svg",
-     "source_scale": 1.365,
-     "source": [
-      -3.5831,
-      -3.5831
+     "source_png": "corrections/scope.png",
+     "crop": [
+      50,
+      26,
+      188,
+      112
      ],
-     "clip": [
+     "kind": "alpha"
+    },
+    {
+     "xbox": [
+      51.5,
+      0.5,
+      61.5,
+      10.5
+     ],
+     "source_png": "corrections/scope.png",
+     "crop": [
+      241,
+      12,
+      301,
+      73
+     ],
+     "kind": "alpha"
+    }
+   ],
+   "sprites": [
+    {
+     "sequence": 0
+    },
+    {
+     "sequence": 1
+    }
+   ]
+  },
+  {
+   "name": "ce_hud_reticles__7",
+   "tag": "ui\\hud\\bitmaps\\combined\\hud_reticles",
+   "bitmap": 7,
+   "width": 64,
+   "height": 64,
+   "format": "a8r8g8b8",
+   "scale": 8,
+   "crc": 2841977525,
+   "correction": true,
+   "cells": [
+    {
+     "xbox": [
       0,
       0,
-      16,
-      16
+      64,
+      64
      ],
-     "kind": "alpha",
-     "score": 0.991
+     "source_png": "corrections/rocket.png",
+     "crop": [
+      92,
+      92,
+      1188,
+      1188
+     ],
+     "kind": "alpha"
     }
    ]
   },
