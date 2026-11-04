@@ -47,7 +47,7 @@ On Mac, the helmet in the menu bar opens Settings. Command-comma does the same. 
 2. Unzip it into its own folder.
 3. Run `halo.exe`. Leave `SDL3.dll` in that same folder.
 
-Settings live in `config.toml` next to `halo.exe`. Saves go in `%APPDATA%\Halo OG`. The first launch copies an older `%APPDATA%\halo` folder into that location and leaves the old folder in place.
+Settings live in `config.toml` next to `halo.exe`. Saves go in `%APPDATA%\CoreCE`. The first launch copies an older `%APPDATA%\Halo OG` folder into that location, or `%APPDATA%\halo` when that is the folder still in use, and leaves the old folder in place.
 
 ### Linux
 
@@ -57,7 +57,7 @@ Settings live in `config.toml` next to `halo.exe`. Saves go in `%APPDATA%\Halo O
 
 On a Steam Deck, do the setup in Desktop Mode. Unzip the release, then in Steam open the Games menu, choose Add a Game, and add `halo` as a non-Steam game. It then starts from Game Mode as well. If the Deck sleeps while it is hosting, the other players lose the host after 15 seconds.
 
-Settings live in `config.toml` next to `halo`. Saves go in `~/.local/share/halo-og`. The first launch copies an older `~/.local/share/halo-linux` folder into that location and leaves the old folder in place.
+Settings live in `config.toml` next to `halo`. Saves go in `~/.local/share/CoreCE`. The first launch copies an older `~/.local/share/halo-og` folder into that location, or `halo-linux` when that is the folder still in use, and leaves the old folder in place.
 
 ### Updates
 

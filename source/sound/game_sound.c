@@ -442,6 +442,8 @@ long object_impulse_sound_new(
 	attachment_data.forward = *forward;
 	source.spatialization_mode = _sound_spatialization_mode_absolute;
 	source.gain = 1.f;
+	source.obstruction = 0.f;
+	source.occlusion = 0.f;
 	attachment_data.node_index = node_index;
 	source.location.game_location.cluster_index = NONE;
 	if (track_object_impulse_sound(object_index, &attachment_data, &source))
@@ -479,6 +481,8 @@ long unattached_impulse_sound_new(
 	source.scale = scale;
 	source.spatialization_mode = _sound_spatialization_mode_absolute;
 	source.gain = 1.f;
+	source.obstruction = 0.f;
+	source.occlusion = 0.f;
 
 	return sound_new_impulse(
 		definition_index,
@@ -503,6 +507,8 @@ long unspatialized_impulse_sound_new(
 	source.spatialization_mode = _sound_spatialization_mode_none;
 	source.scale = scale;
 	source.gain = 1.f;
+	source.obstruction = 0.f;
+	source.occlusion = 0.f;
 
 	return sound_new_impulse(
 		definition_index,
@@ -957,6 +963,7 @@ void compute_sound_obstruction(
 	struct observer_result const *camera = observer_get_camera(local_player_index);
 	long slot = obstruction_cache_slot(local_player_index, &source->location.position);
 	long now = game_time_get();
+	real span;
 
 	if (obstruction_cache[slot].valid &&
 		obstruction_cache[slot].game_time == now &&
@@ -1030,8 +1037,15 @@ void compute_sound_obstruction(
 
 			if (source->obstruction != 0.0f)
 			{
-				source->occlusion = 1.0f - distance / (cluster_distance + distance);
-				source->occlusion = PIN(source->occlusion * 1.4f, 0.0f, 1.0f);
+				/* port: a sound on the listener, in a cluster the distance
+				table calls zero, would divide by zero. There is no wall
+				between them. */
+				span = cluster_distance + distance;
+				if (span > 0.f)
+					source->occlusion = 1.f - distance / span;
+				else
+					source->occlusion = 0.f;
+				source->occlusion = PIN(source->occlusion * 1.4f, 0.f, 1.f);
 			}
 		}
 	}
@@ -1240,6 +1254,8 @@ static void update_potentially_audible_looping_sound(
 			source.spatialization_mode = _sound_spatialization_mode_none;
 		}
 		source.gain = 1.f;
+		source.obstruction = 0.f;
+		source.occlusion = 0.f;
 
 		if (audible)
 		{

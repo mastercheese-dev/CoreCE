@@ -53,6 +53,9 @@ static const char *config_string(const char *name) {
     return value ? value : (getenv("TEST_SAVE_CONFIG") ? getenv("TEST_SAVE_CONFIG") : "");
 }
 static const char *platform_data_root(void) { return "."; }
+#if !defined(HALO_MACOS) && !defined(HALO_ANDROID)
+static const char *platform_custom_edition_root(void) { return ""; }
+#endif
 static void platform_log(const char *format, ...) {
     va_list arguments; va_start(arguments, format); vfprintf(stderr, format, arguments); va_end(arguments);
     fputc('\n', stderr);
@@ -192,10 +195,10 @@ int posix_make_directory(const char *path) { return mkdir(path,0700); }
         if sys.platform == "win32":
             base = self.folder / "appdata"
             self.environ["APPDATA"] = str(base)
-            return base / "halo", base / "Halo OG"
+            return base / "Halo OG", base / "CoreCE"
         base = self.folder / "xdg"
         self.environ["XDG_DATA_HOME"] = str(base)
-        return base / "halo-linux", base / "halo-og"
+        return base / "halo-og", base / "CoreCE"
 
     def test_nested_files_are_copied_old_and_existing_new_bytes_preserved(self):
         legacy, destination = self.roots()
@@ -226,13 +229,22 @@ int posix_make_directory(const char *path) { return mkdir(path,0700); }
         if sys.platform != "win32":
             self.environ.pop("XDG_DATA_HOME")
             root, _ = self.run_root()
-            self.assertEqual(root, Path(self.environ["HOME"]) / ".local/share/halo-og")
+            self.assertEqual(root, Path(self.environ["HOME"]) / ".local/share/CoreCE")
+            older = self.folder / "xdg-older"
+            self.environ["XDG_DATA_HOME"] = str(older)
+            (older / "halo-linux/u").mkdir(parents=True)
+            (older / "halo-linux/u/profile.bin").write_bytes(b"older")
+            root, _ = self.run_root()
+            self.assertEqual(root, older / "CoreCE")
+            self.assertEqual((root / "u/profile.bin").read_bytes(), b"older")
+            self.assertEqual((older / "halo-linux/u/profile.bin").read_bytes(), b"older")
             base = self.folder / "windows appdata"
             (base / "halo/u").mkdir(parents=True)
             (base / "halo/u/profile.bin").write_bytes(b"old")
             root, _ = self.run_root("windows-selection", APPDATA=str(base))
-            self.assertEqual(root, base / "Halo OG")
+            self.assertEqual(root, base / "CoreCE")
             self.assertEqual((root / "u/profile.bin").read_bytes(), b"old")
+            self.assertEqual((base / "halo/u/profile.bin").read_bytes(), b"old")
 
     def test_explicit_config_and_environment_roots_bypass_migration(self):
         self.roots()

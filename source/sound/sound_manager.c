@@ -2732,13 +2732,34 @@ boolean sound_refresh_looping(
 			struct looping_sound_definition *definition =
 				looping_sound_definition_get(definition_index);
 			short track_index;
+			real obstruction;
+			real occlusion;
 
 			match_assert(
 				"c:\\halo\\SOURCE\\sound\\sound_manager.c",
 				0x30E,
 				loop->definition_index==definition_index);
 
+			/* port: the caller sets where the loop is and leaves the wall
+			muffling unset. A loop that has gone out of range is still fading
+			on its channels, so it keeps the muffling it had. */
+			if (new_looping_sound)
+			{
+				obstruction = 0.f;
+				occlusion = 0.f;
+			}
+			else
+			{
+				obstruction = loop->source.obstruction;
+				occlusion = loop->source.occlusion;
+			}
+			if (!(obstruction >= 0.f && obstruction <= 1.f))
+				obstruction = 0.f;
+			if (!(occlusion >= 0.f && occlusion <= 1.f))
+				occlusion = 0.f;
 			loop->source = *source;
+			loop->source.obstruction = obstruction;
+			loop->source.occlusion = occlusion;
 			loop->flip_flop = sound_manager_globals.flip_flop;
 
 			if ((refresh_state == _looping_sound_refresh_stop ||
@@ -3251,6 +3272,8 @@ static void process_looping_sounds(
 						struct loop_impulse_sound_tracking_data tracking_data;
 						struct sound_source source;
 
+						source.obstruction = 0.f;
+						source.occlusion = 0.f;
 						source.spatialization_mode =
 							(looping_sound->source.spatialization_mode ==
 								_sound_spatialization_mode_none) +

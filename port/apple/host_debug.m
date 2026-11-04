@@ -200,7 +200,7 @@ static void exportReport(UIViewController *presenter) {
     report[@"interpolation"]=@(!strcmp(getenv("HALO_INTERPOLATION")?:"0","1"));
 #endif
     NSError *error=nil;NSData *data=[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:&error];
-    NSURL *folder=[[NSFileManager.defaultManager URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask].firstObject URLByAppendingPathComponent:@"ShaderReports" isDirectory:YES];
+    NSURL *folder=[[NSFileManager.defaultManager URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask].firstObject URLByAppendingPathComponent:@"CoreCE/ShaderReports" isDirectory:YES];
     [NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:&error];
     NSArray<NSString *> *oldReports=[[NSFileManager.defaultManager contentsOfDirectoryAtPath:folder.path error:nil] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *name,NSDictionary *bindings){(void)bindings;return [name hasPrefix:@"halo-shaders-"] && [name hasSuffix:@".json"];}]];
     oldReports=[oldReports sortedArrayUsingSelector:@selector(compare:)];

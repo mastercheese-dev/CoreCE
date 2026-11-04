@@ -1298,10 +1298,11 @@ static long dsound_volume_from_gain(
 {
 	long volume= maximum_volume;
 
-	match_assert(
-		"c:\\halo\\source\\sound\\sound_dsound.h",
-		35,
-		gain>=0.f && gain<=1.f);
+	/* port: a gain outside 0..1 plays at full volume. One below 0, or not a
+	number, is silent. A cone, a room, and a muffling the mixer has not
+	written yet all come through here. */
+	if (!(gain>=0.f && gain<=1.f))
+		gain= gain>1.f ? 1.f : 0.f;
 
 	if (gain==0.f)
 	{

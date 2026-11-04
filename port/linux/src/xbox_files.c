@@ -11,10 +11,12 @@ h:\ is the Halo Custom Edition install paths.custom_edition names, if any
 (its maps folder holds the resource maps Custom Edition maps need, and more
 maps).
 Every other drive letter X:\ is the subdirectory X/ of the save root (z:\ holds the persistent cache and saves,
-u:\ user data, t:\ title data): paths.saves, else %APPDATA%/Halo OG on
-Windows, $XDG_DATA_HOME/halo-og or ~/.local/share/halo-og on Linux. The
-legacy halo/halo-linux tree is copied without replacing existing files;
-an incomplete or unsafe copy keeps the legacy root and logs the failure.
+u:\ user data, t:\ title data): paths.saves, else %APPDATA%/CoreCE on
+Windows, $XDG_DATA_HOME/CoreCE or ~/.local/share/CoreCE on Linux. The
+previous Halo OG or halo-og tree, or the older halo or halo-linux tree
+when that is the one still present, is copied without replacing existing
+files. The older tree stays where it is. An incomplete or unsafe copy
+keeps that older root and logs the failure.
 Path components are
 matched case-insensitively, like the Xbox's FATX volumes.
 */
@@ -235,29 +237,64 @@ const char *platform_save_root(void)
 			snprintf(root, sizeof(root), "%s", environment);
 #ifdef _WIN32
 		/* the Windows build (port/windows) keeps saves in the roaming
-		application data folder */
+		application data folder, under a name other clients do not use */
 		else if (getenv("APPDATA") && *getenv("APPDATA"))
 		{
-			root_length = snprintf(root, sizeof(root), "%s/Halo OG", getenv("APPDATA"));
-			legacy_length = snprintf(legacy, sizeof(legacy), "%s/halo", getenv("APPDATA"));
+			const char *base = getenv("APPDATA");
+			int second_length;
+
+			root_length = snprintf(root, sizeof(root), "%s/CoreCE", base);
+			legacy_length = snprintf(legacy, sizeof(legacy), "%s/Halo OG", base);
+			/* Halo OG is the previous folder. halo is the one before that,
+			used only when Halo OG is not there. */
+			if (legacy_length < 0 || (size_t)legacy_length >= sizeof(legacy) || !directory_exists(legacy))
+			{
+				second_length = snprintf(legacy, sizeof(legacy), "%s/halo", base);
+				if (second_length >= 0 && (size_t)second_length < sizeof(legacy) && directory_exists(legacy))
+					legacy_length = second_length;
+				else
+					legacy_length = snprintf(legacy, sizeof(legacy), "%s/Halo OG", base);
+			}
 		}
 #endif
 		else if (data_home && *data_home)
 		{
 #if !defined(HALO_ANDROID) && !defined(HALO_MACOS)
-			root_length = snprintf(root, sizeof(root), "%s/halo-og", data_home);
-			legacy_length = snprintf(legacy, sizeof(legacy), "%s/halo-linux", data_home);
+			int second_length;
+
+			root_length = snprintf(root, sizeof(root), "%s/CoreCE", data_home);
+			legacy_length = snprintf(legacy, sizeof(legacy), "%s/halo-og", data_home);
+			/* halo-og is the previous folder. halo-linux is the one before
+			that, used only when halo-og is not there. */
+			if (legacy_length < 0 || (size_t)legacy_length >= sizeof(legacy) || !directory_exists(legacy))
+			{
+				second_length = snprintf(legacy, sizeof(legacy), "%s/halo-linux", data_home);
+				if (second_length >= 0 && (size_t)second_length < sizeof(legacy) && directory_exists(legacy))
+					legacy_length = second_length;
+				else
+					legacy_length = snprintf(legacy, sizeof(legacy), "%s/halo-og", data_home);
+			}
 #else
-			snprintf(root, sizeof(root), "%s/halo-linux", data_home);
+			snprintf(root, sizeof(root), "%s/CoreCE", data_home);
 #endif
 		}
 		else if (home && *home)
 		{
 #if !defined(HALO_ANDROID) && !defined(HALO_MACOS)
-			root_length = snprintf(root, sizeof(root), "%s/.local/share/halo-og", home);
-			legacy_length = snprintf(legacy, sizeof(legacy), "%s/.local/share/halo-linux", home);
+			int second_length;
+
+			root_length = snprintf(root, sizeof(root), "%s/.local/share/CoreCE", home);
+			legacy_length = snprintf(legacy, sizeof(legacy), "%s/.local/share/halo-og", home);
+			if (legacy_length < 0 || (size_t)legacy_length >= sizeof(legacy) || !directory_exists(legacy))
+			{
+				second_length = snprintf(legacy, sizeof(legacy), "%s/.local/share/halo-linux", home);
+				if (second_length >= 0 && (size_t)second_length < sizeof(legacy) && directory_exists(legacy))
+					legacy_length = second_length;
+				else
+					legacy_length = snprintf(legacy, sizeof(legacy), "%s/.local/share/halo-og", home);
+			}
 #else
-			snprintf(root, sizeof(root), "%s/.local/share/halo-linux", home);
+			snprintf(root, sizeof(root), "%s/.local/share/CoreCE", home);
 #endif
 		}
 		else

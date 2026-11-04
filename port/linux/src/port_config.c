@@ -455,9 +455,10 @@ static const struct config_setting config_settings[] =
 		"single quotes: 'C:\\Games\\Halo'." },
 	{ "paths.saves", _config_string, "\"\"", "HALO_SAVE_ROOT", _environment_value, _platform_desktop,
 		"Where saved games and profiles go; empty for the usual place\n"
-		"(~/.local/share/halo-og, or %APPDATA%\\Halo OG on Windows).\n"
-		"Legacy default saves are copied without replacing existing files;\n"
-		"if migration fails, the game reports it and keeps the legacy folder." },
+		"(~/.local/share/CoreCE, or %APPDATA%\\CoreCE on Windows).\n"
+		"An older halo-og or Halo OG folder is copied without replacing\n"
+		"existing files, and that older folder stays for the other client.\n"
+		"If the copy fails, the game reports it and keeps the older folder." },
 	{ "paths.custom_edition", _config_string, "\"\"", "HALO_CUSTOM_EDITION_ROOT", _environment_value, _platform_desktop,
 		"A Halo Custom Edition install whose maps folder is looked in after the\n"
 		"custom_maps folder for Custom Edition maps and their bitmaps.map,\n"

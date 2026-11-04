@@ -103,7 +103,7 @@ void halo_shader_cache_install(EGLDisplay display,PFNEGLGETPROCADDRESSPROC get_p
         host_logf(HOST_LOG_INFO,"ANGLE shader cache: extension unavailable");return;
     }
     NSString *root=[NSSearchPathForDirectoriesInDomains(NSCachesDirectory,NSUserDomainMask,YES).firstObject
-        stringByAppendingPathComponent:@"HaloShaderCache-v1"];
+        stringByAppendingPathComponent:@"CoreCE/ShaderCache-v1"];
     NSString *angle=NSBundle.mainBundle.privateFrameworksPath;
     NSDictionary *version=[NSDictionary dictionaryWithContentsOfFile:[angle stringByAppendingPathComponent:@"libGLESv2.framework/Info.plist"]];
     NSString *identity=[NSString stringWithFormat:@"%@|%@|%@|%@",MTLCreateSystemDefaultDevice().name,
@@ -118,7 +118,7 @@ void halo_shader_cache_install(EGLDisplay display,PFNEGLGETPROCADDRESSPROC get_p
 }
 void halo_update_discard_shader_caches(const char *save_root) {
     NSString *root=[NSSearchPathForDirectoriesInDomains(NSCachesDirectory,NSUserDomainMask,YES).firstObject
-        stringByAppendingPathComponent:@"HaloShaderCache-v1"];
+        stringByAppendingPathComponent:@"CoreCE/ShaderCache-v1"];
     if(pendingLock){[pendingLock lock]; cacheDirectory=nil; [pendingLock unlock];}
     else cacheDirectory=nil;
     [memoryCache removeAllObjects];

@@ -71,7 +71,7 @@ Saves, cache files, `config.toml`, and `halo.log` are under:
 ```
 
 Saves, `config.toml`, and `halo.log` are in that folder. On Windows, saves are
-in `%APPDATA%\Halo OG`. On Linux, saves are in `~/.local/share/halo-og`.
+in `%APPDATA%\CoreCE`. On Linux, saves are in `~/.local/share/CoreCE`.
 
 On first launch, prior settings, saves and managed game data are copied from
 `~/Library/Application Support/OpenCE/`, or from `Halo OG` when that is the

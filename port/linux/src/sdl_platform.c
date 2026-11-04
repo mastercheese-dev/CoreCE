@@ -47,7 +47,7 @@ static SDL_GLContext platform_gl_context;
 static SDL_ThreadID platform_event_thread;
 static BOOL platform_sdl_started = FALSE;
 
-static struct platform_input_state input_state;
+static struct platform_input_state input_state = { .focused = TRUE };
 /* keys pressed since the last read, so a press and release between two
 reads still counts as a press (input injected on Android, or a slow frame) */
 static unsigned char keys_pressed[SDL_SCANCODE_COUNT];
@@ -1294,6 +1294,44 @@ static void platform_mouse_released_set(BOOL released)
 	platform_mouse_capture(!released && !input_state.ui_pointer);
 }
 
+#if !defined(HALO_ANDROID) || (defined(HALO_MACOS) && !defined(HALO_IOS))
+/* Another application is in front. Keyboard and mouse input stops, including
+a key or button already held, and the mouse grab is let go. A controller
+keeps working. The grab is released once per time the window goes behind. */
+static BOOL keyboard_mouse_suspended;
+
+static void platform_keyboard_mouse_release(void)
+{
+	input_state.focused = FALSE;
+	platform_input_clear();
+	mouse_buttons_down = 0;
+	memset(&ui_pointer, 0, sizeof(ui_pointer));
+	ui_pointer_wheel = 0.0f;
+	memset(&scoreboard_pointer, 0, sizeof(scoreboard_pointer));
+	scoreboard_pointer_active = FALSE;
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	/* Coming back waits for a click, as a focus loss already did. Grabbing
+	the mouse again the moment the window returns drops the controller. */
+	input_state.mouse_released = TRUE;
+#endif
+	if (!keyboard_mouse_suspended)
+	{
+		keyboard_mouse_suspended = TRUE;
+		platform_mouse_capture(FALSE);
+	}
+}
+
+static BOOL platform_keyboard_mouse_live(void)
+{
+	if (!input_state.focused)
+	{
+		platform_keyboard_mouse_release();
+		return FALSE;
+	}
+	return TRUE;
+}
+#endif
+
 void platform_mouse_release_gameplay(void)
 {
 	pthread_mutex_lock(&input_lock);
@@ -1839,6 +1877,10 @@ void platform_pump_events(void)
 			exit(EXIT_SUCCESS);
 		case SDL_EVENT_KEY_DOWN:
 		case SDL_EVENT_KEY_UP:
+#if !defined(HALO_ANDROID) || (defined(HALO_MACOS) && !defined(HALO_IOS))
+			if (!platform_keyboard_mouse_live())
+				break;
+#endif
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 			/* Escape has context, even when an older config still binds it to
 			melee. A chat line uses it to let the line go, so it is not a
@@ -1921,6 +1963,8 @@ void platform_pump_events(void)
 			break;
 		case SDL_EVENT_MOUSE_MOTION:
 #if !defined(HALO_ANDROID) || (defined(HALO_MACOS) && !defined(HALO_IOS))
+			if (!platform_keyboard_mouse_live())
+				break;
 			if (scoreboard_pointer_active)
 			{
 				scoreboard_pointer.x = event.motion.x;
@@ -1942,6 +1986,10 @@ void platform_pump_events(void)
 			break;
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
 		case SDL_EVENT_MOUSE_BUTTON_UP:
+#if !defined(HALO_ANDROID) || (defined(HALO_MACOS) && !defined(HALO_IOS))
+			if (!platform_keyboard_mouse_live())
+				break;
+#endif
 			if (event.button.button < 32)
 			{
 				if (event.button.down)
@@ -2015,6 +2063,10 @@ void platform_pump_events(void)
 			}
 			break;
 		case SDL_EVENT_MOUSE_WHEEL:
+#if !defined(HALO_ANDROID) || (defined(HALO_MACOS) && !defined(HALO_IOS))
+			if (!platform_keyboard_mouse_live())
+				break;
+#endif
 			if (binding_capture == _binding_capture_waiting && event.wheel.y != 0.0f)
 			{
 				binding_capture = _binding_capture_taken;
@@ -2060,13 +2112,10 @@ void platform_pump_events(void)
 			input_state.mouse_wheel += event.wheel.y;
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
+#if !defined(HALO_ANDROID) || (defined(HALO_MACOS) && !defined(HALO_IOS))
+			platform_keyboard_mouse_release();
+#else
 			input_state.focused = FALSE;
-			scoreboard_pointer_active = FALSE;
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
-			/* the mouse waits for a click. Grabbing it again as the window
-			returns drops the controller. A key already held stays held. */
-			input_state.mouse_released = TRUE;
-			platform_mouse_capture(FALSE);
 #endif
 #ifdef HALO_ANDROID
 			touch_input_cancel();
@@ -2074,6 +2123,9 @@ void platform_pump_events(void)
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_GAINED:
 			input_state.focused = TRUE;
+#if !defined(HALO_ANDROID) || (defined(HALO_MACOS) && !defined(HALO_IOS))
+			keyboard_mouse_suspended = FALSE;
+#endif
 			look_at_clipboard = TRUE;
 #if !defined(HALO_ANDROID)
 			if (!input_state.mouse_released && !input_state.ui_pointer && !scoreboard_pointer_active)
@@ -2128,6 +2180,12 @@ void platform_pump_events(void)
 			break;
 		}
 	}
+#if !defined(HALO_ANDROID) || (defined(HALO_MACOS) && !defined(HALO_IOS))
+	/* A key pressed earlier in this poll, before focus was lost, is dropped
+	with the rest. */
+	if (!input_state.focused)
+		platform_keyboard_mouse_release();
+#endif
 	pthread_mutex_unlock(&input_lock);
 	looked_at_clipboard = TRUE;
 	platform_invite_clipboard(look_at_clipboard);

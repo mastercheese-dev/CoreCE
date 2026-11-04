@@ -607,6 +607,61 @@ posix_ulong posix_process_id(void)
 	return (posix_ulong)getpid();
 }
 
+#ifndef __ANDROID__
+/* The parent folders of a CoreCE key. Other clients keep their own key file. */
+static int secret_make_parents(char *path)
+{
+	char *slash;
+
+	for (slash = path + 1; *slash; slash++)
+	{
+		if (*slash != '/')
+			continue;
+		*slash = '\0';
+		if (mkdir(path, 0700) != 0 && errno != EEXIST)
+			return -1;
+		*slash = '/';
+	}
+	return 0;
+}
+
+/* Copy the key an older build left in the shared place. That file stays,
+so the other client still reads it, and a link already sent still opens. */
+static void secret_seed(const char *from, const char *to, int size)
+{
+	unsigned char bytes[256];
+	struct stat status;
+	int input, output;
+	ssize_t amount;
+
+	if (size <= 0 || size > (int)sizeof(bytes))
+		return;
+	input = open(from, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+	if (input < 0)
+		return;
+	if (fstat(input, &status) != 0 || !S_ISREG(status.st_mode) || status.st_uid != getuid() ||
+		(status.st_mode & 077))
+	{
+		close(input);
+		return;
+	}
+	amount = read(input, bytes, (size_t)size);
+	close(input);
+	if (amount != size)
+		return;
+	output = open(to, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+	if (output < 0)
+		return;
+	if (write(output, bytes, (size_t)size) != size)
+	{
+		close(output);
+		unlink(to);
+		return;
+	}
+	close(output);
+}
+#endif
+
 int posix_user_secret(unsigned char *secret, int size)
 {
 #ifdef __ANDROID__
@@ -614,18 +669,31 @@ int posix_user_secret(unsigned char *secret, int size)
 	(void)size;
 	return 0;
 #else
-	/* in the user's runtime directory (theirs alone), else their home */
+	/* in the user's runtime directory (theirs alone), else their home,
+	under a CoreCE folder other clients do not use */
 	const char *runtime = getenv("XDG_RUNTIME_DIR");
 	const char *home = getenv("HOME");
 	char path[1024];
+	char legacy[1024];
+	char parent[1024];
 	int attempt;
 
 	if (runtime && *runtime)
-		snprintf(path, sizeof(path), "%s/halo-ce-universal.key", runtime);
+	{
+		snprintf(path, sizeof(path), "%s/corece/halo-ce-universal.key", runtime);
+		snprintf(legacy, sizeof(legacy), "%s/halo-ce-universal.key", runtime);
+	}
 	else if (home && *home)
-		snprintf(path, sizeof(path), "%s/.halo-ce-universal.key", home);
+	{
+		snprintf(path, sizeof(path), "%s/.local/share/CoreCE/halo-ce-universal.key", home);
+		snprintf(legacy, sizeof(legacy), "%s/.halo-ce-universal.key", home);
+	}
 	else
 		return 0;
+	snprintf(parent, sizeof(parent), "%s", path);
+	if (secret_make_parents(parent) != 0)
+		return 0;
+	secret_seed(legacy, path, size);
 	for (attempt = 0; attempt < 3; attempt++)
 	{
 		struct stat status;

@@ -96,9 +96,18 @@ int main(int argc, char **argv) {
     @autoreleasepool {
         NSFileManager *files = NSFileManager.defaultManager;
         NSString *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-        NSString *saves = [documents stringByAppendingPathComponent:@"save"];
+        NSString *saves = [documents stringByAppendingPathComponent:@"CoreCE/save"];
+        NSString *previous = [documents stringByAppendingPathComponent:@"save"];
         NSString *legacySaves = [NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@"Halo"];
-        if (![files fileExistsAtPath:saves] && [files fileExistsAtPath:legacySaves]) saves = legacySaves;
+        if (![files fileExistsAtPath:saves]) {
+            NSString *source = [files fileExistsAtPath:previous] ? previous : nil;
+            if (!source && [files fileExistsAtPath:legacySaves]) source = legacySaves;
+            if (source) {
+                [files createDirectoryAtPath:saves.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:NULL];
+                if (![files copyItemAtPath:source toPath:saves error:NULL])
+                    saves = source;
+            }
+        }
         setenv("HALO_CONFIG_ROOT", documents.fileSystemRepresentation, 1);
         [files createDirectoryAtPath:saves withIntermediateDirectories:YES attributes:nil error:NULL];
         snprintf(save_root, sizeof(save_root), "%s", saves.fileSystemRepresentation);

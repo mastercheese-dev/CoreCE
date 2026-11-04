@@ -158,14 +158,15 @@ Do the set-up in Desktop Mode: unpack the release, put `maps/` next to
 | `u:\` | `u/` in the save root. This folder contains the user data. |
 
 The save root is `paths.saves` in `config.toml`. If that setting is empty,
-the save root is `$XDG_DATA_HOME/halo-og` (usually
-`~/.local/share/halo-og`). The first launch copies regular files and folders
-from the old `halo-linux` folder, preserving both the original files and
-any files already in the new folder. A failed copy, symbolic link, or special
-file is reported in the log and keeps the old save root for that run; retry
-after correcting the issue. Explicit `paths.saves` or `HALO_SAVE_ROOT` values
-continue to select their exact folder without migration. `config.toml` remains
-beside the executable so existing settings are read before selecting saves.
+the save root is `$XDG_DATA_HOME/CoreCE` (usually
+`~/.local/share/CoreCE`). The first launch copies regular files and folders
+from the previous `halo-og` folder, or from `halo-linux` when that is the
+folder still in use, preserving both the original files and any files already
+in the new folder. A failed copy, symbolic link, or special file is reported
+in the log and keeps the old save root for that run; retry after correcting
+the issue. Explicit `paths.saves` or `HALO_SAVE_ROOT` values continue to
+select their exact folder without migration. `config.toml` remains beside
+the executable so existing settings are read before selecting saves.
 
 The game makes the folders when it needs them. Names of files and folders
 are not case-sensitive, as on the Xbox.
@@ -681,9 +682,10 @@ To join a game, do one of these steps:
 - Open the link. The game is the handler of `halo://` links. If the game
   already operates, the new copy gives the link to it and stops. A key in a
   file that only the user can read (`halo-ce-universal.key` in
-  `$XDG_RUNTIME_DIR`, else `~/.halo-ce-universal.key`; on Windows in
-  `%LOCALAPPDATA%`) encrypts the link, so the programs of other users cannot
-  read it.
+  `$XDG_RUNTIME_DIR/corece`, else `~/.local/share/CoreCE`; on Windows in
+  `%LOCALAPPDATA%\CoreCE`) encrypts the link, so the programs of other users
+  cannot read it. An older key file in the shared place is copied once and
+  left there.
 - Copy the link (or the 64 digits) and go to the game.
 - Enter `halo <link>`.
 - Accept a Discord invite. Refer to "Discord".
