@@ -152,6 +152,11 @@ enum
 	/* the host tells which machines sat in this lobby or joined its link.
 	a filled matchmaking seat is not in the set. */
 	_distributed_message_screen_party = 95,
+	/* where a player's projectile went off (network_damage.c). The shooter's
+	machine tells the host, and the host tells every client, reliably, so
+	the blast is played there even when it hit nobody. A machine of version
+	36 hides another player's blast and waits for this. */
+	_distributed_message_blasts = 96,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };
@@ -441,10 +446,17 @@ void network_damage_new_game(void);
 /* the host: a grenade a player's unit threw (units.c), whose damage that
 player's machine reports */
 void network_damage_note_grenade(long unit_index, short grenade_type);
+/* a projectile someone else fired: this machine does not play its blast */
+boolean network_projectile_hides_detonation(long owner_player_index);
+/* the shooter's machine: its projectile went off here. The host is told,
+and tells every other machine, which plays the blast even if it hit nobody. */
+void network_projectile_note_detonation(long owner_player_index, long effect_index,
+	real_point3d const *epicenter, short noise);
 void network_damage_host_tick(void);
 void network_damage_client_tick(void);
 void network_damage_handle_events(void const *entries, short count);
 void network_damage_handle_reports(long machine_index, void const *entries, short count);
+void network_damage_handle_blasts(long machine_index, void const *entries, short count);
 word network_damage_entry_size(byte type);
 
 #endif // __NETWORK_DISTRIBUTED_H

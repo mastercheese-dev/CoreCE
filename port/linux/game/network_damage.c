@@ -50,15 +50,27 @@ being hit looks and feels like on the clients).
 #include "objects/damage.h"
 #include "objects/damage_effect_definitions.h"
 #include "effects/effect_definitions.h"
+#include "effects/effects.h"
 #include "physics/collision_model_definitions.h"
 #include "physics/collisions.h"
 #include "items/weapon_definitions.h"
 #include "items/projectile_definitions.h"
 #include "scenario/scenario.h"
 #include "units/units.h"
+#include "cache/cache_files.h"
+#include "ai/ai.h"
 #include "network_distributed.h"
 
 #include <math.h>
+
+/* ai/actors.c's. No header declares it. */
+enum
+{
+	_ai_spatial_effect_environmental_noise = 0,
+	_ai_spatial_effect_weapon_impact,
+	_ai_spatial_effect_weapon_detonation,
+	NUMBER_OF_AI_SPATIAL_EFFECTS,
+};
 
 /* damage.c's */
 void damage_replay_player_effect(long player_index, struct damage_data *damage, real total_damage);
@@ -112,6 +124,15 @@ enum
 	/* the explosions' hits of a tick told apart, a player's (an explosion
 	and an object each) */
 	MAXIMUM_EXPLOSIONS_PER_TICK = 64,
+	/* pictures of blasts a tick can tell, and how many a second a player
+	may have shown (a burst of two seconds): a rocket and the grenades
+	already in the air can go off together */
+	MAXIMUM_BLASTS_PER_TICK = 16,
+	BLASTS_PER_SECOND = 8,
+	BLAST_BURST_SECONDS = 2,
+	/* how far a blast whose tags name no range may be from the player
+	(a grenade that sticks, whose flight the tags do not bound) */
+	BLAST_UNBOUND_REACH = 40,
 	/* what weapons and grenades deal, remembered (a power of two) */
 	DAMAGE_RATE_CACHE_SIZE = 1024,
 	/* the damage events kept for killing blows */
@@ -384,6 +405,9 @@ static struct
 	/* (the grenades thrown, not yet gone off: NONE for none) */
 	long throw_times[MAXIMUM_GRENADE_THROWS];
 	short throw_types[MAXIMUM_GRENADE_THROWS];
+	/* (a picture of that throw already sent on: the throw itself stays, so
+	its damage can still be reported) */
+	boolean throw_pictured[MAXIMUM_GRENADE_THROWS];
 	struct damage_stuck_projectile stuck[MAXIMUM_STUCK_PROJECTILES];
 	long driven_time;
 	/* (the blow of the player's unit with no weapon: units.c's
@@ -392,6 +416,9 @@ static struct
 	long unarmed_time;
 	real hit_seconds;
 	long hit_seconds_time;
+	/* (pictures of blasts: a bucket of seconds, as the hit bucket is) */
+	real blast_seconds;
+	long blast_seconds_time;
 } damage_players[MAXIMUM_TRACKED_PLAYERS];
 /* ... the explosions whose hits came this tick, each paid for once, and
 the objects each hit (each once), each player's */
@@ -454,13 +481,40 @@ static struct
 } damage_event_destinations[MAXIMUM_DAMAGE_EVENTS_PER_TICK];
 /* for the automated tests' reports (network_test.c) */
 static long damage_rejected_reports;
+static long damage_rejected_no_throw;
+static long damage_rejected_walled;
 static long damage_dealt_reports;
 static long damage_sent_reports;
 static long damage_replayed_events;
+/* blasts already played at a point, so one explosion is one picture */
+#define SHOWN_EXPLOSIONS 16
+#define SHOWN_EXPLOSION_TICKS (2 * TICKS_PER_SECOND)
+static struct
+{
+	real_point3d epicenter;
+	long time;
+} shown_explosions[SHOWN_EXPLOSIONS];
+static short shown_explosion_next;
 
 /* a client: its players' hits this tick */
 static struct distributed_hit_report damage_reports[MAXIMUM_HIT_REPORTS_PER_TICK];
 static short damage_report_count;
+/* where a player's projectile went off, told this tick (the shooter's
+machine to the host, and the host on to every client) */
+struct distributed_blast
+{
+	byte owner_player_index;
+	byte pad;
+	short noise;
+	long effect_index;
+	real_point3d epicenter;
+	long host_time;
+};
+
+typedef char distributed_blast_size_assert[sizeof(struct distributed_blast) == 24 ? 1 : -1];
+
+static struct distributed_blast damage_blasts[MAXIMUM_BLASTS_PER_TICK];
+static short damage_blast_count;
 /* ... replaying the host's killing blow (its player effect came before),
 and its killer and their score after it (NONE: none) */
 static boolean damage_replaying_kill;
@@ -472,6 +526,8 @@ static long damage_replaying_killer_score;
 word network_damage_entry_size(
 	byte type)
 {
+	if (type == _distributed_message_blasts)
+		return sizeof(struct distributed_blast);
 	return type == _distributed_message_damage_events ?
 		sizeof(struct distributed_damage_event) : sizeof(struct distributed_hit_report);
 }
@@ -985,6 +1041,251 @@ static byte distributed_effect_deals(
 		}
 	}
 	return kinds;
+}
+
+/* the projectile's blast picture, when that picture deals this damage.
+*noise is how loud the AI hears it. */
+static long distributed_projectile_blast_effect(
+	long projectile_index,
+	long damage_index,
+	short *noise)
+{
+	struct projectile_definition *projectile;
+	struct damage_reach reach;
+	long effect_index;
+
+	if (!tag_index_is_group(projectile_index, PROJECTILE_DEFINITION_TAG))
+		return NONE;
+	projectile = projectile_definition_get(projectile_index);
+	effect_index = projectile->projectile.effect.index;
+	if (distributed_effect_deals(effect_index, damage_index, 0, &reach))
+	{
+		if (noise)
+			*noise = projectile->projectile.detonation_noise;
+		return effect_index;
+	}
+	effect_index = projectile->projectile.super_detonation.index;
+	if (distributed_effect_deals(effect_index, damage_index, 0, &reach))
+	{
+		if (noise)
+			*noise = projectile->projectile.detonation_noise;
+		return effect_index;
+	}
+	return NONE;
+}
+
+/* the projectile effect a weapon fires, when that effect deals this damage */
+static long distributed_weapon_blast_effect(
+	long weapon_definition_index,
+	long damage_index,
+	short *noise)
+{
+	struct weapon_definition *definition;
+	short trigger_index;
+	long effect_index;
+
+	if (!tag_index_is_group(weapon_definition_index, WEAPON_DEFINITION_TAG))
+		return NONE;
+	definition = weapon_definition_get(weapon_definition_index);
+	for (trigger_index = 0; trigger_index < definition->weapon.triggers.count; trigger_index++)
+	{
+		struct weapon_trigger_definition *trigger = TAG_BLOCK_GET_ELEMENT(
+			&definition->weapon.triggers, trigger_index, struct weapon_trigger_definition);
+
+		effect_index = distributed_projectile_blast_effect(trigger->projectile.index, damage_index, noise);
+		if (effect_index != NONE)
+			return effect_index;
+	}
+	return NONE;
+}
+
+/* the blast picture: a weapon the unit holds, one they carried lately, a
+grenade, or any weapon whose projectile deals this damage */
+static long distributed_unit_blast_effect(
+	long damage_index,
+	long owner_object_index,
+	long owner_player_index,
+	short *noise)
+{
+	struct unit_datum *unit;
+	struct game_globals *globals;
+	short index;
+	long effect_index = NONE;
+
+	unit = owner_object_index == NONE ? NULL :
+		(struct unit_datum *)object_try_and_get_and_verify_type(owner_object_index, _object_mask_unit);
+	if (unit)
+	{
+		for (index = 0; index < MAXIMUM_WEAPONS_PER_UNIT; index++)
+		{
+			long weapon_index = unit->unit.weapon_object_indices[index];
+			struct object_datum *weapon;
+
+			if (weapon_index == NONE)
+				continue;
+			weapon = object_get(weapon_index);
+			if (!weapon)
+				continue;
+			effect_index = distributed_weapon_blast_effect(weapon->definition_index, damage_index, noise);
+			if (effect_index != NONE)
+				return effect_index;
+		}
+	}
+	if (owner_player_index != NONE)
+	{
+		short player_index = (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(owner_player_index);
+		long now = game_time_get();
+
+		if (player_index >= 0 && player_index < MAXIMUM_TRACKED_PLAYERS)
+		{
+			for (index = 0; index < MAXIMUM_RECENT_WEAPONS; index++)
+			{
+				if (damage_players[player_index].definition_indices[index] == NONE ||
+					now - damage_players[player_index].times[index] > RECENT_WEAPON_TICKS)
+				{
+					continue;
+				}
+				effect_index = distributed_weapon_blast_effect(
+					damage_players[player_index].definition_indices[index], damage_index, noise);
+				if (effect_index != NONE)
+					return effect_index;
+			}
+		}
+	}
+	globals = scenario_get_game_globals();
+	if (globals)
+	{
+		for (index = 0; index < globals->grenades.count && index < NUMBER_OF_UNIT_GRENADE_TYPES; index++)
+		{
+			struct game_globals_grenade *grenade = TAG_BLOCK_GET_ELEMENT(&globals->grenades, index,
+				struct game_globals_grenade);
+
+			effect_index = distributed_projectile_blast_effect(grenade->projectile.index, damage_index, noise);
+			if (effect_index != NONE)
+				return effect_index;
+		}
+	}
+	{
+		struct tag_iterator iterator;
+		long tag_index;
+
+		tag_iterator_new(&iterator, WEAPON_DEFINITION_TAG);
+		while ((tag_index = tag_iterator_next(&iterator)) != NONE)
+		{
+			effect_index = distributed_weapon_blast_effect(tag_index, damage_index, noise);
+			if (effect_index != NONE)
+				return effect_index;
+		}
+	}
+	return NONE;
+}
+
+static boolean distributed_blast_shown(
+	real_point3d const *epicenter)
+{
+	short index;
+	long now = game_time_get();
+
+	for (index = 0; index < SHOWN_EXPLOSIONS; index++)
+	{
+		real dx;
+		real dy;
+		real dz;
+
+		if (shown_explosions[index].time == NONE || now - shown_explosions[index].time > SHOWN_EXPLOSION_TICKS)
+			continue;
+		dx = shown_explosions[index].epicenter.x - epicenter->x;
+		dy = shown_explosions[index].epicenter.y - epicenter->y;
+		dz = shown_explosions[index].epicenter.z - epicenter->z;
+		if (dx * dx + dy * dy + dz * dz < 0.02f * 0.02f)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* one picture at the point the shooter set the blast off. The shooter's own
+machine already played it. */
+static void distributed_play_blast(
+	long effect_index,
+	long owner_player_index,
+	long effect_owner,
+	real_point3d const *epicenter,
+	short noise)
+{
+	long played;
+	real_point3d points[2];
+	real_vector3d forwards[2];
+	char const *names[2];
+
+	if (effect_index == NONE || !epicenter || !tag_index_is_group(effect_index, EFFECT_DEFINITION_TAG))
+		return;
+	if (distributed_player_is_local(owner_player_index))
+		return;
+	if (distributed_blast_shown(epicenter))
+		return;
+	/* the same two markers projectile_detonate plays the blast from */
+	names[0] = "";
+	names[1] = "gravity";
+	points[0] = *epicenter;
+	points[1] = *epicenter;
+	forwards[0] = *global_up3d;
+	forwards[1] = *global_down3d;
+	/* the shooter may already be gone on this machine. The picture does not
+	need them, and the AI's lookup of a missing object stops the game. */
+	if (effect_owner != NONE && !object_try_and_get(effect_owner))
+		effect_owner = NONE;
+	if (noise < 0 || noise >= 5)
+		noise = 0;
+	effects_suppress_damage(TRUE);
+	played = effect_new_unattached_from_markers(
+		effect_index,
+		effect_owner,
+		NULL,
+		2,
+		names,
+		points,
+		forwards,
+		0.0f,
+		0.0f,
+		NULL,
+		NULL,
+		TRUE);
+	effects_suppress_damage(FALSE);
+	/* a full effect list plays nothing. Leave the point free so the next
+	word of this blast can try the picture again. */
+	if (played != NONE)
+	{
+		shown_explosions[shown_explosion_next].epicenter = *epicenter;
+		shown_explosions[shown_explosion_next].time = game_time_get();
+		shown_explosion_next = (short)((shown_explosion_next + 1) % SHOWN_EXPLOSIONS);
+	}
+	ai_handle_spatial_effect(
+		effect_owner,
+		&points[0],
+		_ai_spatial_effect_weapon_detonation,
+		noise,
+		1);
+}
+
+/* one picture of the shooter's blast, at the point they set it off */
+static void distributed_show_blast(
+	struct damage_data const *damage)
+{
+	long effect_index;
+	short noise = 0;
+
+	if (!damage || !TEST_FLAG(damage->flags, _damage_area_of_effect_bit))
+		return;
+	if (distributed_player_is_local(damage->owner_player_index))
+		return;
+	if (distributed_blast_shown(&damage->epicenter))
+		return;
+	effect_index = distributed_unit_blast_effect(damage->definition_index, damage->owner_object_index,
+		damage->owner_player_index, &noise);
+	if (effect_index == NONE)
+		return;
+	distributed_play_blast(effect_index, damage->owner_player_index, damage->owner_object_index,
+		&damage->epicenter, noise);
 }
 
 static byte distributed_projectile_deals(
@@ -1716,6 +2017,195 @@ static boolean distributed_player_could_fire(
 	return FALSE;
 }
 
+/* the projectile's blast picture is this effect: how far it flies, and how
+loud the AI hears it */
+static boolean distributed_blast_from_projectile(
+	long projectile_index,
+	long effect_index,
+	struct damage_reach *flight,
+	short *noise)
+{
+	struct projectile_definition *projectile;
+
+	if (!tag_index_is_group(projectile_index, PROJECTILE_DEFINITION_TAG))
+		return FALSE;
+	projectile = projectile_definition_get(projectile_index);
+	if (projectile->projectile.effect.index != effect_index &&
+		projectile->projectile.super_detonation.index != effect_index)
+	{
+		return FALSE;
+	}
+	distributed_projectile_flight(projectile, flight);
+	if (noise)
+		*noise = projectile->projectile.detonation_noise;
+	return TRUE;
+}
+
+/* a weapon the player carried lately, or a grenade the host saw them throw
+and has not already pictured: its blast is this effect */
+static boolean distributed_player_blast_source(
+	short player_index,
+	long effect_index,
+	struct damage_reach *reach,
+	short *noise,
+	short *throw_index)
+{
+	short index;
+	boolean found = FALSE;
+	struct game_globals *globals;
+
+	*throw_index = NONE;
+	*noise = 0;
+	reach->distance = 0.0f;
+	reach->ticks = 0.0f;
+	reach->carried_ticks = 0.0f;
+	if (player_index < 0 || player_index >= MAXIMUM_TRACKED_PLAYERS)
+		return FALSE;
+	for (index = 0; index < MAXIMUM_RECENT_WEAPONS; index++)
+	{
+		long weapon_index = damage_players[player_index].definition_indices[index];
+		struct weapon_definition *definition;
+		short trigger_index;
+
+		if (weapon_index == NONE ||
+			game_time_get() - damage_players[player_index].times[index] > RECENT_WEAPON_TICKS ||
+			!tag_index_is_group(weapon_index, WEAPON_DEFINITION_TAG))
+		{
+			continue;
+		}
+		definition = weapon_definition_get(weapon_index);
+		for (trigger_index = 0; trigger_index < definition->weapon.triggers.count; trigger_index++)
+		{
+			struct weapon_trigger_definition *trigger = TAG_BLOCK_GET_ELEMENT(
+				&definition->weapon.triggers, trigger_index, struct weapon_trigger_definition);
+			struct damage_reach flight;
+
+			if (!distributed_blast_from_projectile(trigger->projectile.index, effect_index, &flight, noise))
+				continue;
+			distributed_reach_combine(reach, &flight);
+			found = TRUE;
+		}
+	}
+	if (found)
+		return TRUE;
+	globals = scenario_get_game_globals();
+	if (!globals)
+		return FALSE;
+	for (index = 0; index < globals->grenades.count && index < NUMBER_OF_UNIT_GRENADE_TYPES; index++)
+	{
+		struct game_globals_grenade *grenade = TAG_BLOCK_GET_ELEMENT(&globals->grenades, index,
+			struct game_globals_grenade);
+		struct damage_reach flight;
+		short thrown;
+
+		if (!distributed_blast_from_projectile(grenade->projectile.index, effect_index, &flight, noise))
+			continue;
+		thrown = distributed_grenade_throw(player_index, (short)index);
+		if (thrown == NONE || damage_players[player_index].throw_pictured[thrown])
+			continue;
+		*throw_index = thrown;
+		*reach = flight;
+		return TRUE;
+	}
+	return FALSE;
+}
+
+/* whether the player has a picture left (at BLASTS_PER_SECOND, a burst of
+BLAST_BURST_SECONDS), which it takes */
+static boolean distributed_blast_paid(
+	short player_index)
+{
+	real *seconds = &damage_players[player_index].blast_seconds;
+	long elapsed = game_time_get() - damage_players[player_index].blast_seconds_time;
+
+	*seconds = MIN((real)BLAST_BURST_SECONDS, *seconds + (real)elapsed / (real)TICKS_PER_SECOND);
+	damage_players[player_index].blast_seconds_time = game_time_get();
+	if (*seconds < 1.0f / (real)BLASTS_PER_SECOND)
+		return FALSE;
+	*seconds -= 1.0f / (real)BLASTS_PER_SECOND;
+	return TRUE;
+}
+
+static void distributed_send_blasts(
+	short destination)
+{
+	struct
+	{
+		struct distributed_message_header header;
+		struct distributed_blast blasts[MAXIMUM_BLASTS_PER_TICK];
+	} message;
+	short limit = MIN(MAXIMUM_BLASTS_PER_TICK, RELIABLE_ENTRIES(struct distributed_blast));
+	short index;
+	short count = 0;
+
+	for (index = 0; index < damage_blast_count; index++)
+	{
+		message.blasts[count++] = damage_blasts[index];
+		if (count == limit)
+		{
+			distributed_send(&message, _distributed_message_blasts, count,
+				(word)(sizeof(message.header) + count * sizeof(struct distributed_blast)), destination);
+			count = 0;
+		}
+	}
+	if (count)
+	{
+		distributed_send(&message, _distributed_message_blasts, count,
+			(word)(sizeof(message.header) + count * sizeof(struct distributed_blast)), destination);
+	}
+	damage_blast_count = 0;
+}
+
+static void distributed_play_told_blast(
+	struct distributed_blast const *blast)
+{
+	long owner_player_index = distributed_player_from_byte(blast->owner_player_index);
+	struct player_datum *player = owner_player_index != NONE ? player_try_and_get(owner_player_index) : NULL;
+	long effect_owner = player ? distributed_living_unit(player) : NONE;
+
+	distributed_play_blast(blast->effect_index, owner_player_index, effect_owner, &blast->epicenter, blast->noise);
+}
+
+/* the host: a client's picture of where its player's projectile went off */
+static void distributed_accept_blast(
+	long machine_index,
+	struct distributed_blast const *blast)
+{
+	short player_index;
+	struct damage_reach reach;
+	short noise;
+	short throw_index;
+	struct distributed_blast told;
+
+	player_index = blast->owner_player_index;
+	if (player_index == NO_PLAYER || player_index >= MAXIMUM_TRACKED_PLAYERS ||
+		!distributed_player(player_index) || !distributed_machine_has_player(machine_index, player_index) ||
+		!distributed_point_valid(&blast->epicenter, REPORT_WORLD_BOUND))
+	{
+		return;
+	}
+	if (!distributed_player_blast_source(player_index, blast->effect_index, &reach, &noise, &throw_index))
+		return;
+	if (!(reach.distance >= 0.0f))
+	{
+		reach.distance = (real)BLAST_UNBOUND_REACH;
+		if (!(reach.ticks <= (real)PLAYER_TRAIL_TICKS))
+			reach.ticks = (real)PLAYER_TRAIL_TICKS;
+	}
+	if (!distributed_player_could_fire(machine_index, player_index, &blast->epicenter, &reach, blast->host_time) ||
+		!distributed_blast_paid(player_index))
+	{
+		return;
+	}
+	if (throw_index != NONE)
+		damage_players[player_index].throw_pictured[throw_index] = TRUE;
+	told = *blast;
+	told.noise = noise;
+	distributed_play_told_blast(&told);
+	if (damage_blast_count < MAXIMUM_BLASTS_PER_TICK)
+		damage_blasts[damage_blast_count++] = told;
+}
+
 /* the weapons each player carries, and whether they drive, noted */
 static void distributed_note_weapons(
 	void)
@@ -2109,7 +2599,10 @@ static boolean distributed_report_valid(
 	{
 		throw_index = distributed_grenade_throw(player_index, grenade_type);
 		if (throw_index == NONE)
+		{
+			damage_rejected_no_throw++;
 			return FALSE;
+		}
 	}
 	/* no more than the weapon fires */
 	if (!distributed_report_paid(player_index, report, rate, area && !melee && !collision,
@@ -2177,6 +2670,27 @@ static boolean distributed_report_valid(
 		if (!distributed_report_line_of_sight(machine_index, player_index, &report->damage.origin, &centre,
 			target->object.bounding_sphere_radius, &fired_reach, report->host_time))
 		{
+			return FALSE;
+		}
+	}
+	/* an explosion has to clear the wall, the same test the blast uses */
+	if (area && !melee && !collision)
+	{
+		real_point3d centre;
+		real_point3d target_origin;
+		long parent;
+		real core_radius = 0.f;
+
+		object_get_origin(report->object_index, &target_origin);
+		centre.x = seen_position.x + target->object.bounding_sphere_center.x - target_origin.x;
+		centre.y = seen_position.y + target->object.bounding_sphere_center.y - target_origin.y;
+		centre.z = seen_position.z + target->object.bounding_sphere_center.z - target_origin.z;
+		parent = object_get_ultimate_parent(report->object_index);
+		if (TEST_FLAG(_object_mask_unit, target->object.type))
+			core_radius = definition->damage.area_of_effect_core_radius;
+		if (area_of_effect_blocked(&report->damage.epicenter, &centre, parent, core_radius))
+		{
+			damage_rejected_walled++;
 			return FALSE;
 		}
 	}
@@ -2250,6 +2764,7 @@ void network_damage_handle_reports(
 		object_cause_damage(&damage, report->object_index, report->node_index, report->region_index,
 			report->material_index, report->has_normal ? &report->object_normal : NULL);
 		damage_dealing_report = FALSE;
+		distributed_show_blast(&damage);
 	}
 }
 
@@ -2368,14 +2883,19 @@ static void distributed_log_reports(
 {
 	static long logged_dealt;
 	static long logged_rejected;
+	static long logged_no_throw;
+	static long logged_walled;
 
 	if (game_time_get() % REPORT_LOG_TICKS != 0 || damage_rejected_reports == logged_rejected)
 		return;
-	error(_error_silent, "damage: clients' hits in the last %d seconds: %ld dealt, %ld refused",
+	error(_error_silent, "damage: clients' hits in the last %d seconds: %ld dealt, %ld refused (%ld a grenade the host had not seen thrown, %ld through a wall)",
 		REPORT_LOG_TICKS / TICKS_PER_SECOND, damage_dealt_reports - logged_dealt,
-		damage_rejected_reports - logged_rejected);
+		damage_rejected_reports - logged_rejected, damage_rejected_no_throw - logged_no_throw,
+		damage_rejected_walled - logged_walled);
 	logged_dealt = damage_dealt_reports;
 	logged_rejected = damage_rejected_reports;
+	logged_no_throw = damage_rejected_no_throw;
+	logged_walled = damage_rejected_walled;
 }
 
 /* the tick's killing blows once more, reliably, to every client: sent with
@@ -2451,6 +2971,8 @@ void network_damage_host_tick(
 	}
 	distributed_send_kills_reliably();
 	damage_event_count = 0;
+	if (damage_blast_count)
+		distributed_send_blasts(_distributed_to_clients_reliably);
 }
 
 /* ---------- a client */
@@ -2474,6 +2996,7 @@ void network_damage_handle_events(
 			continue;
 		}
 		damage_replayed_events++;
+		distributed_show_blast(&damage);
 		switch (event->kind)
 		{
 		case _damage_event_player_effect:
@@ -2571,6 +3094,8 @@ void network_damage_client_tick(
 			_distributed_to_host_reliably);
 	}
 	damage_report_count = 0;
+	if (damage_blast_count)
+		distributed_send_blasts(_distributed_to_host_reliably);
 }
 
 void network_damage_statistics(
@@ -2588,6 +3113,75 @@ void network_damage_statistics(
 /* the host: a grenade a player's unit threw (units.c), as the host's own
 game threw it, which that player's machine reports the damage of
 (distributed_report_valid) */
+boolean network_projectile_hides_detonation(
+	long owner_player_index)
+{
+	struct player_datum *player;
+	short absolute;
+
+	if (owner_player_index == NONE)
+		return FALSE;
+	if (game_connection() != _game_connection_network_client &&
+		game_connection() != _game_connection_network_server)
+		return FALSE;
+	if (distributed_player_is_local(owner_player_index))
+		return FALSE;
+	/* a player who has left: the rocket still in flight goes off here */
+	if (game_connection() != _game_connection_network_server)
+		return TRUE;
+	player = player_try_and_get(owner_player_index);
+	if (!player || player->quit_out_of_game)
+		return FALSE;
+	absolute = (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(owner_player_index);
+	if (absolute < 0 || distributed_player_machine(absolute) == NONE)
+		return FALSE;
+	return TRUE;
+}
+
+/* the shooter's machine, where its own projectile went off */
+void network_projectile_note_detonation(
+	long owner_player_index,
+	long effect_index,
+	real_point3d const *epicenter,
+	short noise)
+{
+	struct distributed_blast *blast;
+
+	if ((game_connection() != _game_connection_network_client &&
+			game_connection() != _game_connection_network_server) ||
+		owner_player_index == NONE || effect_index == NONE || !epicenter ||
+		!distributed_player_is_local(owner_player_index) ||
+		damage_blast_count >= MAXIMUM_BLASTS_PER_TICK)
+	{
+		return;
+	}
+	blast = &damage_blasts[damage_blast_count++];
+	csmemset(blast, 0, sizeof(*blast));
+	blast->owner_player_index = distributed_player_to_byte(owner_player_index);
+	blast->noise = noise;
+	blast->effect_index = effect_index;
+	blast->epicenter = *epicenter;
+	blast->host_time = game_connection() == _game_connection_network_server ?
+		game_time_get() : distributed_latest_host_time();
+}
+
+void network_damage_handle_blasts(
+	long machine_index,
+	void const *entries,
+	short count)
+{
+	struct distributed_blast const *blasts = (struct distributed_blast const *)entries;
+	short index;
+
+	for (index = 0; index < count; index++)
+	{
+		if (game_connection() == _game_connection_network_server)
+			distributed_accept_blast(machine_index, &blasts[index]);
+		else
+			distributed_play_told_blast(&blasts[index]);
+	}
+}
+
 void network_damage_note_grenade(
 	long unit_index,
 	short grenade_type)
@@ -2618,6 +3212,7 @@ void network_damage_note_grenade(
 	}
 	damage_players[player_index].throw_times[slot] = game_time_get();
 	damage_players[player_index].throw_types[slot] = grenade_type;
+	damage_players[player_index].throw_pictured[slot] = FALSE;
 }
 
 void network_damage_new_game(
@@ -2627,7 +3222,13 @@ void network_damage_new_game(
 
 	damage_event_count = 0;
 	damage_report_count = 0;
+	damage_blast_count = 0;
 	damage_dealing_report = FALSE;
+	damage_rejected_no_throw = 0;
+	damage_rejected_walled = 0;
+	shown_explosion_next = 0;
+	for (player_index = 0; player_index < SHOWN_EXPLOSIONS; player_index++)
+		shown_explosions[player_index].time = NONE;
 	damage_replaying_kill = FALSE;
 	csmemset(damage_players, 0, sizeof(damage_players));
 	for (player_index = 0; player_index < TARGET_HISTORY_TICKS; player_index++)
@@ -2645,6 +3246,7 @@ void network_damage_new_game(
 			damage_players[player_index].stuck[index].time = NONE;
 		damage_players[player_index].driven_time = -RECENT_WEAPON_TICKS - 1;
 		damage_players[player_index].hit_seconds = HIT_REPORT_BURST_SECONDS;
+		damage_players[player_index].blast_seconds = (real)BLAST_BURST_SECONDS;
 		damage_explosions[player_index].time = NONE;
 		damage_explosions[player_index].count = 0;
 		for (index = 0; index < PLAYER_TRAIL_POINTS; index++)

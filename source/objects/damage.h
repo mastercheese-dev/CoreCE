@@ -114,6 +114,13 @@ void object_deplete_body(
 void area_of_effect_cause_damage(
 	struct damage_data *damage,
 	long unused_object_index);
+/* TRUE when a wall, or another solid, is between the blast and the point.
+A unit's core radius tries the four side ways the blast itself tries. */
+boolean area_of_effect_blocked(
+	real_point3d const *epicenter,
+	real_point3d const *target,
+	long ignore_object_index,
+	real core_radius);
 
 void object_cause_damage(
 	struct damage_data *damage,

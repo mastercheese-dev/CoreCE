@@ -261,6 +261,11 @@ enum
 		FLAG(_collision_test_objects_machines_bit),
 };
 
+/* a blast sits on the face it hit, and a grenade on the floor sits in the
+solid under that face. The ray is lifted this far, at both ends, so it
+travels in the air and meets the wall. */
+#define AREA_OF_EFFECT_RAY_CLEARANCE 0.05f
+
 /* ---------- macros */
 
 /* ---------- structures */
@@ -2369,6 +2374,99 @@ static void object_destroy_region(
 	return;
 }
 
+/* the point, lifted off the floor the blast is sitting on */
+static void area_of_effect_lift(
+	real_point3d const *point,
+	real_point3d *lifted)
+{
+	*lifted = *point;
+	lifted->z += AREA_OF_EFFECT_RAY_CLEARANCE;
+}
+
+boolean area_of_effect_blocked(
+	real_point3d const *epicenter,
+	real_point3d const *target,
+	long ignore_object_index,
+	real core_radius)
+{
+	real_point3d start;
+	real_point3d end;
+
+	if (!epicenter || !target)
+		return FALSE;
+	area_of_effect_lift(epicenter, &start);
+	area_of_effect_lift(target, &end);
+	/* a unit: any one of the four side probes that reaches it is a hit,
+	the same probes area_of_effect_cause_damage_to_object used to cast */
+	if (core_radius > _real_epsilon)
+	{
+		real_vector3d to_target;
+		real_vector3d perpendicular;
+		real_vector3d cross;
+		long ray_index;
+
+		vector_from_points3d(epicenter, target, &to_target);
+		normalize3d(perpendicular3d(&to_target, &perpendicular));
+		normalize3d(cross_product3d(&to_target, &perpendicular, &cross));
+		for (ray_index = 0; ray_index < 4; ray_index++)
+		{
+			real_vector3d probe;
+			real_vector3d to_end;
+			real_point3d offset;
+			struct collision_result collision;
+			real sign = (ray_index & 1) ? -core_radius : core_radius;
+
+			scale_vector3d(ray_index < 2 ? &perpendicular : &cross, sign, &probe);
+			/* a probe that goes down enters the floor, and the ray from
+			there travels under the wall into the next room. Keep that probe
+			at the lifted height. A probe that goes up still goes up, which
+			is how the blast reaches over low cover. */
+			if (probe.k < 0.f)
+				probe.k = 0.f;
+			if (probe.i != 0.f || probe.j != 0.f || probe.k != 0.f)
+			{
+				collision_test_vector(
+					_damage_area_of_effect_collision_flags,
+					&start,
+					&probe,
+					ignore_object_index,
+					&collision);
+				offset = collision.point;
+			}
+			else
+			{
+				offset = start;
+			}
+			vector_from_points3d(&offset, &end, &to_end);
+			if ((to_end.i == 0.f && to_end.j == 0.f && to_end.k == 0.f) ||
+				!collision_test_vector(
+					_damage_area_of_effect_collision_flags,
+					&offset,
+					&to_end,
+					ignore_object_index,
+					&collision))
+			{
+				return FALSE;
+			}
+		}
+		return TRUE;
+	}
+	{
+		real_vector3d ray;
+		struct collision_result collision;
+
+		vector_from_points3d(&start, &end, &ray);
+		if (magnitude3d(&ray) <= 0.f)
+			return FALSE;
+		return collision_test_vector(
+			_damage_area_of_effect_collision_flags,
+			&start,
+			&ray,
+			ignore_object_index,
+			&collision) != FALSE;
+	}
+}
+
 static void area_of_effect_cause_damage_to_object(
 	struct damage_data *damage,
 	long object_index,
@@ -2381,15 +2479,6 @@ static void area_of_effect_cause_damage_to_object(
 	struct object_definition *object_definition;
 	struct damage_effect_definition *damage_effect;
 	real_point3d const *epicenter;
-	real_vector3d to_object;
-	real_vector3d perpendicular;
-	real_vector3d cross;
-	real_vector3d collision_vector;
-	real_vector3d offset_vector;
-	real_vector3d direct_vector;
-	real_point3d offset_point;
-	struct collision_result spread_collision;
-	struct collision_result direct_collision;
 	boolean can_damage;
 
 	object = object_get(object_index);
@@ -2406,96 +2495,17 @@ static void area_of_effect_cause_damage_to_object(
 	global_current_collision_users[global_current_collision_user_depth++] =
 		_collision_user_area_damage;
 
-	if (can_damage &&
-		TEST_FLAG(_object_mask_unit, object->object.type) &&
-		damage_effect->damage.area_of_effect_core_radius > _real_epsilon)
+	epicenter = &damage->epicenter;
 	{
-		long ray_index;
-		long rays_remaining;
+		real core_radius = 0.f;
 
-		epicenter = &damage->epicenter;
-		collision_blocked = TRUE;
-		vector_from_points3d(
+		if (TEST_FLAG(_object_mask_unit, object->object.type))
+			core_radius = damage_effect->damage.area_of_effect_core_radius;
+		collision_blocked = area_of_effect_blocked(
 			epicenter,
 			&object->object.bounding_sphere_center,
-			&to_object);
-		normalize3d(perpendicular3d(&to_object, &perpendicular));
-		normalize3d(cross_product3d(&to_object, &perpendicular, &cross));
-
-		for (ray_index = 0, rays_remaining = 4;
-			rays_remaining;
-			ray_index++, rays_remaining--)
-		{
-			long ultimate_parent_index;
-
-			switch (ray_index)
-			{
-			case 0:
-				scale_vector3d(
-					&perpendicular,
-					damage_effect->damage.area_of_effect_core_radius,
-					&collision_vector);
-				break;
-
-			case 1:
-				scale_vector3d(
-					&perpendicular,
-					-damage_effect->damage.area_of_effect_core_radius,
-					&collision_vector);
-				break;
-
-			case 2:
-				scale_vector3d(
-					&cross,
-					damage_effect->damage.area_of_effect_core_radius,
-					&collision_vector);
-				break;
-
-			case 3:
-				scale_vector3d(
-					&cross,
-					-damage_effect->damage.area_of_effect_core_radius,
-					&collision_vector);
-				break;
-			}
-
-			collision_test_vector(
-				_damage_area_of_effect_collision_flags,
-				epicenter,
-				&collision_vector,
-				object_get_ultimate_parent(object_index),
-				&spread_collision);
-			offset_point = spread_collision.point;
-			ultimate_parent_index = object_get_ultimate_parent(object_index);
-			if (!collision_test_vector(
-				_damage_area_of_effect_collision_flags,
-				&offset_point,
-				vector_from_points3d(
-					&offset_point,
-					&object->object.bounding_sphere_center,
-					&offset_vector),
-				ultimate_parent_index,
-				&spread_collision))
-			{
-				collision_blocked = FALSE;
-			}
-		}
-	}
-	else
-	{
-		long ultimate_parent_index;
-
-		ultimate_parent_index = object_get_ultimate_parent(object_index);
-		epicenter = &damage->epicenter;
-		collision_blocked = collision_test_vector(
-			_damage_area_of_effect_collision_flags,
-			epicenter,
-			vector_from_points3d(
-				epicenter,
-				&object->object.bounding_sphere_center,
-				&direct_vector),
-			ultimate_parent_index,
-			&direct_collision);
+			object_get_ultimate_parent(object_index),
+			core_radius);
 	}
 
 	if (collision_blocked)

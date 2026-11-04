@@ -338,20 +338,29 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 		else
 			xgpu_text_append(&text, "\tvec4 v%lu = %sv%lu_in;\n", index, metal ? "input." : "", index);
 	}
-	xgpu_text_append(&text,
-		"\tvec4 r0 = vec4(0.0), r1 = vec4(0.0), r2 = vec4(0.0), r3 = vec4(0.0);\n"
-		"\tvec4 r4 = vec4(0.0), r5 = vec4(0.0), r6 = vec4(0.0), r7 = vec4(0.0);\n"
-		"\tvec4 r8 = vec4(0.0), r9 = vec4(0.0), r10 = vec4(0.0), r11 = vec4(0.0);\n"
-		"\tvec4 oPos = vec4(0.0, 0.0, 0.0, 1.0);\n"
-		"\tvec4 oD0 = vec4(0.0, 0.0, 0.0, 1.0), oD1 = vec4(0.0, 0.0, 0.0, 1.0);\n"
-		"\tvec4 oB0 = vec4(0.0, 0.0, 0.0, 1.0), oB1 = vec4(0.0, 0.0, 0.0, 1.0);\n"
-		"\tvec4 oT0 = vec4(0.0, 0.0, 0.0, 1.0), oT1 = vec4(0.0, 0.0, 0.0, 1.0);\n"
-		"\tvec4 oT2 = vec4(0.0, 0.0, 0.0, 1.0), oT3 = vec4(0.0, 0.0, 0.0, 1.0);\n"
-		"\tvec4 oFog = vec4(1.0), oPts = vec4(point_size), oUnused = vec4(0.0);\n"
-		"\tint a0 = 0;\n"
-		"\tvec4 A, B, C, mac, ilu;\n");
-	if (capture_clip)
-		xgpu_text_append(&text, "\tvec4 clip_position = vec4(0.0);\n\tbool clip_captured = false;\n");
+	/* precise: the GLSL compiler may not regroup these. The light pass has
+	to write the same depth as the surface pass, and a regrouped dot lands
+	on a different value as the view changes, so the light shows through a
+	wall or drops out. Metal keeps the written order without this. */
+	{
+		const char *precise = metal ? "" : "precise ";
+
+		xgpu_text_append(&text,
+			"\tvec4 r0 = vec4(0.0), r1 = vec4(0.0), r2 = vec4(0.0), r3 = vec4(0.0);\n"
+			"\tvec4 r4 = vec4(0.0), r5 = vec4(0.0), r6 = vec4(0.0), r7 = vec4(0.0);\n"
+			"\tvec4 r8 = vec4(0.0), r9 = vec4(0.0), r10 = vec4(0.0), r11 = vec4(0.0);\n"
+			"\t%svec4 oPos = vec4(0.0, 0.0, 0.0, 1.0);\n"
+			"\tvec4 oD0 = vec4(0.0, 0.0, 0.0, 1.0), oD1 = vec4(0.0, 0.0, 0.0, 1.0);\n"
+			"\tvec4 oB0 = vec4(0.0, 0.0, 0.0, 1.0), oB1 = vec4(0.0, 0.0, 0.0, 1.0);\n"
+			"\tvec4 oT0 = vec4(0.0, 0.0, 0.0, 1.0), oT1 = vec4(0.0, 0.0, 0.0, 1.0);\n"
+			"\tvec4 oT2 = vec4(0.0, 0.0, 0.0, 1.0), oT3 = vec4(0.0, 0.0, 0.0, 1.0);\n"
+			"\tvec4 oFog = vec4(1.0), oPts = vec4(point_size), oUnused = vec4(0.0);\n"
+			"\tint a0 = 0;\n"
+			"\t%svec4 A;\n\t%svec4 B;\n\t%svec4 C;\n\t%svec4 mac;\n\tvec4 ilu;\n",
+			precise, precise, precise, precise, precise);
+		if (capture_clip)
+			xgpu_text_append(&text, "\t%svec4 clip_position = vec4(0.0);\n\tbool clip_captured = false;\n", precise);
+	}
 
 	for (index = 0; index < instruction_count; index++)
 	{
@@ -390,11 +399,30 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 			/* Keep the multiply and add as separate stages on every backend.
 			One expression lets the compiler fuse them, and a light pass then
 			writes a different depth from the surface it has to match. */
-			xgpu_text_append(&text, "\tvec4 mac_product_%lu = A * B;\n\tmac = mac_product_%lu + C;\n", index, index);
+			xgpu_text_append(&text, "\t%svec4 mac_product_%lu = A * B;\n\tmac = mac_product_%lu + C;\n",
+				metal ? "" : "precise ", index, index);
 			break;
-		case _mac_dp3: xgpu_text_append(&text, "\tmac = vec4(dot(A.xyz, B.xyz));\n"); break;
-		case _mac_dph: xgpu_text_append(&text, "\tmac = vec4(dot(A.xyz, B.xyz) + B.w);\n"); break;
-		case _mac_dp4: xgpu_text_append(&text, "\tmac = vec4(dot(A, B));\n"); break;
+		case _mac_dp3:
+			if (metal)
+				xgpu_text_append(&text, "\tmac = vec4(dot(A.xyz, B.xyz));\n");
+			else
+				xgpu_text_append(&text, "\tprecise float dp3_%lu = dot(A.xyz, B.xyz);\n\tmac = vec4(dp3_%lu);\n", index, index);
+			break;
+		case _mac_dph:
+			/* the dot and the add stay apart. One expression lets the OpenGL
+			compiler fold them differently in each shader, and a light pass
+			then writes a different depth from the surface it has to match. */
+			if (metal)
+				xgpu_text_append(&text, "\tmac = vec4(dot(A.xyz, B.xyz) + B.w);\n");
+			else
+				xgpu_text_append(&text, "\tprecise float dph_%lu = dot(A.xyz, B.xyz);\n\tmac = vec4(dph_%lu + B.w);\n", index, index);
+			break;
+		case _mac_dp4:
+			if (metal)
+				xgpu_text_append(&text, "\tmac = vec4(dot(A, B));\n");
+			else
+				xgpu_text_append(&text, "\tprecise float dp4_%lu = dot(A, B);\n\tmac = vec4(dp4_%lu);\n", index, index);
+			break;
 		case _mac_dst: xgpu_text_append(&text, "\tmac = vec4(1.0, A.y * B.y, A.z, B.w);\n"); break;
 		case _mac_min: xgpu_text_append(&text, "\tmac = min(A, B);\n"); break;
 		case _mac_max: xgpu_text_append(&text, "\tmac = max(A, B);\n"); break;
@@ -462,11 +490,15 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 			break;
 	}
 
-	xgpu_text_append(&text,
-		"\t/* undo the screen-space conversion done with c[-38] and c[-37] */\n"
-		"\tvec3 scale = vec3(viewport_scale.x != 0.0 ? viewport_scale.x : 1.0,\n"
-		"\t\tviewport_scale.y != 0.0 ? viewport_scale.y : 1.0,\n"
-		"\t\tviewport_scale.z != 0.0 ? viewport_scale.z : 1.0);\n");
+	{
+		const char *precise = metal ? "" : "precise ";
+
+		xgpu_text_append(&text,
+			"\t/* undo the screen-space conversion done with c[-38] and c[-37] */\n"
+			"\t%svec3 scale = vec3(viewport_scale.x != 0.0 ? viewport_scale.x : 1.0,\n"
+			"\t\tviewport_scale.y != 0.0 ? viewport_scale.y : 1.0,\n"
+			"\t\tviewport_scale.z != 0.0 ? viewport_scale.z : 1.0);\n", precise);
+	}
 		/* Direct3D 8 puts pixel centres on integer screen coordinates (the
 		game offsets its screen-space quads by -0.5 to match), OpenGL on
 		half-integers */
@@ -482,27 +514,32 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 		the rounding before the depth is rasterized, so a light pass misses
 		the surface. */
 		const char *position_out = metal ? "output.position" : "gl_Position";
+		const char *precise = metal ? "" : "precise ";
 
 		xgpu_text_append(&text,
 			"\tif (clip_captured) {\n"
-			"\t\tvec3 scaled_clip = clip_position.xyz * c[%d].xyz;\n"
-			"\t\tvec3 pixel_offset = vec3(0.5 + screen_offset, 0.5, 0.0);\n"
-			"\t\tvec3 screen_origin = c[%d].xyz + pixel_offset;\n"
-			"\t\tvec3 origin_delta = screen_origin - viewport_offset.xyz;\n"
-			"\t\tvec3 clip_delta = origin_delta * clip_position.w;\n"
-			"\t\tvec3 numerator = scaled_clip + clip_delta;\n"
-			"\t\tvec3 position = numerator / scale;\n"
+			"\t\t%svec3 scaled_clip = clip_position.xyz * c[%d].xyz;\n"
+			"\t\t%svec3 pixel_offset = vec3(0.5 + screen_offset, 0.5, 0.0);\n"
+			"\t\t%svec3 screen_origin = c[%d].xyz + pixel_offset;\n"
+			"\t\t%svec3 origin_delta = screen_origin - viewport_offset.xyz;\n"
+			"\t\t%svec3 clip_delta = origin_delta * clip_position.w;\n"
+			"\t\t%svec3 numerator = scaled_clip + clip_delta;\n"
+			"\t\t%svec3 position = numerator / scale;\n"
 			"\t\t%s = vec4(position, clip_position.w);\n"
 			"\t} else {\n"
-			"\t\tvec2 pixel_offset = vec2(0.5 + screen_offset, 0.5);\n"
-			"\t\tvec2 pixel_xy = oPos.xy + pixel_offset;\n"
-			"\t\tvec3 screen_position = vec3(pixel_xy, oPos.z);\n"
-			"\t\tvec3 delta = screen_position - viewport_offset.xyz;\n"
-			"\t\tvec3 ndc = delta / scale;\n"
-			"\t\tvec3 position = ndc * oPos.w;\n"
+			"\t\t%svec2 pixel_offset = vec2(0.5 + screen_offset, 0.5);\n"
+			"\t\t%svec2 pixel_xy = oPos.xy + pixel_offset;\n"
+			"\t\t%svec3 screen_position = vec3(pixel_xy, oPos.z);\n"
+			"\t\t%svec3 delta = screen_position - viewport_offset.xyz;\n"
+			"\t\t%svec3 ndc = delta / scale;\n"
+			"\t\t%svec3 position = ndc * oPos.w;\n"
 			"\t\t%s = vec4(position, oPos.w);\n"
-			"\t}\n", XGPU_VERTEX_CONSTANT_BIAS - 38, XGPU_VERTEX_CONSTANT_BIAS - 37,
-			position_out, position_out);
+			"\t}\n",
+			precise, XGPU_VERTEX_CONSTANT_BIAS - 38,
+			precise,
+			precise, XGPU_VERTEX_CONSTANT_BIAS - 37,
+			precise, precise, precise, precise, position_out,
+			precise, precise, precise, precise, precise, precise, position_out);
 	}
 	else
 		xgpu_text_append(&text,
@@ -534,14 +571,19 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 	/* reversed depth stores 1 at the near plane. Android keeps the Xbox's
 	24-bit depth, and its z remap below stays the only change. */
 	if (xgpu_reversed_depth)
-		xgpu_text_append(&text, "\tgl_Position.z = gl_Position.w - gl_Position.z;\n");
+		xgpu_text_append(&text,
+			"\tprecise float reversed_z = gl_Position.w - gl_Position.z;\n"
+			"\tgl_Position.z = reversed_z;\n");
 #endif
 	xgpu_text_append(&text,
 #ifdef HALO_ANDROID
 		/* what glClipControl(GL_UPPER_LEFT, GL_ZERO_TO_ONE) does on desktop
 		GL: rows from the top, depth 0..1 */
-		"\tgl_Position.y = -gl_Position.y;\n"
-		"\tgl_Position.z = 2.0 * gl_Position.z - gl_Position.w;\n"
+		"\tprecise float flipped_y = -gl_Position.y;\n"
+		"\tgl_Position.y = flipped_y;\n"
+		"\tprecise float android_z = gl_Position.z + gl_Position.z;\n"
+		"\tprecise float android_depth = android_z - gl_Position.w;\n"
+		"\tgl_Position.z = android_depth;\n"
 #endif
 		"\tgl_PointSize = oPts.x;\n"
 		"\txD0 = clamp(oD0, 0.0, 1.0);\n"

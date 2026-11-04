@@ -241,7 +241,8 @@ connection, and the host answers each machine's datagrams where they come
 from, so that a second copy of the game on one computer, on a port of its
 own, plays too; version 32 sends the host's mouse aim assist policy
 (distributed message 90, `network_aim_assist.c`), which a client must not
-ignore.
+ignore; version 36 tells every machine where a player's blast went off
+(distributed message 96), including one that damaged nobody.
 
 This Mac build plays that options record (time limit, loadout, friendly fire,
 vehicle respawn, team balance, radar, vehicle sets, and no-map-weapons) and

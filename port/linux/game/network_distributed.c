@@ -4459,7 +4459,8 @@ void network_distributed_handle_message(
 	case _distributed_message_screen_share_down: entry_size = 2 * sizeof(unsigned char); break;
 	case _distributed_message_screen_party: entry_size = 16; break;
 	case _distributed_message_damage_events:
-	case _distributed_message_hit_reports: entry_size = network_damage_entry_size(header.type); break;
+	case _distributed_message_hit_reports:
+	case _distributed_message_blasts: entry_size = network_damage_entry_size(header.type); break;
 	default: entry_size = network_objects_entry_size(header.type); break;
 	}
 	if (header.type == 0 || header.type >= NUMBER_OF_DISTRIBUTED_MESSAGES ||
@@ -4497,6 +4498,7 @@ void network_distributed_handle_message(
 			header.type == _distributed_message_client_identity ||
 			header.type == _distributed_message_screen_share ||
 			header.type == _distributed_message_hit_reports ||
+			header.type == _distributed_message_blasts ||
 			header.type == _distributed_message_match_ready) &&
 		!distributed_handling_stream_message)
 	{
@@ -4518,6 +4520,17 @@ void network_distributed_handle_message(
 	case _distributed_message_chat_up:
 		if (machine_index == NONE || game_connection() != _game_connection_network_server)
 			return;
+		break;
+	case _distributed_message_blasts:
+		if (game_connection() == _game_connection_network_server)
+		{
+			if (machine_index == NONE)
+				return;
+		}
+		else if (game_connection() != _game_connection_network_client || machine_index != NONE)
+		{
+			return;
+		}
 		break;
 	default:
 		if (game_connection() != _game_connection_network_client)
@@ -4762,6 +4775,9 @@ void network_distributed_handle_message(
 		break;
 	case _distributed_message_hit_reports:
 		network_damage_handle_reports(machine_index, entries, header.count);
+		break;
+	case _distributed_message_blasts:
+		network_damage_handle_blasts(machine_index, entries, header.count);
 		break;
 	case _distributed_message_vehicle_prediction:
 		network_objects_handle_vehicle_prediction(machine_index, entries, header.count);

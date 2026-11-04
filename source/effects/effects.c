@@ -188,6 +188,9 @@ enum effect_flags
 	_effect_invisible_bit,
 	_effect_delete_on_stop_bit,
 	_effect_nonviolent_bit,
+	/* this effect plays its picture and does not deal its damage (a blast
+	another machine already dealt) */
+	_effect_damage_suppressed_bit,
 	NUMBER_OF_EFFECT_FLAGS
 };
 
@@ -607,6 +610,8 @@ struct data_array *effect_location_data;
 boolean effects_corpse_nonviolent = TRUE;
 
 boolean debug_effects_nonviolent = FALSE;
+/* a replayed explosion plays its picture and not its damage again */
+static boolean effect_damage_suppressed = FALSE;
 
 /* the effect marker list the effect_new_*_from_markers entry points hand to
 effect_marker_list_get_markers_by_name (January's own name for this static is unrecovered) */
@@ -615,6 +620,12 @@ static struct effect_marker_list const *global_effect_marker_list;
 static struct profile_section effects_update_section = {"effects_update", NONE, TRUE};
 
 /* ---------- public code */
+
+void effects_suppress_damage(
+	boolean suppress)
+{
+	effect_damage_suppressed = suppress != FALSE;
+}
 
 void effects_initialize(
 	void)
@@ -635,6 +646,7 @@ void effects_initialize_for_new_map(
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	performance_sound_reset(_performance_sound_effect);
 #endif
+	effect_damage_suppressed = FALSE;
 	data_make_valid(effect_data);
 	data_make_valid(effect_location_data);
 
@@ -1556,6 +1568,8 @@ static long effect_allocate(
 				effect->owner_object_index = owner_object_index;
 				effect->local_player_index = NONE;
 				effect->header.flags = 0;
+				if (effect_damage_suppressed)
+					SET_FLAG(effect->header.flags, _effect_damage_suppressed_bit, TRUE);
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 				/* Capture before the caller's immediate effect_update(0), and
@@ -1758,6 +1772,8 @@ static void effect_generate_part(
 			struct object_datum *owner =
 				object_try_and_get(effect->owner_object_index);
 
+			if (TEST_FLAG(effect->header.flags, _effect_damage_suppressed_bit))
+				break;
 			damage_data_new(&damage, part_definition->reference.index);
 
 			if (owner)

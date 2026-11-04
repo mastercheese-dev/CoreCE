@@ -1334,6 +1334,12 @@ static boolean projectile_collision_test_line(
 	}
 }
 
+/* (network_damage.c) someone else's rocket or grenade: the blast is played
+where the shooter set it off */
+boolean network_projectile_hides_detonation(long owner_player_index);
+void network_projectile_note_detonation(long owner_player_index, long effect_index,
+	real_point3d const *epicenter, short noise);
+
 static void projectile_detonate(
 	long projectile_index,
 	boolean first_collision,
@@ -1346,6 +1352,7 @@ static void projectile_detonate(
 	real_vector3d marker_forwards[2];
 	real_vector3d up;
 	long effect_definition_index;
+	boolean hide_detonation;
 
 	projectile = projectile_get(projectile_index);
 	definition = projectile_definition_get(projectile->definition_index);
@@ -1432,19 +1439,23 @@ static void projectile_detonate(
 	object_get_orientation(projectile_index, &marker_forwards[0], &up);
 	marker_points[1] = marker_points[0];
 	marker_forwards[1] = *global_down3d;
-	effect_new_unattached_from_markers(
-		effect_definition_index,
-		projectile->object.owner_object_index,
-		NULL,
-		NUMBEROF(marker_names),
-		marker_names,
-		marker_points,
-		marker_forwards,
-		0.0f,
-		0.0f,
-		NULL,
-		NULL,
-		TRUE);
+	hide_detonation = network_projectile_hides_detonation(projectile->object.owner_player_index);
+	if (!hide_detonation)
+	{
+		effect_new_unattached_from_markers(
+			effect_definition_index,
+			projectile->object.owner_object_index,
+			NULL,
+			NUMBEROF(marker_names),
+			marker_names,
+			marker_points,
+			marker_forwards,
+			0.0f,
+			0.0f,
+			NULL,
+			NULL,
+			TRUE);
+	}
 
 	if (projectile->object.parent_object_index != NONE &&
 		definition->projectile.attached_detonation_damage.index != NONE)
@@ -1462,7 +1473,7 @@ static void projectile_detonate(
 		object_cause_damage(&damage, projectile->object.parent_object_index, NONE, NONE, NONE, NULL);
 	}
 
-	if (projectile->projectile.hit_material_type != NONE)
+	if (!hide_detonation && projectile->projectile.hit_material_type != NONE)
 	{
 		struct projectile_material_response_definition const *material_response;
 
@@ -1488,12 +1499,20 @@ static void projectile_detonate(
 			TRUE);
 	}
 
-	ai_handle_spatial_effect(
-		projectile_index,
-		&marker_points[0],
-		_ai_spatial_effect_weapon_detonation,
-		definition->projectile.detonation_noise,
-		1);
+	if (!hide_detonation)
+	{
+		ai_handle_spatial_effect(
+			projectile_index,
+			&marker_points[0],
+			_ai_spatial_effect_weapon_detonation,
+			definition->projectile.detonation_noise,
+			1);
+		network_projectile_note_detonation(
+			projectile->object.owner_player_index,
+			effect_definition_index,
+			&marker_points[0],
+			definition->projectile.detonation_noise);
+	}
 
 	return;
 }

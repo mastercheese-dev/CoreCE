@@ -95,6 +95,9 @@ long effect_new_unattached_from_markers(
 	boolean can_be_deterministic);
 void effects_update(
 	real dt);
+/* while set, an effect made now keeps its picture and does not deal its
+damage, including on a later event */
+void effects_suppress_damage(boolean suppress);
 void effects_start_on_first_person_weapon(
 	short local_player_index,
 	long object_index);
