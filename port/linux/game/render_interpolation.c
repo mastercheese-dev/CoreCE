@@ -679,6 +679,27 @@ real_matrix4x3 *render_interpolation_object_node_matrices(long object_index)
 	return record->nodes + 2 * record->node_capacity;
 }
 
+/* a point placed on the object from the tick, moved with the object's root
+to where this frame draws it: unchanged outside a frame between ticks, or
+for an object not blended */
+void render_interpolation_object_point(long object_index, real_point3d *point)
+{
+	struct object_datum *object;
+	real_matrix4x3 const *drawn;
+	real_matrix4x3 const *simulated;
+
+	if (!interpolation_rendering || object_index == NONE || !point)
+		return;
+	drawn = render_interpolation_object_node_matrices(object_index);
+	object = object_try_and_get(object_index);
+	if (!drawn || !object || object->object.node_matrices.size < (short)sizeof(real_matrix4x3))
+		return;
+	simulated = object_header_block_get(object_index, &object->object.node_matrices);
+	point->x += drawn[0].position.x - simulated[0].position.x;
+	point->y += drawn[0].position.y - simulated[0].position.y;
+	point->z += drawn[0].position.z - simulated[0].position.z;
+}
+
 /* the unit this object is, or hangs off, else NONE */
 static long pose_root_unit(
 	long object_index)

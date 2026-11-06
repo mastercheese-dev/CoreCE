@@ -291,9 +291,18 @@ static int zip_extract(const char *zip_path, char names[][256], int *name_count,
 		/* (a folder, or a name that would leave the game's folder, is left
 		out: the release's files are all at its top) */
 		if (name_length && name[name_length - 1] != '/' && !strchr(name, '/') && !strchr(name, '\\') &&
-			strcmp(name, "..") && strcmp(name, ".") && *name_count < MAXIMUM_UPDATE_FILES)
+			strcmp(name, "..") && strcmp(name, "."))
 		{
 			int method = (int)zip_word(header + 10);
+
+			/* port: a release with more files than this build can install is refused, not installed in part (the
+			files past the limit were left out, and the update still counted as done) */
+			if (*name_count >= MAXIMUM_UPDATE_FILES)
+			{
+				snprintf(error, error_size, "the download has more files than this build can install (%d)",
+					MAXIMUM_UPDATE_FILES);
+				goto done;
+			}
 
 			if (method != 0 && method != 8)
 			{

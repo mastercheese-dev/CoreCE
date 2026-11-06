@@ -229,6 +229,8 @@ context has the extension, never required (gl_functions.c). On ES 3.0 and
 	X(glBindVertexBuffer) \
 	X(glBindTextures) \
 	X(glGetQueryBufferObjectuiv) \
+	X(glCreateQueries) \
+	X(glDeleteQueries) \
 	X(glVertexAttrib4fv) \
 	X(glVertexAttribI4ui) \
 	X(glDrawArrays) \
@@ -470,6 +472,8 @@ pointers, sees the declarations without these aliases */
 #define glBindVertexBuffer halo_glBindVertexBuffer
 #define glBindTextures halo_glBindTextures
 #define glGetQueryBufferObjectuiv halo_glGetQueryBufferObjectuiv
+#define glCreateQueries halo_glCreateQueries
+#define glDeleteQueries halo_glDeleteQueries
 #define glVertexAttrib4fv halo_glVertexAttrib4fv
 #define glVertexAttribI4ui halo_glVertexAttribI4ui
 #define glDrawArrays halo_glDrawArrays

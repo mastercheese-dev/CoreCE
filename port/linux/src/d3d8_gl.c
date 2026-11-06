@@ -1999,6 +1999,48 @@ static BOOL bind_targets(BOOL *has_depth)
 
 /* ---------- device creation */
 
+#ifndef HALO_GLES
+/* AMD's glGenQueries can hand back zeros and the same name twice, so the
+occlusion tests behind lens flares never run. glCreateQueries (core 4.5)
+makes the objects immediately. A bad pool falls back to glGenQueries. */
+static int visibility_query_compare(const void *left, const void *right)
+{
+	GLuint a = *(const GLuint *)left;
+	GLuint b = *(const GLuint *)right;
+
+	return (a > b) - (a < b);
+}
+
+static void visibility_queries_create(GLuint *queries, unsigned long count)
+{
+	GLuint *ordered;
+	unsigned long index, zeros = 0, duplicates = 0;
+
+	memset(queries, 0, count * sizeof(*queries));
+	glCreateQueries(VISIBILITY_QUERY, (GLsizei)count, queries);
+	ordered = malloc(count * sizeof(*ordered));
+	if (!ordered)
+		return;
+	memcpy(ordered, queries, count * sizeof(*queries));
+	qsort(ordered, count, sizeof(*ordered), visibility_query_compare);
+	for (index = 0; index < count; index++)
+	{
+		zeros += ordered[index] == 0;
+		duplicates += index && ordered[index] && ordered[index] == ordered[index - 1];
+	}
+	free(ordered);
+	/* a pool of zeros or repeated names is the AMD glGenQueries failure.
+	glCreateQueries is what avoids it, so a pool that did not fail is kept. */
+	if (zeros || duplicates)
+	{
+		platform_log("GPU: visibility queries from glCreateQueries had zeros=%lu duplicates=%lu; using glGenQueries",
+			zeros, duplicates);
+		glDeleteQueries((GLsizei)count, queries);
+		glGenQueries((GLsizei)count, queries);
+	}
+}
+#endif
+
 static void gl_initialize(void)
 {
 	GLint major = 0, minor = 0;
@@ -2107,8 +2149,13 @@ static void gl_initialize(void)
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
 #endif
 	glGenSamplers(D3DTSS_MAXSTAGES, device.samplers);
+#ifdef HALO_GLES
 	glGenQueries(VISIBILITY_TEST_SLOTS, device.queries);
 	glGenQueries(1, &device.scratch_query);
+#else
+	visibility_queries_create(device.queries, VISIBILITY_TEST_SLOTS);
+	visibility_queries_create(&device.scratch_query, 1);
+#endif
 #ifndef HALO_GLES
 	{
 		const char *vendor = (const char *)glGetString(GL_VENDOR);
@@ -2127,8 +2174,8 @@ static void gl_initialize(void)
 				GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
 			if (device.visibility_results)
 			{
-				glGenQueries(VISIBILITY_TEST_SLOTS, device.visibility_batches[0].queries);
-				glGenQueries(VISIBILITY_TEST_SLOTS, device.visibility_batches[1].queries);
+				visibility_queries_create(device.visibility_batches[0].queries, VISIBILITY_TEST_SLOTS);
+				visibility_queries_create(device.visibility_batches[1].queries, VISIBILITY_TEST_SLOTS);
 			}
 			else
 				platform_log("cannot map the visibility test results; tests wait for the GPU");

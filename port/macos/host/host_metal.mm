@@ -1420,7 +1420,11 @@ void present_scaled(id<MTLCommandBuffer> buffer, const Texture &t,uint32_t flags
     }
     uint64_t drawable_started = metrics_start();
     auto drawable=[context.layer nextDrawable];
-    context.metrics.drawable_wait_ns += metrics_elapsed(drawable_started);
+    uint64_t drawable_wait = metrics_elapsed(drawable_started);
+    context.metrics.drawable_wait_ns += drawable_wait;
+    if (drawable_wait >= 2000000000ull)
+        host_logf(HOST_LOG_ERROR, "display: showing a frame took %.1f s in the graphics driver",
+            (double)drawable_wait / 1000000000.0);
     check(drawable != nil,HALO_METAL_GPU_ERROR,index);
     NSUInteger pixel_width=drawable.texture.width,pixel_height=drawable.texture.height;
     NSUInteger width=pixel_width,height=pixel_width * t.height / t.width;
@@ -1555,7 +1559,11 @@ void execute(const HaloMetalPacketView &packet, const Prepared &prepared) {
                 } hold{present_acquire()};
                 uint64_t drawable_started = metrics_start();
                 auto drawable = [context.layer nextDrawable];
-                context.metrics.drawable_wait_ns += metrics_elapsed(drawable_started);
+                uint64_t drawable_wait = metrics_elapsed(drawable_started);
+                context.metrics.drawable_wait_ns += drawable_wait;
+                if (drawable_wait >= 2000000000ull)
+                    host_logf(HOST_LOG_ERROR, "display: showing a frame took %.1f s in the graphics driver",
+                        (double)drawable_wait / 1000000000.0);
                 check(drawable && drawable.texture.width == t.width && drawable.texture.height == t.height && drawable.texture.pixelFormat == t.object.pixelFormat,HALO_METAL_GPU_ERROR,i);
                 auto blit = [buffer blitCommandEncoder];
                 check(blit != nil,HALO_METAL_GPU_ERROR,i);

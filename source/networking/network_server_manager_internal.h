@@ -149,6 +149,10 @@ boolean network_game_server_lobby_is_open(
 boolean network_game_server_client_machine_may_slow_countdown(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *machine);
+/* the countdown event a machine's faster makes (the host's starts the game) */
+short network_game_server_client_machine_faster_event(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *machine);
 /* port: check if game started with only one team */
 boolean network_game_server_started_with_single_team(
 	struct network_game_server *server);

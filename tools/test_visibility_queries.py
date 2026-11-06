@@ -13,6 +13,7 @@ HARNESS = r"""
 #include <stdio.h>
 #define HALO_ANDROID 1
 #define HALO_MACOS 1
+#define HALO_GLES 1
 #define WINAPI
 #define TRUE 1
 #define FALSE 0
@@ -34,10 +35,18 @@ static struct {
     BOOL query_pending[VISIBILITY_TEST_SLOTS];
     GLuint query_results[VISIBILITY_TEST_SLOTS];
     float query_area[VISIBILITY_TEST_SLOTS];
+    GLuint scratch_query;
     GLuint visibility_counters, counter_next, counter_active;
     GLuint counter_of_slot[VISIBILITY_TEST_SLOTS];
+    GLuint visibility_known[VISIBILITY_TEST_SLOTS];
+    GLuint visibility_latest[VISIBILITY_TEST_SLOTS];
+    BOOL visibility_unread[VISIBILITY_TEST_SLOTS];
+    unsigned long ring_test_count[3];
+    unsigned buffer_ring;
+    unsigned short ring_tests[3][VISIBILITY_TEST_SLOTS][2];
 } device;
 static float target_scale[2] = {1,1};
+static int target_samples = 1;
 static GLuint active_query, next_samples;
 static struct { GLuint samples, available; } gpu[VISIBILITY_TEST_SLOTS + 2];
 static void glBeginQuery(unsigned target, GLuint query) {
@@ -75,6 +84,7 @@ static void complete_gpu(void) {
 }
 int main(void) {
     device.gl_ready = 1;
+    device.scratch_query = VISIBILITY_TEST_SLOTS + 1;
     for (unsigned i = 0; i <= VISIBILITY_TEST_SLOTS; i++) device.queries[i] = i + 1;
     /* Adjacent effects must not share a result, including the valid slot zero. */
     submit(0, 1); submit(1, 0); submit(VISIBILITY_TEST_SLOTS - 1, 1);

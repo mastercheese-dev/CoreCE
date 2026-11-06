@@ -149,6 +149,18 @@ boolean custom_edition_cache_campaign(
 boolean custom_edition_cache_multiplayer(
 	char const *file_name);
 
+/* A protected map's structure BSP is handed to this before its geometry is
+checked, so the references it holds can name the groups its tags lost. */
+void custom_edition_structure_bsp_proc_set(
+	void (*proc)(
+		void *tag_cache,
+		unsigned long tag_data_bytes,
+		long bsp_index,
+		void *bsp,
+		unsigned long bsp_bytes,
+		unsigned long bsp_address,
+		char const *map_name));
+
 /* Loads the Custom Edition map `map_name` names into its tag cache and
 converts its tags for this build, copying its cache header to `header`
 (CACHE_FILE_HEADER_BYTES bytes); returns its tag index header, or NULL after
