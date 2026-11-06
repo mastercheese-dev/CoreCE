@@ -84,53 +84,14 @@ int posix_register_url_scheme(const char *scheme, const char *description)
 int posix_user_secret(unsigned char *secret, int size)
 {
 	/* in the user's local application data, which only they (and the
-	system's administrators) can read, under a CoreCE folder other
-	clients do not use */
-	char directory[MAX_PATH], path[MAX_PATH + 64], legacy[MAX_PATH + 64];
+	system's administrators) can read, the same key file OpenCE uses */
+	char directory[MAX_PATH], path[MAX_PATH + 64];
 	DWORD length = GetEnvironmentVariableA("LOCALAPPDATA", directory, sizeof(directory));
 	int attempt;
 
 	if (!length || length >= sizeof(directory) || size <= 0)
 		return 0;
-	snprintf(path, sizeof(path), "%s\\CoreCE", directory);
-	CreateDirectoryA(path, NULL);
-	snprintf(path, sizeof(path), "%s\\CoreCE\\halo-ce-universal.key", directory);
-	snprintf(legacy, sizeof(legacy), "%s\\halo-ce-universal.key", directory);
-	/* The older file sits where other clients still read it. Copy it once
-	so a link already sent still opens, and leave that file in place. */
-	{
-		HANDLE existing = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-
-		if (existing == INVALID_HANDLE_VALUE && GetLastError() == ERROR_FILE_NOT_FOUND)
-		{
-			HANDLE source = CreateFileA(legacy, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-				OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-
-			if (source != INVALID_HANDLE_VALUE)
-			{
-				DWORD done = 0;
-				BOOL copied = ReadFile(source, secret, (DWORD)size, &done, NULL) && done == (DWORD)size;
-
-				CloseHandle(source);
-				if (copied)
-				{
-					HANDLE created = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL,
-						CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
-
-					if (created != INVALID_HANDLE_VALUE)
-					{
-						copied = WriteFile(created, secret, (DWORD)size, &done, NULL) && done == (DWORD)size;
-						CloseHandle(created);
-						if (!copied)
-							DeleteFileA(path);
-					}
-				}
-			}
-		}
-		else if (existing != INVALID_HANDLE_VALUE)
-			CloseHandle(existing);
-	}
+	snprintf(path, sizeof(path), "%s\\halo-ce-universal.key", directory);
 	for (attempt = 0; attempt < 3; attempt++)
 	{
 		DWORD done = 0;

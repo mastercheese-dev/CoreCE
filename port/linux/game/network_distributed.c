@@ -3515,6 +3515,11 @@ static void distributed_match_start(
 		distributed_send(&message, _distributed_message_match_ready, 0,
 			(word)sizeof(message), _distributed_to_host_reliably);
 		distributed_match_ready_ms = now;
+		/* An OpenCE host never sends match go. Its clock moving means
+		the match is already going, so the ring lets go. */
+		if (distributed_host_time != NONE && distributed_host_time > 0 &&
+			hardcore_rules_opening_film_at_fade())
+			hardcore_rules_opening_go(distributed_host_time, FALSE);
 		return;
 	}
 	if (connection != _game_connection_network_server)
@@ -4485,6 +4490,11 @@ void network_distributed_handle_message(
 	case _distributed_message_client_ready:
 	case _distributed_message_match_ready: entry_size = 0; break;
 	case _distributed_message_match_go: entry_size = sizeof(long); break;
+	case _distributed_message_shield_effects: entry_size = 4; break;
+	case _distributed_message_client_build: entry_size = 748; break;
+	case _distributed_message_fire_origins: entry_size = 8; break;
+	case _distributed_message_map_vote: entry_size = 0; break;
+	case _distributed_message_map_vote_choice: entry_size = 4; break;
 	case _distributed_message_client_identity: entry_size = sizeof(struct distributed_client_identity); break;
 	case _distributed_message_screen_share: entry_size = sizeof(unsigned char); break;
 	case _distributed_message_screen_share_down: entry_size = 2 * sizeof(unsigned char); break;
@@ -4770,6 +4780,12 @@ void network_distributed_handle_message(
 		error(_error_log, "the host: %s", text);
 		break;
 	}
+	case _distributed_message_shield_effects:
+	case _distributed_message_client_build:
+	case _distributed_message_fire_origins:
+	case _distributed_message_map_vote:
+	case _distributed_message_map_vote_choice:
+		break;
 	case _distributed_message_match_ready:
 		if (machine_index >= 0 && machine_index < HALO_PORT_MAXIMUM_NETWORK_MACHINES)
 			distributed_match_ready[machine_index] = TRUE;

@@ -443,7 +443,14 @@ struct message_client_join_game_request
 	byte join_game_token[JOIN_GAME_TOKEN_LENGTH];
 	/* port: the machine's hardware id, as hex, as it tells it (p2p.c) */
 	char hardware_id[0x20];
+	/* port: a Discord account pass and its proof. a host that asks for an
+	account reads them; this host leaves them unread */
+	byte link_pass[170];
+	byte link_proof[64];
 };
+
+typedef char message_client_join_game_request_size_assert[
+	sizeof(struct message_client_join_game_request) == 0x70 + 170 + 64 ? 1 : -1];
 
 struct message_client_settings_request
 {

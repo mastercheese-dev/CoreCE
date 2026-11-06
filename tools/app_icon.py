@@ -3,13 +3,13 @@
 
     python tools/app_icon.py
 
-- corece-icon.png: the Windows executable's icon (port/windows/corece-icon.ico,
+- opence-icon.png: the Windows executable's icon (port/windows/opence-icon.ico,
   which port/windows/halo.rc puts in halo.exe), the Linux and Windows window
-  icon (corece-icon-256.png, which tools/embed_assets.py embeds and
+  icon (opence-icon-256.png, which tools/embed_assets.py embeds and
   sdl_platform.c gives the window), and the Mac app icon
   (tools/macos_build.py);
-- corece-icon-render.png, the CoreCE wordmark (1024x1024, the same picture
-  as corece-icon.png): the Android app's launcher icon.
+- opence-icon-render.png, the OpenCE wordmark (1024x1024, the same picture
+  as opence-icon.png): the Android app's launcher icon.
 
 The launcher icon is an adaptive one (Android 8 and later): the wordmark as its
 foreground layer, a black field as its background layer, and the wordmark's
@@ -31,10 +31,10 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 ARTWORK = ROOT / "port/assets/icon"
-ICON = ARTWORK / "corece-icon.png"
-RENDER = ARTWORK / "corece-icon-render.png"
-WINDOW_ICON = ARTWORK / "corece-icon-256.png"
-WINDOWS_ICON = ROOT / "port/windows/corece-icon.ico"
+ICON = ARTWORK / "opence-icon.png"
+RENDER = ARTWORK / "opence-icon-render.png"
+WINDOW_ICON = ARTWORK / "opence-icon-256.png"
+WINDOWS_ICON = ROOT / "port/windows/opence-icon.ico"
 RESOURCES = ROOT / "port/android/app/src/main/res"
 
 # the layers' size, and the part of them a launcher shows, in dp

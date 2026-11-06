@@ -41,8 +41,8 @@ GL = BUILD / "toolchain/gl"
 APP_ICON = "AppIcon.icns"
 APP_VERSION = "0.3.0"
 APP_BUILD = "12"
-APP_NAME = "CoreCE"
-LEGACY_APP_NAMES = ("OpenCE.app", "Halo CE Universal.app", "Halo OG.app")
+APP_NAME = "OpenCE"
+LEGACY_APP_NAMES = ("Halo CE Universal.app", "Halo OG.app")
 
 
 def run(*args):
@@ -67,7 +67,7 @@ def build_plugin():
 
 
 def resolve_update_build(explicit):
-    """This app's Mac release number. A newer tag on mastercheese-dev/CoreCE is offered.
+    """This app's Mac release number. A newer tag on mastercheese-dev/OpenCE is offered.
     Zero does not look. The guest updater does not run in this build."""
     if explicit is None:
         raw = os.environ.get("HALO_MAC_UPDATE_BUILD", "0")
@@ -150,7 +150,7 @@ def build_host(update_build):
 
 
 def package_icon(resources):
-    source = require(ROOT / "port/assets/icon/corece-icon.png")
+    source = require(ROOT / "port/assets/icon/opence-icon.png")
     with tempfile.TemporaryDirectory(prefix="halo-macos-icon-") as temporary:
         iconset = Path(temporary) / "AppIcon.iconset"
         iconset.mkdir()
@@ -298,7 +298,7 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
         "CFBundlePackageType": "APPL", "CFBundleShortVersionString": version,
         "CFBundleVersion": build, "LSMinimumSystemVersion": minimum_macos_version([
             executable, sdl, *angle_libraries, sparkle / "Sparkle", *content_binaries]),
-        "CFBundleURLTypes": [{"CFBundleURLName": "CoreCE",
+        "CFBundleURLTypes": [{"CFBundleURLName": "OpenCE",
                               # Match the shared discord.application_id default.
                               "CFBundleURLSchemes": ["halo", "discord-1553978809840050229"],
                               "CFBundleTypeRole": "Viewer"}],
@@ -310,8 +310,8 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
     if update_build > 0:
         if update_channel not in ("main", "testing"):
             raise RuntimeError("The Mac update channel must be main or testing")
-        info["CoreCEMacUpdateBuild"] = update_build
-        info["CoreCEMacUpdateChannel"] = update_channel
+        info["OpenCEMacUpdateBuild"] = update_build
+        info["OpenCEMacUpdateChannel"] = update_channel
     configuration = json.loads((ROOT / "port/macos/release-config.json").read_text())
     if release:
         updates = update_configuration(configuration)
@@ -492,7 +492,7 @@ def main():
     parser.add_argument("--version", default=APP_VERSION)
     parser.add_argument("--build-number", default=APP_BUILD)
     parser.add_argument("--update-build", type=int, default=None,
-                        help="Offer a newer Mac release from mastercheese-dev/CoreCE. 0 does not look.")
+                        help="Offer a newer Mac release from mastercheese-dev/OpenCE. 0 does not look.")
     parser.add_argument("--update-channel", choices=("main", "testing"), default=None,
                         help="main follows build-N. testing follows testing-N prereleases.")
     parser.add_argument("--content-tools", type=Path, metavar="TOOLCHAIN_DIRECTORY",

@@ -1769,12 +1769,14 @@ static void brokers_list(char *text, size_t size)
 	text[0] = 0;
 #ifdef HALO_WEB
 	{
-		/* a page reaches the broker over WebSockets when it names one
-		(?brokers=, for tests). Otherwise it uses the same broker. */
+		/* a page reaches brokers over WebSockets alone (web_net.c): the
+		WebSocket URLs of brokers.txt's that have them, or those the page
+		names (?brokers=, for tests) */
 		const char *page = getenv("HALO_WEB_BROKERS");
 
 		(void)name, (void)path, (void)file, (void)file_size, (void)index, (void)length, (void)comment;
-		snprintf(text, size, "%s", page && *page ? page : "net.corece.org:1883");
+		snprintf(text, size, "%s", page && *page ? page :
+			"wss://broker.emqx.io:8084/mqtt,wss://broker.hivemq.com:8884/mqtt,wss://test.mosquitto.org:8081/mqtt");
 		return;
 	}
 #endif

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="680" height="440" viewBox="0 0 680 440">
-  <title>CoreCE installer</title>
-  <desc>Drag CoreCE to Applications. Finder supplies the application and Applications folder icons.</desc>
+  <title>OpenCE installer</title>
+  <desc>Drag OpenCE to Applications. Finder supplies the application and Applications folder icons.</desc>
   <defs>
     <linearGradient id="base" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#08121f"/>
@@ -25,9 +25,9 @@
   </g>
 
   <g text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
-    <text x="340" y="80" fill="#f2f6fc" font-size="34" font-weight="500" letter-spacing="0.4">CoreCE</text>
-    <text x="340" y="113" fill="#b6c7df" font-size="16">Drag CoreCE to Applications</text>
-    <text x="340" y="348" fill="#90a5c3" font-size="13">Then open CoreCE from Applications.</text>
+    <text x="340" y="80" fill="#f2f6fc" font-size="34" font-weight="500" letter-spacing="0.4">OpenCE</text>
+    <text x="340" y="113" fill="#b6c7df" font-size="16">Drag OpenCE to Applications</text>
+    <text x="340" y="348" fill="#90a5c3" font-size="13">Then open OpenCE from Applications.</text>
   </g>
 
   <path d="M 274 220 H 406 M 396 210 L 406 220 L 396 230"

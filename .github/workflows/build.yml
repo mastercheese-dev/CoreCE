@@ -16,7 +16,7 @@ name: Build
 # - artifacts are kept for three days.
 #
 # CI artifacts are not a release. Releases are published by hand, as AGENTS.md
-# describes, on mastercheese-dev/CoreCE.
+# describes, on mastercheese-dev/OpenCE.
 on:
   push:
     paths-ignore:

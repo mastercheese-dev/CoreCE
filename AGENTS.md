@@ -16,7 +16,7 @@ Windows clients are at 30, Mac clients at 52, and Linux clients at 58, so a main
 
 Each tag carries all three of these files:
 
-- `CoreCE-macos-arm64.dmg`
+- `OpenCE-macos-arm64.dmg`
 - `halo-windows-release.zip`
 - `halo-linux-release.zip`
 
@@ -34,7 +34,7 @@ The title is the version, Mac, Windows, and Linux, and the tag. The version in t
 
 ## Stamp
 
-Windows and Linux release builds set `HALO_BUILD_NUMBER` to that tag's number, `HALO_BUILD_CHANNEL` to `main` or `testing`, and `HALO_UPDATE_REPOSITORY` to `mastercheese-dev/CoreCE`. Those zip names come from a release build. A debug build looks for a different zip and is not a published update.
+Windows and Linux release builds set `HALO_BUILD_NUMBER` to that tag's number, `HALO_BUILD_CHANNEL` to `main` or `testing`, and `HALO_UPDATE_REPOSITORY` to `mastercheese-dev/OpenCE`. Those zip names come from a release build. A debug build looks for a different zip and is not a published update.
 
 A Mac release passes that same number to `--build-number` and `--update-build`, and passes `main` or `testing` to `--update-channel`.
 

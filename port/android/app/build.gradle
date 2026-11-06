@@ -13,7 +13,7 @@ def buildNumber = buildNumberText.isInteger() ? buildNumberText.toInteger() : 0
 def updateChannel = System.getenv("HALO_BUILD_CHANNEL") ?: "main"
 if (updateChannel != "main" && updateChannel != "testing")
     updateChannel = "main"
-def updateRepository = System.getenv("HALO_UPDATE_REPOSITORY") ?: "mastercheese-dev/CoreCE"
+def updateRepository = System.getenv("HALO_UPDATE_REPOSITORY") ?: "mastercheese-dev/OpenCE"
 def installBuildNumberText = providers.gradleProperty("haloInstallBuildNumber").getOrElse(buildNumberText)
 def installBuildNumber = installBuildNumberText.isInteger() ? installBuildNumberText.toInteger() : 0
 

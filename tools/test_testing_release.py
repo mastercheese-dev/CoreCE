@@ -104,7 +104,7 @@ class TestingReleaseTests(unittest.TestCase):
         self.assertIn(f"[downrush.map]({release.DOWNRUSH_URL})", notes)
         self.assertIn(f"`{release.DOWNRUSH_SHA256}`", notes)
         self.assertIn("Downloads default off", notes)
-        self.assertIn("~/Library/Application Support/CoreCE/", notes)
+        self.assertIn("~/Library/Application Support/OpenCE/", notes)
         self.assertIn("physical cross-platform and Internet/NAT play still need testing", notes)
         self.assertNotIn("/blob/main/", notes)
         (self.directory / "release-notes.md").write_text(notes.replace(SHA, "b" * 40))

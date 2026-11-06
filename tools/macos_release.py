@@ -147,7 +147,7 @@ def local_dmg(args):
     run("codesign", "--verify", "--deep", "--strict", app)
     with (app / "Contents/Info.plist").open("rb") as stream:
         info = plistlib.load(stream)
-    destination = args.output or ROOT / "build/macos" / ("CoreCE-" + info["CFBundleShortVersionString"] + "-local.dmg")
+    destination = args.output or ROOT / "build/macos" / ("OpenCE-" + info["CFBundleShortVersionString"] + "-local.dmg")
     create_dmg(app, destination.resolve())
     print("Local test DMG (not notarized or approved for public distribution): " + str(destination))
 
@@ -182,7 +182,7 @@ def build_release(args):
     app_notary = notarize(app_zip, args.notary_profile)
     run("xcrun", "stapler", "staple", APP)
     run("spctl", "--assess", "--type", "execute", APP)
-    dmg = destination / ("CoreCE-" + args.version + ".dmg")
+    dmg = destination / ("OpenCE-" + args.version + ".dmg")
     create_dmg(APP, dmg)
     run("codesign", "--sign", args.sign_identity, "--timestamp", dmg)
     dmg_notary = notarize(dmg, args.notary_profile)
@@ -267,7 +267,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("setup-updates", help="Create Halo's separate Sparkle key in the login Keychain")
     local = commands.add_parser("local-dmg", help="Package a verified asset-free local app without hosting or Developer ID")
-    local.add_argument("--app", type=Path, default=APP, help="Existing signed CoreCE.app to package")
+    local.add_argument("--app", type=Path, default=APP, help="Existing signed OpenCE.app to package")
     local.add_argument("--output", type=Path)
     build = commands.add_parser("build")
     build.add_argument("--version", default=APP_VERSION)

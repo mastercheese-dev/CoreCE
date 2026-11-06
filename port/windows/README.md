@@ -49,20 +49,16 @@ The game finds the game data as on Linux. Refer to "Start the game" in
 | Item | Location |
 | --- | --- |
 | Settings | `config.toml` next to `halo.exe` |
-| Saved games | `%APPDATA%\CoreCE`, or `paths.saves` in `config.toml` |
+| Saved games | `%APPDATA%\halo`, or `paths.saves` in `config.toml` |
 | Log | `debug.txt` in the data root (the folder that contains `maps\`) |
 | Log of the port | The console. The release build has no console: `halo.log` next to `halo.exe` |
 | Crash reports | `crashes\` next to `halo.exe`, until the game sends them |
 
-The first launch copies regular files and folders from `%APPDATA%\Halo OG`
-into `%APPDATA%\CoreCE`, or from `%APPDATA%\halo` when that is the folder still
-in use, preserving the original files and any files already in the new folder.
-A failed copy or reparse point is reported in the log and keeps the old save
-root for that run; retry after correcting the issue. Explicit `paths.saves` or
-`HALO_SAVE_ROOT` values keep their exact folder without migration. Settings
-stay beside the executable. The invitation key moves to
-`%LOCALAPPDATA%\CoreCE`. An older key file is copied once and left in place,
-so previously issued links still work.
+The save root is `paths.saves` in `config.toml`. If that setting is empty,
+saves go in `%APPDATA%\halo`, the same folder OpenCE uses. Explicit
+`paths.saves` or `HALO_SAVE_ROOT` values select their exact folder. Settings
+stay beside the executable. The invitation key is
+`%LOCALAPPDATA%\halo-ce-universal.key`.
 
 ## How the port operates
 

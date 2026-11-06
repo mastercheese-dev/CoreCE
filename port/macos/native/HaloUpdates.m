@@ -129,10 +129,10 @@ NSString *HaloForkUpdateChannelFromTag(NSString *tag) {
 
 NSString *HaloForkUpdateAssetName(NSString *tag) {
     if (tagMatch(buildTagPattern(), tag) || tagMatch(testingTagPattern(), tag))
-        return @"CoreCE-macos-arm64.dmg";
+        return @"OpenCE-macos-arm64.dmg";
     NSTextCheckingResult *legacy = tagMatch(legacyTagPattern(), tag);
     if (!legacy) return nil;
-    return [NSString stringWithFormat:@"CoreCE-macos-arm64-net%@-mac%@.dmg",
+    return [NSString stringWithFormat:@"OpenCE-macos-arm64-net%@-mac%@.dmg",
         tagGroup(tag, legacy, 1), tagGroup(tag, legacy, 2)];
 }
 
@@ -140,7 +140,7 @@ BOOL HaloForkUpdateDownloadIsTrusted(NSString *tag, NSString *url) {
     NSString *asset = HaloForkUpdateAssetName(tag);
     if (!asset || ![url isKindOfClass:NSString.class]) return NO;
     NSString *expected = [NSString stringWithFormat:
-        @"https://github.com/mastercheese-dev/CoreCE/releases/download/%@/%@", tag, asset];
+        @"https://github.com/mastercheese-dev/OpenCE/releases/download/%@/%@", tag, asset];
     return [url isEqualToString:expected];
 }
 
@@ -399,7 +399,7 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
 - (NSString *)channel {
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfURL:
         [_bundleURL URLByAppendingPathComponent:@"Contents/Info.plist"]];
-    return [info[@"CoreCEMacUpdateChannel"] isEqual:@"testing"] ? @"testing" : @"main";
+    return [info[@"OpenCEMacUpdateChannel"] isEqual:@"testing"] ? @"testing" : @"main";
 }
 - (BOOL)setAutomatic:(BOOL)automatic error:(NSError **)error {
     NSString *updated = HaloConfigSetAutomaticUpdates([self configText], automatic);
@@ -452,7 +452,7 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
 - (NSData *)fetch:(NSURL *)url method:(NSString *)method error:(NSError **)error {
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
     request.HTTPMethod = method;
-    [request setValue:@"CoreCE-Mac" forHTTPHeaderField:@"User-Agent"];
+    [request setValue:@"OpenCE-Mac" forHTTPHeaderField:@"User-Agent"];
     [request setValue:@"application/vnd.github+json" forHTTPHeaderField:@"Accept"];
     dispatch_semaphore_t gate = dispatch_semaphore_create(0);
     __block NSData *body = nil;
@@ -493,7 +493,7 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
            The page is only the newest hundred tags. A run of testing
            prereleases can push the main release off it, so the one GitHub
            calls latest (never a prerelease) is added too. */
-        NSURL *api = [NSURL URLWithString:@"https://api.github.com/repos/mastercheese-dev/CoreCE/releases?per_page=100"];
+        NSURL *api = [NSURL URLWithString:@"https://api.github.com/repos/mastercheese-dev/OpenCE/releases?per_page=100"];
         NSData *body = [self fetch:api method:@"GET" error:&error];
         id json = body ? [NSJSONSerialization JSONObjectWithData:body options:0 error:&error] : nil;
         if (!error && ![json isKindOfClass:NSArray.class])
@@ -501,7 +501,7 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
         if (!error) {
             NSMutableArray *releases = [json mutableCopy];
             NSError *latestError = nil;
-            NSURL *latestURL = [NSURL URLWithString:@"https://api.github.com/repos/mastercheese-dev/CoreCE/releases/latest"];
+            NSURL *latestURL = [NSURL URLWithString:@"https://api.github.com/repos/mastercheese-dev/OpenCE/releases/latest"];
             NSData *latestBody = [self fetch:latestURL method:@"GET" error:&latestError];
             id latestJSON = latestBody ? [NSJSONSerialization JSONObjectWithData:latestBody options:0 error:&latestError] : nil;
             NSString *found = nil;
@@ -554,7 +554,7 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
 
 - (BOOL)installDownload:(NSURL *)download expectedBuild:(long)build historyDirectory:(NSURL *)historyDirectory
     error:(NSError **)error progress:(void (^)(unsigned long long, unsigned long long))progress {
-    /* path is /mastercheese-dev/CoreCE/releases/download/<tag>/<asset> */
+    /* path is /mastercheese-dev/OpenCE/releases/download/<tag>/<asset> */
     NSArray<NSString *> *parts = [download.path componentsSeparatedByString:@"/"];
     NSString *tag = parts.count >= 2 ? parts[parts.count - 2] : nil;
     NSString *incoming = HaloForkUpdateChannelFromTag(tag);
@@ -565,12 +565,12 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
     /* The same channel only moves forward. Switching channel installs the
        release that was chosen, even when its number is lower. */
     if (([incoming isEqual:[self channel]] && build <= self.build) ||
-        ![_bundleURL.lastPathComponent isEqualToString:@"CoreCE.app"]) {
-        if (error) *error = updateFailure(@"This copy of CoreCE cannot replace itself.");
+        ![_bundleURL.lastPathComponent isEqualToString:@"OpenCE.app"]) {
+        if (error) *error = updateFailure(@"This copy of OpenCE cannot replace itself.");
         return NO;
     }
     if (![NSFileManager.defaultManager isWritableFileAtPath:_bundleURL.URLByDeletingLastPathComponent.path]) {
-        if (error) *error = updateFailure(@"CoreCE cannot replace the installed app. It is not writable.");
+        if (error) *error = updateFailure(@"OpenCE cannot replace the installed app. It is not writable.");
         return NO;
     }
     NSString *root = NSTemporaryDirectory();
@@ -582,7 +582,7 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
     _downloadError = nil;
     _downloadGate = dispatch_semaphore_create(0);
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:download];
-    [request setValue:@"CoreCE-Mac" forHTTPHeaderField:@"User-Agent"];
+    [request setValue:@"OpenCE-Mac" forHTTPHeaderField:@"User-Agent"];
     self.downloadProgress = progress;
     [[_session downloadTaskWithRequest:request] resume];
     dispatch_semaphore_wait(_downloadGate, DISPATCH_TIME_FOREVER);
@@ -614,13 +614,13 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
         if (error) *error = updateFailure(@"The disk image did not mount.");
         return NO;
     }
-    NSURL *source = [NSURL fileURLWithPath:[mount stringByAppendingPathComponent:@"CoreCE.app"] isDirectory:YES];
+    NSURL *source = [NSURL fileURLWithPath:[mount stringByAppendingPathComponent:@"OpenCE.app"] isDirectory:YES];
     BOOL copied = [NSFileManager.defaultManager createDirectoryAtURL:staged withIntermediateDirectories:YES attributes:nil error:error] &&
-        [self runTool:@"/usr/bin/ditto" arguments:@[source.path, [staged URLByAppendingPathComponent:@"CoreCE.app"].path]
+        [self runTool:@"/usr/bin/ditto" arguments:@[source.path, [staged URLByAppendingPathComponent:@"OpenCE.app"].path]
             output:nil error:error] != nil;
     [self runTool:@"/usr/bin/hdiutil" arguments:@[@"detach", mount] output:nil error:nil];
     [NSFileManager.defaultManager removeItemAtURL:dmg error:nil];
-    NSURL *app = [staged URLByAppendingPathComponent:@"CoreCE.app" isDirectory:YES];
+    NSURL *app = [staged URLByAppendingPathComponent:@"OpenCE.app" isDirectory:YES];
     if (!copied) {
         [NSFileManager.defaultManager removeItemAtURL:staged error:nil];
         return NO;
@@ -631,9 +631,9 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
         return NO;
     }
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfURL:[app URLByAppendingPathComponent:@"Contents/Info.plist"]];
-    NSNumber *marked = info[@"CoreCEMacUpdateBuild"];
-    NSString *markedChannel = [info[@"CoreCEMacUpdateChannel"] isKindOfClass:NSString.class] &&
-        [info[@"CoreCEMacUpdateChannel"] length] ? info[@"CoreCEMacUpdateChannel"] : @"main";
+    NSNumber *marked = info[@"OpenCEMacUpdateBuild"];
+    NSString *markedChannel = [info[@"OpenCEMacUpdateChannel"] isKindOfClass:NSString.class] &&
+        [info[@"OpenCEMacUpdateChannel"] length] ? info[@"OpenCEMacUpdateChannel"] : @"main";
     if (![info[@"CFBundleIdentifier"] isEqual:@"local.halo.ce-universal"] ||
         ![marked isKindOfClass:NSNumber.class] || marked.longValue != build ||
         ![markedChannel isEqual:incoming]) {
@@ -669,15 +669,15 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
         "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done\n"
         "sleep 0.5\n"
         "parent=$(dirname \"$3\")\n"
-        "holding=\"$parent/.CoreCE-update\"\n"
+        "holding=\"$parent/.OpenCE-update\"\n"
         "previous=\"$3.previous\"\n"
         "rm -rf \"$holding\" \"$previous\"\n"
         "mkdir -p \"$holding\"\n"
-        "ditto \"$2\" \"$holding/CoreCE.app\" || fail\n"
-        "xattr -dr com.apple.quarantine \"$holding/CoreCE.app\" || true\n"
-        "codesign --verify --deep --strict \"$holding/CoreCE.app\" || fail\n"
+        "ditto \"$2\" \"$holding/OpenCE.app\" || fail\n"
+        "xattr -dr com.apple.quarantine \"$holding/OpenCE.app\" || true\n"
+        "codesign --verify --deep --strict \"$holding/OpenCE.app\" || fail\n"
         "mv \"$3\" \"$previous\" || fail\n"
-        "if ! mv \"$holding/CoreCE.app\" \"$3\"; then mv \"$previous\" \"$3\" || true; fail; fi\n"
+        "if ! mv \"$holding/OpenCE.app\" \"$3\"; then mv \"$previous\" \"$3\" || true; fail; fi\n"
         "note \"$ok\"\n"
         "rm -rf \"$previous\" \"$holding\" \"$(dirname \"$2\")\"\n"
         "sleep 0.4\n"
@@ -704,7 +704,7 @@ NSString *HaloConfigUpdateAnswer(NSString *text) {
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attr);
     if (spawned != 0) {
-        if (error) *error = updateFailure(@"CoreCE could not start the installer.");
+        if (error) *error = updateFailure(@"OpenCE could not start the installer.");
         return NO;
     }
     return YES;

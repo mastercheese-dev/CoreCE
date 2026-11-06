@@ -616,6 +616,10 @@ struct message_client_join_game_request
 	byte join_token[0x10];
 	/* port: this machine's hardware id, as hex (p2p.c's p2p_hardware_id) */
 	char hardware_id[0x20];
+	/* port: a Discord account pass and its proof. zero: this build has no
+	account to show, and a host treats that as none */
+	byte link_pass[170];
+	byte link_proof[64];
 };
 
 struct message_client_map_is_precached_pregame
@@ -742,8 +746,9 @@ typedef char message_client_broadcast_game_search_size_assert[
 	sizeof(struct message_client_broadcast_game_search) == 0xC ? 1 : -1];
 typedef char message_client_ping_size_assert[
 	sizeof(struct message_client_ping) == 8 ? 1 : -1];
+/* (port: a Discord account pass and its proof after the Xbox's 0x70) */
 typedef char message_client_join_game_request_size_assert[
-	sizeof(struct message_client_join_game_request) == 0x70 ? 1 : -1];
+	sizeof(struct message_client_join_game_request) == 0x70 + 170 + 64 ? 1 : -1];
 typedef char network_game_client_seconds_to_game_start_offset_assert[
 	offsetof(struct network_game_client, seconds_to_game_start) == NETWORK_GAME_CLIENT_TAIL_OFFSET + 0x10 ? 1 : -1];
 typedef char network_game_client_error_offset_assert[
@@ -3425,6 +3430,26 @@ boolean network_game_client_advertised_game_compatible(
 		platform_show_message("Halo: cannot join this game", message);
 	}
 	return FALSE;
+}
+
+/* the advertised game's network version, for the browser's order. a practice
+listing names 0x800B in place of this build's version */
+unsigned network_game_client_advertised_version(
+	void *client,
+	void const *game)
+{
+	struct network_game_client *network_client = client;
+	struct network_advertised_game const *advertised = game;
+	long game_index;
+	unsigned version;
+
+	game_index = network_client && advertised ? advertised - network_client->available_games : NONE;
+	if (game_index < 0 || game_index >= MAXIMUM_NETWORK_ADVERTISED_GAMES)
+		return 0;
+	version = network_game_client_advertised_versions[game_index].version;
+	if (version == NETWORK_PERFORMANCE_ADVERTISED_VERSION)
+		version = HALO_PORT_NETWORK_VERSION;
+	return version;
 }
 
 /* port: whether the advertised game is under way (HALO_PORT_ADVERTISED_IN_PROGRESS_FLAG),

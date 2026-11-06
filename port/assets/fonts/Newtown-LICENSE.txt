@@ -4,7 +4,7 @@ Copyright (c) Roger White, 1994. Released by its author into the public domain.
 Newtown-Regular.ttf is the TrueType file of Newtown, as Roger White
 distributed it (NEWTOW__.TTF, version 1.00, SHA-256
 376d82c5b660c059c182d848d0a96da9dbe7277d7c8820f6e9a2c99b1a256c65), here
-renamed. CoreCE (CoreCE-Regular.ttf) is made from it by tools/title_font.py.
+renamed. OpenCE (OpenCE-Regular.ttf) is made from it by tools/title_font.py.
 
 The file's copyright notice ("All Rights Reserved - see .txt file for terms
 for distribution and use") and the readme it was first distributed with
@@ -28,5 +28,5 @@ https://web.archive.org/web/20040909032418/http://www.rogersfonts.org.uk/assets/
 The site says its fonts were made from the author's own hand-drawn artwork,
 scanned and cleaned up.
 
-As he asked, the source is acknowledged: CoreCE is based on Newtown by
+As he asked, the source is acknowledged: OpenCE is based on Newtown by
 Roger White.

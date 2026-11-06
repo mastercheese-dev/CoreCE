@@ -1631,7 +1631,8 @@ int clips_fill_options(char *map_name, long map_name_size, short *difficulty, un
 
 		csmemcpy(&variant, clips.header.variant, sizeof(variant));
 		game_set_game_variant(&variant);
-		csmemcpy(&options, clips.header.options, sizeof(options));
+		csmemset(&options, 0, sizeof(options));
+		csmemcpy(&options, clips.header.options, sizeof(clips.header.options));
 		game_set_game_variant_options(&options);
 	}
 	return 1;

@@ -6,7 +6,7 @@ byte_swapping.c), compiled with the build's own flags (from build.ninja, so
 `python3 configure.py` first) plus AddressSanitizer, and checks:
 
 - each message encodes to the same bytes as REFERENCE, captured from the
-  packet table as upstream ships it: the wire is shared with CoreCE and
+  packet table as upstream ships it: the wire is shared with OpenCE and
   every earlier build, and must not move a byte;
 - no encode or decode reads or writes past a message's structure (each sits
   alone in its own allocation, which AddressSanitizer guards).
@@ -34,7 +34,7 @@ SOURCES = [
 ]
 
 # type, then the encoded message (version byte, fields, packet type byte),
-# from the table upstream ships (CoreCE build 138); the pregame server
+# from the table upstream ships (OpenCE build 138); the pregame server
 # messages but the keep-alive carry a pattern (tools/tests/network_messages_test.c),
 # the rest zeros. The keep-alive's 4 bytes: the long of
 # message_server_graceful_game_exit_pregame's field list, which upstream's

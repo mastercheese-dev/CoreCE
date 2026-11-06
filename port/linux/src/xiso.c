@@ -10,7 +10,7 @@ XisoExtractor.java.)
 
 Written from a description of the Xbox's disc file system, XDVDFS
 (xboxdevwiki's XDVDFS page, https://xboxdevwiki.net/XDVDFS, and the format
-facts CoreCE's readers rely on). What this file relies on:
+facts OpenCE's readers rely on). What this file relies on:
 
 - Sectors are 2048 bytes and integers little-endian. Sector numbers count
   from the start of the game partition: an image of the partition alone has

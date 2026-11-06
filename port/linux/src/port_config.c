@@ -127,9 +127,9 @@ static const struct config_setting config_settings[] =
 		"Draw a frame for every display refresh, blending between the game's 30\n"
 		"ticks a second; false keeps the original 30 frames a second." },
 	{ "display.timer_position", _config_integer, "0", NULL, _environment_value, _platform_all,
-		"CoreCE timer position: 0 is top center, 1 bottom center, 2 bottom right." },
+		"OpenCE timer position: 0 is top center, 1 bottom center, 2 bottom right." },
 	{ "display.timer_scale", _config_real, "1.0", NULL, _environment_value, _platform_all,
-		"CoreCE timer size, 0.5 to 1.0. These preferences do not enable the timer." },
+		"OpenCE timer size, 0.5 to 1.0. These preferences do not enable the timer." },
 	{ "display.direct_camera", _config_boolean, "false", "HALO_DIRECT_CAMERA", _environment_value, _platform_desktop,
 		"In first person, point the view where the player aims now instead of\n"
 		"where the last tick left it: the view turns the frame the mouse moves,\n"
@@ -257,16 +257,16 @@ static const struct config_setting config_settings[] =
 	{ "audio.dialogue_volume", _config_real, "1.0", NULL, _environment_value, _platform_all,
 		"Unit and scripted dialogue volume, 0.0 to 1.0." },
 	{ "audio.timer_volume", _config_real, "1.0", NULL, _environment_value, _platform_all,
-		"Optional CoreCE timer recordings volume, 0.0 to 1.0." },
+		"Optional OpenCE timer recordings volume, 0.0 to 1.0." },
 	{ "audio.timer_countdown", _config_boolean, "true", NULL, _environment_value, _platform_all,
-		"Play countdown announcements when the host enables CoreCE timer sounds." },
+		"Play countdown announcements when the host enables OpenCE timer sounds." },
 	{ "audio.timer_beeps", _config_boolean, "true", NULL, _environment_value, _platform_all,
-		"Play countdown beeps when the host enables CoreCE timer sounds." },
+		"Play countdown beeps when the host enables OpenCE timer sounds." },
 	{ "audio.timer_minutes", _config_boolean, "true", NULL, _environment_value, _platform_all,
-		"Announce elapsed minutes when the host enables CoreCE timer sounds." },
+		"Announce elapsed minutes when the host enables OpenCE timer sounds." },
 	{ "audio.timer_items", _config_boolean, "false", NULL, _environment_value, _platform_all,
 		"Announce scheduled rockets and powerups on supported maps when the\n"
-		"host enables CoreCE timer sounds. Off preserves the existing timer audio." },
+		"host enables OpenCE timer sounds. Off preserves the existing timer audio." },
 	{ "audio.hardcore_timer_voice", _config_boolean, "true", NULL, _environment_value, _platform_all,
 		"Kept so an old file can move onto display.match_timer. The match clock's\n"
 		"Voice choice plays this machine's countdown." },
@@ -468,10 +468,8 @@ static const struct config_setting config_settings[] =
 		"single quotes: 'C:\\Games\\Halo'." },
 	{ "paths.saves", _config_string, "\"\"", "HALO_SAVE_ROOT", _environment_value, _platform_desktop,
 		"Where saved games and profiles go; empty for the usual place\n"
-		"(~/.local/share/CoreCE, or %APPDATA%\\CoreCE on Windows).\n"
-		"An older halo-og or Halo OG folder is copied without replacing\n"
-		"existing files, and that older folder stays for the other client.\n"
-		"If the copy fails, the game reports it and keeps the older folder." },
+		"(~/.local/share/halo-linux, or %APPDATA%\\halo on Windows, or\n"
+		"~/Library/Application Support/OpenCE on Mac)." },
 	{ "paths.custom_edition", _config_string, "\"\"", "HALO_CUSTOM_EDITION_ROOT", _environment_value, _platform_desktop,
 		"A Halo Custom Edition install whose maps folder is looked in after the\n"
 		"custom_maps folder for Custom Edition maps and their bitmaps.map,\n"

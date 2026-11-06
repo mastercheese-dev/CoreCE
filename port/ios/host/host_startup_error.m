@@ -9,7 +9,7 @@
 @implementation HaloStartupErrorController
 - (void)loadView {
     self.view=[UIView new];self.view.backgroundColor=UIColor.systemBackgroundColor;
-    UILabel *title=[UILabel new];title.text=@"CoreCE could not start";
+    UILabel *title=[UILabel new];title.text=@"OpenCE could not start";
     title.font=[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
     title.numberOfLines=0;
     UITextView *details=[UITextView new];details.text=self.message;details.editable=NO;

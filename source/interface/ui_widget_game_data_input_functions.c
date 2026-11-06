@@ -910,25 +910,10 @@ static void multiplayer_type_menu_update_extended_description(
 
 	if (index != NONE)
 	{
-		/* MATCHMAKING is the first row that takes a press, so the rows
-		under it keep the description and the picture they had. Its words
-		are the last of that list, beside the internet picture. */
-		if (list_widget->focused_child->name && strstr(list_widget->focused_child->name, "type_mm_item"))
-		{
-			list_widget->parameters.list.extended_description->child->
-				animation.current_frame_index = 0;
-			list_widget->parameters.list.extended_description->child->next->
-				parameters.text_box.string_list_index = 7;
-		}
-		else
-		{
-			if (index > 0)
-				index--;
-			list_widget->parameters.list.extended_description->child->
-				animation.current_frame_index = index;
-			list_widget->parameters.list.extended_description->child->next->
-				parameters.text_box.string_list_index = index;
-		}
+		list_widget->parameters.list.extended_description->child->
+			animation.current_frame_index = index;
+		list_widget->parameters.list.extended_description->child->next->
+			parameters.text_box.string_list_index = index;
 	}
 	return;
 }
@@ -3324,12 +3309,12 @@ static void variant_profile_update_cache_for_nwide_list(
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 /* The card has 256 UTF-16 characters and room for one more small-ui line.
-Keep the indication generic as additional CoreCE options are introduced. */
+Keep the indication generic as additional OpenCE options are introduced. */
 static void playlist_profile_append_performance_status(
 	wchar_t *description,
 	struct playlist_profile const *profile)
 {
-	static wchar_t const status[] = L"\r\nCoreCE options active";
+	static wchar_t const status[] = L"\r\nOpenCE options active";
 	unsigned long length;
 	wchar_t const *suffix;
 	unsigned long suffix_length;

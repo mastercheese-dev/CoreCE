@@ -29,7 +29,7 @@ void host_ios_touch_initialize(void) {
     desc.nbuttons=SDL_GAMEPAD_BUTTON_COUNT;
     desc.axis_mask=(1u<<SDL_GAMEPAD_AXIS_COUNT)-1;
     desc.button_mask=(1u<<SDL_GAMEPAD_BUTTON_COUNT)-1;
-    desc.name="CoreCE Touch Controls";
+    desc.name="OpenCE Touch Controls";
     touch_id=SDL_AttachVirtualJoystick(&desc);
     touch_joystick=SDL_OpenJoystick(touch_id);
     if(!touch_joystick)host_fatal("Could not initialize touch controls: %s",SDL_GetError());

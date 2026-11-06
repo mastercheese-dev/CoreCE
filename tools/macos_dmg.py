@@ -8,7 +8,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 WINDOW_SIZE = (680, 440)
-ICON_POSITIONS = {"CoreCE.app": (160, 220), "Applications": (520, 220)}
+ICON_POSITIONS = {"OpenCE.app": (160, 220), "Applications": (520, 220)}
 
 
 def bundle_manifest(app):
@@ -34,8 +34,8 @@ def create_dmg(app, destination):
     app, destination = Path(app).resolve(), Path(destination).resolve()
     if destination.exists():
         raise RuntimeError("Disk image output already exists; choose a new filename")
-    if app.name != "CoreCE.app" or not app.is_dir():
-        raise RuntimeError("Package an existing CoreCE.app bundle")
+    if app.name != "OpenCE.app" or not app.is_dir():
+        raise RuntimeError("Package an existing OpenCE.app bundle")
     try:
         import dmgbuild
     except ImportError as error:
@@ -61,7 +61,7 @@ def create_dmg(app, destination):
                 str(layout / name), str(scale),
             ], cwd=ROOT, check=True)
         image = layout / "installer.dmg"
-        dmgbuild.build_dmg(str(image), "CoreCE", settings={
+        dmgbuild.build_dmg(str(image), "OpenCE", settings={
             "format": "UDZO", "filesystem": "HFS+",
             "files": [str(app)], "symlinks": {"Applications": "/Applications"},
             "background": str(layout / "background.png"),
@@ -82,7 +82,7 @@ def audit_dmg_layout(volume):
     """Validate the mounted image's actual Finder metadata and install target."""
     from ds_store import DSStore
     volume = Path(volume)
-    if not (volume / "CoreCE.app").is_dir():
+    if not (volume / "OpenCE.app").is_dir():
         raise RuntimeError("Installer app is missing")
     shortcut = volume / "Applications"
     if not shortcut.is_symlink() or os.readlink(shortcut) != "/Applications":

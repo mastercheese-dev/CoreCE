@@ -131,7 +131,7 @@ static void migrationFixtures(NSURL *test, NSURL *valid, NSURL *image) {
     const char *previousOverride = getenv("HALO_SAVE_ROOT");
     NSString *savedOverride = previousOverride ? @(previousOverride) : nil;
     setenv("HALO_SAVE_ROOT", test.fileSystemRepresentation, 1);
-    NSURL *canonical = [NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/CoreCE"] isDirectory:YES];
+    NSURL *canonical = [NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/OpenCE"] isDirectory:YES];
     assert(!HaloSupportDirectoryNeedsMigration(canonical));
     if (savedOverride) setenv("HALO_SAVE_ROOT", savedOverride.UTF8String, 1);
     else unsetenv("HALO_SAVE_ROOT");
@@ -240,33 +240,33 @@ int main(int argc, const char **argv) {
         assert(!HaloUpdateConfigurationIsValid(@{@"SUFeedURL":@"https://example.com/feed.xml", @"SUPublicEDKey":@"invalid"}));
         assert(HaloForkUpdateBuildFromTag(@"test-v0.3.0-net28-mac16") == 16);
         assert([HaloForkUpdateAssetName(@"test-v0.3.0-net28-mac16")
-            isEqual:@"CoreCE-macos-arm64-net28-mac16.dmg"]);
+            isEqual:@"OpenCE-macos-arm64-net28-mac16.dmg"]);
         assert(HaloForkUpdateBuildFromTag(@"build-70") == 70);
-        assert([HaloForkUpdateAssetName(@"build-70") isEqual:@"CoreCE-macos-arm64.dmg"]);
+        assert([HaloForkUpdateAssetName(@"build-70") isEqual:@"OpenCE-macos-arm64.dmg"]);
         assert(HaloForkUpdateBuildFromTag(@"build-70-extra") == 0);
         assert(HaloForkUpdateAssetName(@"test-v0.3.0-net28-mac16-extra") == nil);
-        NSString *mac16 = @"https://github.com/mastercheese-dev/CoreCE/releases/download/test-v0.3.0-net28-mac16/CoreCE-macos-arm64-net28-mac16.dmg";
-        NSString *build70 = @"https://github.com/mastercheese-dev/CoreCE/releases/download/build-70/CoreCE-macos-arm64.dmg";
+        NSString *mac16 = @"https://github.com/mastercheese-dev/OpenCE/releases/download/test-v0.3.0-net28-mac16/OpenCE-macos-arm64-net28-mac16.dmg";
+        NSString *build70 = @"https://github.com/mastercheese-dev/OpenCE/releases/download/build-70/OpenCE-macos-arm64.dmg";
         assert(HaloForkUpdateDownloadIsTrusted(@"test-v0.3.0-net28-mac16", mac16));
         assert(HaloForkUpdateDownloadIsTrusted(@"build-70", build70));
         assert(!HaloForkUpdateDownloadIsTrusted(@"build-70", mac16));
         assert(!HaloForkUpdateDownloadIsTrusted(@"test-v0.3.0-net28-mac16",
-            @"https://example.com/CoreCE-macos-arm64-net28-mac16.dmg"));
+            @"https://example.com/OpenCE-macos-arm64-net28-mac16.dmg"));
         assert(!HaloForkUpdateDownloadIsTrusted(@"test-v0.3.0-net28-mac17", mac16));
         assert(HaloForkUpdateBuildFromTag(@"test-v0.3.0-net28-ios3") == 0);
         assert(HaloForkUpdateAssetName(@"test-v0.3.0-net28-ios3") == nil);
-        NSString *mac17 = @"https://github.com/mastercheese-dev/CoreCE/releases/download/test-v0.3.0-net28-mac17/CoreCE-macos-arm64-net28-mac17.dmg";
+        NSString *mac17 = @"https://github.com/mastercheese-dev/OpenCE/releases/download/test-v0.3.0-net28-mac17/OpenCE-macos-arm64-net28-mac17.dmg";
         NSArray *releases = @[
             @{@"tag_name": @"test-v0.3.0-net28-ios9", @"draft": @NO, @"prerelease": @NO,
-              @"assets": @[@{@"name": @"CoreCE-ios.ipa", @"browser_download_url": @"https://github.com/mastercheese-dev/CoreCE/releases/download/test-v0.3.0-net28-ios9/CoreCE-ios.ipa"}]},
+              @"assets": @[@{@"name": @"OpenCE-ios.ipa", @"browser_download_url": @"https://github.com/mastercheese-dev/OpenCE/releases/download/test-v0.3.0-net28-ios9/OpenCE-ios.ipa"}]},
             @{@"tag_name": @"test-v0.3.0-net28-mac17", @"draft": @NO, @"prerelease": @YES,
-              @"assets": @[@{@"name": @"CoreCE-macos-arm64-net28-mac17.dmg", @"browser_download_url": mac17}]},
+              @"assets": @[@{@"name": @"OpenCE-macos-arm64-net28-mac17.dmg", @"browser_download_url": mac17}]},
             @{@"tag_name": @"test-v0.3.0-net28-mac16", @"draft": @NO, @"prerelease": @NO,
-              @"assets": @[@{@"name": @"CoreCE-macos-arm64-net28-mac16.dmg", @"browser_download_url": mac16}]},
+              @"assets": @[@{@"name": @"OpenCE-macos-arm64-net28-mac16.dmg", @"browser_download_url": mac16}]},
             @{@"tag_name": @"build-3", @"draft": @NO, @"prerelease": @NO,
-              @"assets": @[@{@"name": @"halo-windows-release.zip", @"browser_download_url": @"https://github.com/mastercheese-dev/CoreCE/releases/download/build-3/halo-windows-release.zip"}]},
+              @"assets": @[@{@"name": @"halo-windows-release.zip", @"browser_download_url": @"https://github.com/mastercheese-dev/OpenCE/releases/download/build-3/halo-windows-release.zip"}]},
             @{@"tag_name": @"build-70", @"draft": @NO, @"prerelease": @NO,
-              @"assets": @[@{@"name": @"CoreCE-macos-arm64.dmg", @"browser_download_url": build70}]},
+              @"assets": @[@{@"name": @"OpenCE-macos-arm64.dmg", @"browser_download_url": build70}]},
         ];
         NSString *chosenTag = nil;
         NSString *chosenURL = nil;
@@ -274,23 +274,23 @@ int main(int argc, const char **argv) {
         assert([chosenTag isEqual:@"build-70"]);
         assert([chosenURL isEqual:build70]);
         assert(HaloForkNewestMacRelease(@[@{@"tag_name": @"test-v0.3.0-net28-ios9"}], nil, nil) == 0);
-        NSString *testing4 = @"https://github.com/mastercheese-dev/CoreCE/releases/download/testing-4/CoreCE-macos-arm64.dmg";
-        NSString *testing2 = @"https://github.com/mastercheese-dev/CoreCE/releases/download/testing-2/CoreCE-macos-arm64.dmg";
+        NSString *testing4 = @"https://github.com/mastercheese-dev/OpenCE/releases/download/testing-4/OpenCE-macos-arm64.dmg";
+        NSString *testing2 = @"https://github.com/mastercheese-dev/OpenCE/releases/download/testing-2/OpenCE-macos-arm64.dmg";
         assert(HaloForkUpdateBuildFromTag(@"testing-4") == 4);
         assert([HaloForkUpdateChannelFromTag(@"testing-4") isEqual:@"testing"]);
         assert([HaloForkUpdateChannelFromTag(@"build-70") isEqual:@"main"]);
         assert(HaloForkUpdateChannelFromTag(@"testing-4-extra") == nil);
-        assert([HaloForkUpdateAssetName(@"testing-4") isEqual:@"CoreCE-macos-arm64.dmg"]);
+        assert([HaloForkUpdateAssetName(@"testing-4") isEqual:@"OpenCE-macos-arm64.dmg"]);
         assert(HaloForkUpdateDownloadIsTrusted(@"testing-4", testing4));
         assert(!HaloForkUpdateDownloadIsTrusted(@"testing-4", build70));
         NSArray *mixed = [releases arrayByAddingObjectsFromArray:@[
             @{@"tag_name": @"testing-4", @"draft": @NO, @"prerelease": @YES,
-              @"assets": @[@{@"name": @"CoreCE-macos-arm64.dmg", @"browser_download_url": testing4}]},
+              @"assets": @[@{@"name": @"OpenCE-macos-arm64.dmg", @"browser_download_url": testing4}]},
             @{@"tag_name": @"testing-2", @"draft": @NO, @"prerelease": @YES,
-              @"assets": @[@{@"name": @"CoreCE-macos-arm64.dmg", @"browser_download_url": testing2}]},
+              @"assets": @[@{@"name": @"OpenCE-macos-arm64.dmg", @"browser_download_url": testing2}]},
             @{@"tag_name": @"testing-9", @"draft": @NO, @"prerelease": @NO,
-              @"assets": @[@{@"name": @"CoreCE-macos-arm64.dmg", @"browser_download_url":
-                  @"https://github.com/mastercheese-dev/CoreCE/releases/download/testing-9/CoreCE-macos-arm64.dmg"}]},
+              @"assets": @[@{@"name": @"OpenCE-macos-arm64.dmg", @"browser_download_url":
+                  @"https://github.com/mastercheese-dev/OpenCE/releases/download/testing-9/OpenCE-macos-arm64.dmg"}]},
         ]];
         assert(HaloForkNewestMacRelease(mixed, &chosenTag, &chosenURL) == 70);
         assert(HaloForkUpdateChoice(mixed, NO, @"main", 50, &chosenTag, &chosenURL) == 70);
@@ -304,8 +304,8 @@ int main(int argc, const char **argv) {
         assert(HaloForkUpdateChoice(mixed, YES, @"testing", 2, &chosenTag, &chosenURL) == 4);
         assert(HaloForkNewestMacRelease(@[
             @{@"tag_name": @"testing-9", @"draft": @NO, @"prerelease": @NO,
-              @"assets": @[@{@"name": @"CoreCE-macos-arm64.dmg", @"browser_download_url":
-                  @"https://github.com/mastercheese-dev/CoreCE/releases/download/testing-9/CoreCE-macos-arm64.dmg"}]}],
+              @"assets": @[@{@"name": @"OpenCE-macos-arm64.dmg", @"browser_download_url":
+                  @"https://github.com/mastercheese-dev/OpenCE/releases/download/testing-9/OpenCE-macos-arm64.dmg"}]}],
             nil, nil) == 0);
         NSURL *dataRoot = [test URLByAppendingPathComponent:@"game-data" isDirectory:YES];
         NSURL *history = HaloForkUpdateHistoryURL(dataRoot);

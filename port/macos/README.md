@@ -1,4 +1,4 @@
-# CoreCE native Apple Silicon build
+# OpenCE native Apple Silicon build
 
 The experimental native Mac build is playable. On 2026-09-27, the main menu,
 campaign loading and gameplay, mouse capture, and audible output were confirmed
@@ -11,13 +11,13 @@ security-setting change is required for this local build.
 
 ## Download
 
-The current Mac release is build 52, `CoreCE-macos-arm64.dmg`, on this
-repository's [releases page](https://github.com/mastercheese-dev/CoreCE/releases/tag/build-52).
+The current Mac release is build 52, `OpenCE-macos-arm64.dmg`, on this
+repository's [releases page](https://github.com/mastercheese-dev/OpenCE/releases/tag/build-52).
 Windows build 30 and Linux build 58 are the current releases for those systems.
 A testing release, when one is published, is a `testing-N` prerelease on that
 same page and uses the same disk image name.
 
-Open the disk image and drag **CoreCE.app** into Applications. The app is ad hoc
+Open the disk image and drag **OpenCE.app** into Applications. The app is ad hoc
 signed and is not notarized, so macOS may block the first launch. After you try
 to open it, allow it in **System Settings**, under **Privacy & Security**.
 [Apple's steps](https://support.apple.com/en-us/102445) walk through that screen.
@@ -25,7 +25,7 @@ to open it, allow it in **System Settings**, under **Privacy & Security**.
 An unpublished CI build is the **halo-macos-arm64-dmg** artifact from the macOS
 DMG workflow on this repository. Pushes to `main` start that workflow, and it
 can also be started by hand. Artifacts expire after 14 days. The disk image in
-the artifact is `CoreCE-macos-arm64.dmg`. `BuildInfo.txt` records the source
+the artifact is `OpenCE-macos-arm64.dmg`. `BuildInfo.txt` records the source
 revision and guest hash. `SHA256SUMS` checks the disk image with
 `shasum -a 256 -c SHA256SUMS`.
 
@@ -40,7 +40,7 @@ another protocol.
 
 ## Launch
 
-Open `build/macos-metal/CoreCE.app` in Finder. There is no automatic timeout.
+Open `build/macos-metal/OpenCE.app` in Finder. There is no automatic timeout.
 The app includes SDL3, Sparkle, and the compiled game image. It draws with Metal. It remembers
 your chosen local data location. Development builds can fall back to this
 checkout's `assets/` directory. The helmet menu icon opens Settings, changes
@@ -67,17 +67,18 @@ menu dimming and flat backgrounds cover the whole display.
 Saves, cache files, `config.toml`, and `halo.log` are under:
 
 ```text
-~/Library/Application Support/CoreCE/
+~/Library/Application Support/OpenCE/
 ```
 
-Saves, `config.toml`, and `halo.log` are in that folder. On Windows, saves are
-in `%APPDATA%\CoreCE`. On Linux, saves are in `~/.local/share/CoreCE`.
+Saves, `config.toml`, and `halo.log` are in that folder, the same one OpenCE
+uses. On Windows, saves are in `%APPDATA%\halo`. On Linux, saves are in
+`~/.local/share/halo-linux`.
 
-On first launch, prior settings, saves and managed game data are copied from
-`~/Library/Application Support/OpenCE/`, or from `Halo OG` when that is the
-only older folder, or from `Halo CE Universal` when that is the only one left.
-The original files remain in place, and existing files under CoreCE are
-preserved. The bundle identifier remains stable.
+When the OpenCE folder is not already in use, the first launch copies prior
+settings, saves and managed game data from `Halo OG`, or from `Halo CE
+Universal` when that is the older folder. The original files remain in place,
+and existing files under OpenCE are preserved. The bundle identifier remains
+stable.
 
 Keyboard/mouse controls:
 
@@ -106,7 +107,7 @@ with its title/buttons hidden; drag the top strip while the cursor is released.
 Live Audio and Video options are in Settings, from the main menu and from the pause menu.
 
 All keyboard/controller actions and mouse buttons can be changed in the
-`[bindings]` section of `~/Library/Application Support/CoreCE/config.toml`.
+`[bindings]` section of `~/Library/Application Support/OpenCE/config.toml`.
 The first launch adds any missing bindings with their defaults, preserving
 existing settings, bindings and comments. Quit Halo, edit the file, and restart
 to apply changes. These bindings emit Xbox controller buttons, so an in-game
@@ -155,14 +156,14 @@ Application Support location above.
 
 Builds in one game need the same network protocol and the same map set. Hosting
 copies an invite to the clipboard. Opening it, or copying it and switching to
-CoreCE, connects the peers so the host appears in the System Link browser.
+OpenCE, connects the peers so the host appears in the System Link browser.
 
-With the Discord desktop client running, CoreCE connects to its local RPC socket
-and accepts Discord game invitations. Hosting a game publishes CoreCE, with the
-CoreCE icon, and an invite in Discord. A person who asks to join is let in.
+With the Discord desktop client running, OpenCE connects to its local RPC socket
+and accepts Discord game invitations. Hosting a game publishes OpenCE, with the
+OpenCE icon, and an invite in Discord. A person who asks to join is let in.
 Enable activity sharing in Discord to make it visible. The installed app handles
 both `halo://` links and the Discord application's launch scheme, so an invite
-can start CoreCE when it is closed. Ordinary campaign/client gameplay does not publish activity.
+can start OpenCE when it is closed. Ordinary campaign/client gameplay does not publish activity.
 This tree uses network protocol 35. Players need matching builds. Command-W is
 ignored while playing, and Command-Q or the window's close button quits.
 
@@ -175,7 +176,7 @@ From the repository root:
 
 ```sh
 python3 tools/macos_build.py
-open "build/macos-metal/CoreCE.app"
+open "build/macos-metal/OpenCE.app"
 ```
 
 To build and install a single copy in Applications for Spotlight:
@@ -187,7 +188,7 @@ python3 tools/macos_build.py --install
 To build without local game data, use `--no-data-path --install` instead;
 the app will ask for a disc image or game folder on first launch.
 
-Then press Command-Space, type `CoreCE`, and press Return. An
+Then press Command-Space, type `OpenCE`, and press Return. An
 optional directory, such as `--install ~/Applications`, installs for just your
 account. Installation verifies the signed bundle before replacing a previous
 copy, preserves the previous app in a hidden backup directory, and registers
@@ -210,7 +211,7 @@ python3 -m unittest tools.test_visibility_queries
 ```
 
 Packaging creates the Mac app icon from
-`port/assets/icon/corece-icon.png`. The built-in
+`port/assets/icon/opence-icon.png`. The built-in
 macOS `sips` tool generates standard and Retina PNG sizes, which packaging embeds
 in `AppIcon.icns` before signing. The editable menu icon is `Helmet.svg`.
 

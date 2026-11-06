@@ -154,6 +154,8 @@ struct p2p_listing
 	unsigned char key_hash[P2P_LISTING_KEY_HASH_SIZE];
 	unsigned char signing_key[P2P_LISTING_SIGNING_KEY_SIZE];
 	unsigned char sealed_token[P2P_LISTING_SEALED_TOKEN_SIZE];
+	/* the host's network version. the browser shows the newest first */
+	unsigned short version;
 };
 /* joins a public game the server browser found (p2p_join_invite with its
 invite), remembering its host: nonzero if it held an invite */
@@ -163,8 +165,9 @@ browser: the tunnel still reaches its host, and no other invite was joined
 since. Such a game has no text chat, whatever its host says
 (port/linux/game/network_chat.c) */
 int p2p_joined_listed_host(void);
-/* a copy of the public games found, in the order shown (the most players
-first; then those not failed, the open ones, by name); returns their count */
+/* a copy of the public games found, in the order shown (the newest network
+version first; then the most players, those not failed, the open ones, by
+name); returns their count */
 int p2p_lobby_games(struct p2p_listing *games, int maximum_count);
 /* how many hosts list a game of a newer network version, which is not
 shown (an old build sees none of the games) */

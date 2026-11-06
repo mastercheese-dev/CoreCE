@@ -20,8 +20,8 @@ from urllib.parse import quote, urlencode
 import zipfile
 
 
-REPOSITORY = "mastercheese-dev/CoreCE"
-DMG = "CoreCE-macos-arm64.dmg"
+REPOSITORY = "mastercheese-dev/OpenCE"
+DMG = "OpenCE-macos-arm64.dmg"
 WORKFLOWS = {
     "macos-dmg.yml": {"halo-macos-arm64-dmg": DMG},
     "build.yml": {f"halo-{platform}-release": f"halo-{platform}-release.zip"
@@ -179,7 +179,7 @@ def check_platform_archive(path, name):
 def release_notes(record):
     url = "https://github.com/" + record["repository"]
     source = f"{url}/blob/{record['sha']}"
-    return (f"CoreCE testing build `{record['tag']}` from [{record['sha']}]({url}/commit/{record['sha']}).\n\n"
+    return (f"OpenCE testing build `{record['tag']}` from [{record['sha']}]({url}/commit/{record['sha']}).\n\n"
             f"Network protocol: **{record['network_protocol']}**.\n\n"
             f"Start with the [project README]({source}/README.md). Download your platform's asset below; "
             "all players should use this same testing release.\n\n"
@@ -189,7 +189,7 @@ def release_notes(record):
             "See macos-README.txt for the required macOS version and first-launch instructions. "
             f"Linux requires the [32-bit runtime dependencies]({source}/port/linux/README.md#requirements).\n\n"
             "On Mac, choosing a maps folder offers **Copy and Manage**. Managed maps, saves "
-            "and preferences persist in `~/Library/Application Support/CoreCE/` across app updates. "
+            "and preferences persist in `~/Library/Application Support/OpenCE/` across app updates. "
             "With original Xbox NTSC 2276 data selected, opt into **Download approved community maps "
             "in the background** in Settings to get the hosted Downrush map. Downloads default off.\n\n"
             f"For manual setup on any platform, download [downrush.map]({DOWNRUSH_URL}) "

@@ -41,14 +41,14 @@ jobs:
       - name: Check packaging rules
         run: python3 -m unittest tools.test_macos_menu.ReleaseBoundary tools.test_macos_dmg tools.test_community_packages tools.test_macos_content_tools
       - name: Create DMG
-        run: python3 tools/macos_release.py local-dmg --output dist/macos/CoreCE-macos-arm64.dmg
+        run: python3 tools/macos_release.py local-dmg --output dist/macos/OpenCE-macos-arm64.dmg
       - name: Verify packaged app and record download details
         run: |
-          hdiutil verify dist/macos/CoreCE-macos-arm64.dmg
+          hdiutil verify dist/macos/OpenCE-macos-arm64.dmg
           dmg_mount="$(mktemp -d "$RUNNER_TEMP/halo-dmg.XXXXXX")"
-          hdiutil attach dist/macos/CoreCE-macos-arm64.dmg -mountpoint "$dmg_mount" -nobrowse -readonly
+          hdiutil attach dist/macos/OpenCE-macos-arm64.dmg -mountpoint "$dmg_mount" -nobrowse -readonly
           trap 'hdiutil detach "$dmg_mount"' EXIT
-          bundle="$dmg_mount/CoreCE.app"
+          bundle="$dmg_mount/OpenCE.app"
           codesign --verify --deep --strict "$bundle"
           lipo "$bundle/Contents/MacOS/halo" -verify_arch arm64
           python3 - "$bundle" <<'PY'
@@ -65,15 +65,15 @@ jobs:
           audit_adhoc_signing(app)
           contents = app / "Contents"
           info = plistlib.loads((contents / "Info.plist").read_bytes())
-          assert info["CFBundleName"] == info["CFBundleDisplayName"] == "CoreCE", info
+          assert info["CFBundleName"] == info["CFBundleDisplayName"] == "OpenCE", info
           build_info = (contents / "Resources/BuildInfo.txt").read_text()
           assert f"Source: {os.environ['GITHUB_SHA']}\n" in build_info, build_info
           output = Path("dist/macos")
           (output / "BuildInfo.txt").write_text(build_info)
           notes = (
-              "CoreCE macOS CI build\n\n"
+              "OpenCE macOS CI build\n\n"
               f"Requires Apple Silicon and macOS {info['LSMinimumSystemVersion']} or later.\n"
-              "Open the DMG and drag CoreCE to Applications.\n"
+              "Open the DMG and drag OpenCE to Applications.\n"
               "Supply your own original Xbox Halo game data on first launch.\n"
               "No game maps, disc images, or local data paths are included.\n"
               "This build is ad-hoc signed and not notarized; macOS may block first launch.\n"
@@ -87,7 +87,7 @@ jobs:
               summary.write("## macOS download\n\nDownload **halo-macos-arm64-dmg** from this run's Artifacts.\n\n")
               summary.write("```text\n" + notes + "```\n")
           PY
-          (cd dist/macos && shasum -a 256 CoreCE-macos-arm64.dmg > SHA256SUMS)
+          (cd dist/macos && shasum -a 256 OpenCE-macos-arm64.dmg > SHA256SUMS)
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:

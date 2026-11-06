@@ -41,7 +41,7 @@ enum
 	ID_LIMIT = 64
 };
 
-static const char *const broker_host = "net.corece.org";
+static const char *const broker_host = "net.opence.org";
 
 static pthread_mutex_t matchmaking_lock = PTHREAD_MUTEX_INITIALIZER;
 

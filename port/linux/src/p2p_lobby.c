@@ -11,15 +11,19 @@ whose X25519 form's hash is the invite's host part (p2p.c), so no one but
 the host can list its invite, alter its listing, or list another's under
 false details:
 
-	"HL", format 1, the lobby version (2: HALO_PORT_NETWORK_VERSION; browsers
-	hide others), flags (open, under way, teams, closed, password), sequence
+	"HL", format 1, the lobby version (2: HALO_PORT_NETWORK_VERSION; a listing
+	signed hceu-lobby-1 is shown at its own version), flags (open, under way,
+	teams, closed, password), sequence
 	(4: newest wins), Unix time (4), the Ed25519 key (32), the invite's token
 	(16; a password's game's sealed with the password's key, 56:
 	p2p_seal_token; a tombstone's zero), players, most players, the
 	gametype's engine (1 each), the game's name,
 	map and gametype (a length byte, then up to 32, 32 and 24 characters of
 	printable ASCII), a stamp (8, reserved: zero), and the signature (64) of
-	"corece-lobby-1" and all before it.
+	"opence-lobby-1" and all before it. OpenCE signs the same listing with
+	"hceu-lobby-1". Those are shown too, whatever network version they name,
+	so an OpenCE public game appears in this server browser. This build
+	signs its own listings with "opence-lobby-1".
 
 Each host has a slot, hceu/3/lobby/s/<its key's hash in hex>: its listing,
 retained on every broker (and expiring there after LISTING_EXPIRY seconds
@@ -101,7 +105,8 @@ enum
 	RETAINED_WINDOW = 600,
 };
 
-static const char signature_label[] = "corece-lobby-1";
+static const char signature_label[] = "opence-lobby-1";
+static const char opence_signature_label[] = "hceu-lobby-1";
 
 /* (p2p.h's sizes of a locked listing's are p2p_internal.h's) */
 typedef char check_listing_sizes[P2P_LISTING_SIGNING_KEY_SIZE == P2P_KEY_SIZE &&
@@ -386,14 +391,27 @@ static int listing_read(const unsigned char *bytes, int size, struct listing *li
 	return 1;
 }
 
-static int listing_signed(const unsigned char *bytes, const struct listing *listing)
+static int listing_signed_label(const unsigned char *bytes, const struct listing *listing, const char *label)
 {
 	unsigned char data[sizeof(signature_label) - 1 + MAXIMUM_LISTING_SIZE];
+	int label_size = (int)strlen(label);
 
-	memcpy(data, signature_label, sizeof(signature_label) - 1);
-	memcpy(data + sizeof(signature_label) - 1, bytes, (size_t)listing->signed_size);
-	return p2p_ed25519_verify(listing->key, data, (int)(sizeof(signature_label) - 1) + listing->signed_size,
-		bytes + listing->signed_size);
+	if (label_size <= 0 || label_size > (int)sizeof(signature_label) - 1)
+		return 0;
+	memcpy(data, label, (size_t)label_size);
+	memcpy(data + label_size, bytes, (size_t)listing->signed_size);
+	return p2p_ed25519_verify(listing->key, data, label_size + listing->signed_size, bytes + listing->signed_size);
+}
+
+static int listing_signed(const unsigned char *bytes, const struct listing *listing)
+{
+	return listing_signed_label(bytes, listing, signature_label);
+}
+
+/* an OpenCE host signs with hceu-lobby-1. its network version is its own. */
+static int listing_opence(const unsigned char *bytes, const struct listing *listing)
+{
+	return listing_signed_label(bytes, listing, opence_signature_label);
 }
 
 /* ---------- hosting */
@@ -664,6 +682,7 @@ static void listing_take(const struct queued *queued, const struct listing *list
 	shown->open = (listing->flags & _listing_open) != 0;
 	shown->in_progress = (listing->flags & _listing_in_progress) != 0;
 	shown->has_teams = (listing->flags & _listing_has_teams) != 0;
+	shown->version = (unsigned short)listing->version;
 }
 
 /* the hosts' pings: those not known lately probed, while there is room (a
@@ -734,17 +753,10 @@ static void update_browsing(void)
 		struct listing listing;
 		unsigned char key_hash[P2P_KEY_HASH_SIZE];
 		int good;
+		int opence;
 
 		memmove(lobby.queue, lobby.queue + 1, sizeof(*lobby.queue) * (size_t)(--lobby.queue_count));
-		/* (a newer version's game is counted, not shown: its host's key
-		hash only, unverified, so it is no more than a count) */
-		if (lobby.browsing && listing_read(queued.payload, queued.size, &listing) &&
-			listing.version > HALO_PORT_NETWORK_VERSION && !(listing.flags & _listing_closed))
-		{
-			newer_heard(queued.key_hash);
-			continue;
-		}
-		if (!listing_read(queued.payload, queued.size, &listing) || listing.version != HALO_PORT_NETWORK_VERSION ||
+		if (!listing_read(queued.payload, queued.size, &listing) ||
 			!signing_key_hash(listing.key, key_hash) || memcmp(key_hash, queued.key_hash, P2P_KEY_HASH_SIZE))
 		{
 			continue;
@@ -761,9 +773,16 @@ static void update_browsing(void)
 		/* (the work, without the lock: the game's threads need not wait) */
 		pthread_mutex_unlock(&p2p_lock);
 		good = listing_signed(queued.payload, &listing);
+		opence = listing_opence(queued.payload, &listing);
 		pthread_mutex_lock(&p2p_lock);
-		if (good && lobby.browsing)
+		if (!lobby.browsing)
+			continue;
+		/* this build's own listings, and OpenCE's, which name OpenCE's
+		network version and are signed hceu-lobby-1 */
+		if ((good && listing.version == HALO_PORT_NETWORK_VERSION) || opence)
 			listing_take(&queued, &listing);
+		else if (listing.version > HALO_PORT_NETWORK_VERSION && !(listing.flags & _listing_closed))
+			newer_heard(queued.key_hash);
 	}
 	if (lobby.queue_count && !lobby.browsing)
 		lobby.queue_count = 0;
@@ -939,12 +958,14 @@ int p2p_lobby_browsing(void)
 	return lobby.browsing;
 }
 
-/* the order shown: the most players first; then those joining has not
-failed, the open ones, and by name */
+/* the order shown: the newest network version first; then the most players,
+those joining has not failed, the open ones, and by name */
 static int listing_order(const void *first, const void *second)
 {
 	const struct p2p_listing *a = first, *b = second;
 
+	if (a->version != b->version)
+		return (int)b->version - (int)a->version;
 	if (a->player_count != b->player_count)
 		return b->player_count - a->player_count;
 	if (a->failed != b->failed)

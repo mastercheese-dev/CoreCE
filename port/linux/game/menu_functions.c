@@ -4142,6 +4142,7 @@ boolean ui_widget_port_host(struct widget_instance *widget, struct event_record 
 boolean ui_widget_port_browse(struct widget_instance *widget, struct event_record *event, boolean *widget_deleted);
 boolean ui_widget_port_open(struct widget_instance *widget, char const *name, boolean *widget_deleted);
 boolean network_game_client_advertised_game_in_progress(void *client, struct advertised_game *game);
+unsigned network_game_client_advertised_version(void *client, void const *game);
 boolean ui_widget_port_join(struct widget_instance *widget, void *advertised_game, char const *lobby_name,
 	boolean *widget_deleted);
 boolean ui_widget_port_multiplayer_player(short controller_index, long profile_index);
@@ -5500,6 +5501,27 @@ static void browser_games_read(void)
 			}
 		}
 	}
+	/* the newest network version first. the passes above keep the open games
+	ahead of those under way, and that order stays within one version */
+	{
+		short sorted;
+
+		for (sorted = 1; sorted < multiplayer.game_count; sorted++)
+		{
+			struct advertised_game *key = multiplayer.games[sorted];
+			unsigned key_version = network_game_client_advertised_version(
+				global_network_game_client_get(), key);
+			short place = sorted;
+
+			while (place > 0 && network_game_client_advertised_version(
+				global_network_game_client_get(), multiplayer.games[place - 1]) < key_version)
+			{
+				multiplayer.games[place] = multiplayer.games[place - 1];
+				place--;
+			}
+			multiplayer.games[place] = key;
+		}
+	}
 	if (multiplayer.game_chosen >= multiplayer.game_count)
 		multiplayer.game_chosen = (short)MAX(0, multiplayer.game_count - 1);
 }
@@ -5668,6 +5690,11 @@ list is read back in its own order */
 static boolean browser_sort_sticky;
 static boolean browser_sort_keep;
 static unsigned char browser_sort_keep_id[6];
+/* LAN and Direct Link take a new list on the same interval as the internet
+browser. browser_list_reset is set when that screen opens */
+static unsigned long browser_list_time;
+static unsigned long browser_gather_until;
+static boolean browser_list_reset;
 static struct advertised_game *browser_sort_keep_game;
 
 /* (the server browser's: below) */
@@ -5720,6 +5747,7 @@ static boolean browser_initialize(struct widget_instance *screen, struct event_r
 	for (index = 0; named(screen, "header_sort_arrows", index); index++)
 		visible_set(named(screen, "header_sort_arrows", index), FALSE);
 	multiplayer.game_chosen = 0;
+	browser_list_reset = TRUE;
 	/* (the server browser's games are internet play's listings; joining
 	one reaches its host, whose game the client then finds as Direct Link's) */
 	if (multiplayer.mode == _multiplayer_mode_server_browser)
@@ -5816,8 +5844,10 @@ and an A press (posted) joins it, or shows its lobby if under way */
 wait is longer) */
 #define LOBBY_BROWSER_JOIN_TIMEOUT 30000
 /* how long the browser looks before it says it found none, and shows a
-join that failed */
+join that failed. the rows fill through that look, then a new list is
+taken this often, so a change in players does not move the rows each frame */
 #define LOBBY_BROWSER_LOOK_TIME 6000
+#define LOBBY_BROWSER_REFRESH_TIME 15000
 #define LOBBY_BROWSER_FAILED_TIME 8000
 
 static struct
@@ -5828,6 +5858,12 @@ static struct
 	/* whether it has shown a game (the first has the focus) */
 	boolean shown;
 	unsigned long begin_time;
+	/* when the rows were last taken, and until when they fill in live.
+	refresh_at is one more take after Refresh, once the hosts have answered */
+	unsigned long listed_time;
+	unsigned long gather_until;
+	unsigned long refresh_at;
+	boolean refresh_now;
 	/* a game being joined: its host, its name, since when, the controller
 	that asked; ready: its game reached (the A press posted) */
 	boolean joining, ready;
@@ -5923,6 +5959,10 @@ static void lobby_browser_begin(void)
 	lobby_browser.ready = FALSE;
 	lobby_browser.password_joined = FALSE;
 	lobby_browser.begin_time = system_milliseconds();
+	lobby_browser.listed_time = 0;
+	lobby_browser.gather_until = lobby_browser.begin_time + LOBBY_BROWSER_LOOK_TIME;
+	lobby_browser.refresh_at = 0;
+	lobby_browser.refresh_now = FALSE;
 	/* the catalog names the matchmaking games, so CCE Hardcore can show full */
 	matchmaking_watch();
 	p2p_lobby_browse(TRUE);
@@ -6103,14 +6143,17 @@ static int listing_players_shown(struct p2p_listing const *game)
 	return game->player_count;
 }
 
-/* negative when left belongs above right. a ping that is not known stays
-under the ones that are, in either direction */
+/* negative when left belongs above right. the newest network version stays
+above an older one. a ping that is not known stays under the ones that are,
+in either direction */
 static int browser_listing_rank(struct p2p_listing const *left, struct p2p_listing const *right)
 {
 	wchar_t left_text[ROW_TEXT_LENGTH];
 	wchar_t right_text[ROW_TEXT_LENGTH];
 	int cmp = 0;
 
+	if (left->version != right->version)
+		return left->version > right->version ? -1 : 1;
 	switch (browser_sort_column)
 	{
 	case BROWSER_SORT_LOCKED:
@@ -6186,10 +6229,16 @@ static int browser_advertised_rank(struct advertised_game const *left, struct ad
 {
 	wchar_t left_text[ROW_TEXT_LENGTH];
 	wchar_t right_text[ROW_TEXT_LENGTH];
+	unsigned left_version;
+	unsigned right_version;
 	int left_ping;
 	int right_ping;
 	int cmp = 0;
 
+	left_version = network_game_client_advertised_version(global_network_game_client_get(), left);
+	right_version = network_game_client_advertised_version(global_network_game_client_get(), right);
+	if (left_version != right_version)
+		return left_version > right_version ? -1 : 1;
 	switch (browser_sort_column)
 	{
 	case BROWSER_SORT_NAME:
@@ -6340,8 +6389,21 @@ static void lobby_browser_update(struct widget_instance *list)
 	boolean sorting = browser_sort_direction != BROWSER_SORT_DEFAULT || browser_sort_sticky;
 	unsigned char keep_id[6];
 	boolean keep = FALSE;
+	boolean column_clicked;
+	boolean refresh_list;
 	short keep_index;
 
+	column_clicked = browser_sort_sticky;
+	/* the first look fills the rows as games arrive. after that the list
+	is taken again on the refresh interval, and once more after Refresh */
+	refresh_list = !lobby_browser.count ||
+		(lobby_browser.gather_until && (long)(lobby_browser.gather_until - now) > 0) ||
+		lobby_browser.refresh_now ||
+		(lobby_browser.refresh_at && (long)(now - lobby_browser.refresh_at) >= 0) ||
+		(lobby_browser.listed_time &&
+			(unsigned long)(now - lobby_browser.listed_time) >= LOBBY_BROWSER_REFRESH_TIME);
+	if (column_clicked && browser_sort_direction == BROWSER_SORT_DEFAULT)
+		refresh_list = TRUE;
 	if (sorting)
 	{
 		keep_index = lobby_browser.chosen;
@@ -6360,11 +6422,18 @@ static void lobby_browser_update(struct widget_instance *list)
 			keep = TRUE;
 		}
 	}
-	lobby_browser.count = lobby_browser_valid_games(lobby_browser.games,
-		(short)p2p_lobby_games(lobby_browser.games, LOBBY_BROWSER_GAMES));
-	if (sorting && browser_sort_direction != BROWSER_SORT_DEFAULT)
+	if (refresh_list)
+	{
+		lobby_browser.count = lobby_browser_valid_games(lobby_browser.games,
+			(short)p2p_lobby_games(lobby_browser.games, LOBBY_BROWSER_GAMES));
+		lobby_browser.listed_time = now ? now : 1;
+		lobby_browser.refresh_now = FALSE;
+		if (lobby_browser.refresh_at && (long)(now - lobby_browser.refresh_at) >= 0)
+			lobby_browser.refresh_at = 0;
+	}
+	if ((refresh_list || column_clicked) && sorting && browser_sort_direction != BROWSER_SORT_DEFAULT)
 		browser_listings_sort();
-	if (keep)
+	if ((refresh_list || column_clicked) && keep)
 		lobby_browser_choose_id(keep_id);
 	menu_window_set(list, &lobby_browser.first, lobby_browser.count, BROWSER_ROWS, 0, TRUE);
 	lobby_browser.first = (short)PIN(lobby_browser.first, 0, MAX(0, lobby_browser.count - BROWSER_ROWS));
@@ -6611,6 +6680,8 @@ static boolean lobby_browser_select(struct widget_instance *widget, short contro
 	{
 		p2p_lobby_refresh();
 		lobby_browser.begin_time = system_milliseconds();
+		lobby_browser.refresh_now = TRUE;
+		lobby_browser.refresh_at = lobby_browser.begin_time + 2000;
 		ui_play_audio_feedback_sound(SOUND_FORWARD);
 		return TRUE;
 	}
@@ -6746,6 +6817,9 @@ static void browser_update(struct widget_instance *list)
 	short focused = browser_row_index(list->focused_child);
 	struct advertised_game *kept = NULL;
 	boolean sorting = browser_sort_direction != BROWSER_SORT_DEFAULT || browser_sort_sticky;
+	boolean column_clicked;
+	boolean refresh_list;
+	unsigned long now;
 	short index;
 
 	if (multiplayer.mode == _multiplayer_mode_server_browser)
@@ -6753,6 +6827,20 @@ static void browser_update(struct widget_instance *list)
 		lobby_browser_update(list);
 		return;
 	}
+	now = system_milliseconds();
+	column_clicked = browser_sort_sticky;
+	if (browser_list_reset)
+	{
+		browser_list_reset = FALSE;
+		browser_list_time = 0;
+		browser_gather_until = now + LOBBY_BROWSER_LOOK_TIME;
+	}
+	refresh_list = !multiplayer.game_count ||
+		(browser_gather_until && (long)(browser_gather_until - now) > 0) ||
+		!browser_list_time ||
+		(unsigned long)(now - browser_list_time) >= LOBBY_BROWSER_REFRESH_TIME;
+	if (column_clicked && browser_sort_direction == BROWSER_SORT_DEFAULT)
+		refresh_list = TRUE;
 	if (sorting)
 	{
 		if (browser_sort_sticky)
@@ -6770,10 +6858,14 @@ static void browser_update(struct widget_instance *list)
 				kept = multiplayer.games[index];
 		}
 	}
-	browser_games_read();
-	if (sorting && browser_sort_direction != BROWSER_SORT_DEFAULT)
+	if (refresh_list)
+	{
+		browser_games_read();
+		browser_list_time = now ? now : 1;
+	}
+	if ((refresh_list || column_clicked) && sorting && browser_sort_direction != BROWSER_SORT_DEFAULT)
 		browser_advertised_sort();
-	if (sorting)
+	if ((refresh_list || column_clicked) && sorting)
 		browser_advertised_choose(kept);
 	if (!sorting && focused != NONE && focused < multiplayer.game_count && !ui_widget_port_hover_focused())
 		multiplayer.game_chosen = focused;
@@ -7411,7 +7503,8 @@ static boolean lobby_join_start(struct widget_instance *widget, struct event_rec
 	return TRUE;
 }
 
-/* someone besides this device is still in the game (another player, or a bot) */
+/* someone else on this machine is still seated (another player, or a bot).
+a remote machine does not keep this one in the lobby */
 static boolean lobby_others_beside(short controller)
 {
 	void *client = global_network_game_client_get();
@@ -7425,7 +7518,9 @@ static boolean lobby_others_beside(short controller)
 
 		if (!network_player_is_valid(player) || player->player_list_index == NONE)
 			continue;
-		if ((short)player->machine_index == machine && (short)player->controller_index == controller)
+		if ((short)player->machine_index != machine)
+			continue;
+		if ((short)player->controller_index == controller)
 			continue;
 		return TRUE;
 	}
@@ -7455,10 +7550,16 @@ static boolean lobby_leave(struct widget_instance *widget, struct event_record *
 
 	if (!lobby_controller_playing(controller))
 	{
-		/* cancel the profile list. a seat that left stays able to sit back down */
+		/* cancel the profile list. a seat that left stays able to sit back down.
+		nobody from here is in: the lobby ends (a map still downloading) */
 		lobby_join.adding = FALSE;
 		lobby_join.controller = NONE;
 		lobby_join.profile = NONE;
+		if (!lobby_local_player_count())
+		{
+			lobby_host_exit();
+			return TRUE;
+		}
 		return FALSE;
 	}
 	if (lobby_is_host() && lobby_local_player_count() <= 1)
@@ -7468,6 +7569,13 @@ static boolean lobby_leave(struct widget_instance *widget, struct event_record *
 	}
 	others = lobby_others_beside(controller);
 	left = ui_widget_port_unjoin_player(widget, event, widget_deleted);
+	/* still connected, and nobody else here is seated: a join that has not
+	added this machine yet (its map is still downloading) */
+	if (!others && global_network_game_client_get())
+	{
+		lobby_host_exit();
+		return TRUE;
+	}
 	/* the game is still up. this device is out of it, and the lobby stays
 	so START or ENTER can sit it back down */
 	if (others && global_network_game_client_get())

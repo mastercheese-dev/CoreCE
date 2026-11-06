@@ -136,29 +136,37 @@ enum
 
 	/* The host's mouse aim-assist policy, reliably on ready and on change. */
 	_distributed_message_aim_assist_policy = 90,
+	/* OpenCE's messages 91 through 95. A host of that build sends them.
+	This build accepts the bytes and does not apply them. Its own messages
+	follow, so an OpenCE host drops them as unknown. */
+	_distributed_message_shield_effects = 91,
+	_distributed_message_client_build = 92,
+	_distributed_message_fire_origins = 93,
+	_distributed_message_map_vote = 94,
+	_distributed_message_map_vote_choice = 95,
 	/* a client has its players, the host's objects and the game type's
 	state. the host starts the match once every machine still in it has
 	said so (reliably, and only on that machine's stream) */
-	_distributed_message_match_ready = 91,
+	_distributed_message_match_ready = 96,
 	/* the host starts the fade. the update number is the host's next game
 	update when it said so, so a client that hears it late fades only for
 	what that update still has left (reliably) */
-	_distributed_message_match_go = 92,
+	_distributed_message_match_go = 97,
 	/* a client tells the host whether Split Screen is on. a pane of that
 	machine stays black in matchmaking, and display.split_shared_only
 	leaves it out once the machine has said it is off. a build that does
 	not know the message drops it. */
-	_distributed_message_screen_share = 93,
+	_distributed_message_screen_share = 98,
 	/* the host tells every client each machine's answer */
-	_distributed_message_screen_share_down = 94,
+	_distributed_message_screen_share_down = 99,
 	/* the host tells which machines sat in this lobby or joined its link.
 	a filled matchmaking seat is not in the set. */
-	_distributed_message_screen_party = 95,
+	_distributed_message_screen_party = 100,
 	/* where a player's projectile went off (network_damage.c). The shooter's
 	machine tells the host, and the host tells every client, reliably, so
 	the blast is played there even when it hit nobody. A machine of version
 	36 hides another player's blast and waits for this. */
-	_distributed_message_blasts = 96,
+	_distributed_message_blasts = 101,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };

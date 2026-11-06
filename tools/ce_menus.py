@@ -56,7 +56,7 @@ MENUS = ROOT / "port/assets/menus"
 CE = MENUS / "ce"
 SVG_COPIES = MENUS / "svg"
 MAIN_MENU = "ui\\shell\\main_menu\\main_menu"
-TITLE_FONT = ROOT / "port/assets/fonts/CoreCE-Regular.ttf"
+TITLE_FONT = ROOT / "port/assets/fonts/OpenCE-Regular.ttf"
 # the widgets left out, with their pictures (and all they alone lead to):
 # the server browser's GameSpy logo, which the port has no use for, and the
 # main menu's Credits, which the Xbox's game has not
@@ -340,7 +340,7 @@ class Art:
 
     def title(self, name: str, text: str) -> str:
         """a <bitmap> of a title this port has that the PC version has not:
-        the text set in CoreCE (the public-domain Newtown respaced, as the
+        the text set in OpenCE (the public-domain Newtown respaced, as the
         port's titles are: tools/title_assets.py) over the PC headers'
         backdrop"""
         from PIL import ImageDraw, ImageFont

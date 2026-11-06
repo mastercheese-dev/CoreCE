@@ -1,7 +1,7 @@
 # macOS installer background
 
 `background.svg` is a deterministic 680 × 440 point design. Pale panels support
-Finder's native black labels: **CoreCE.app** centered at **(160, 220)** and the
+Finder's native black labels: **OpenCE.app** centered at **(160, 220)** and the
 **Applications** alias at **(520, 220)**, both with a **96 point** icon size.
 The heading and instruction sit above the icons; the arrow connects their
 centers without entering either icon region. Finder supplies the icon labels.

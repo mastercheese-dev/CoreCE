@@ -71,8 +71,11 @@ registration conflicts.
 The app does not include game data. On first launch it asks for your own Xbox
 disc image (`.iso` or `.xiso`) and keeps the extracted maps in the app's
 Documents folder. An older `Documents/GameData/maps` folder is still used when
-it is already there. Saves, `config.toml` and `halo.log` are in `Documents/save`
-inside the app container. Do not publish the app bundle or local signing logs.
+it is already there. Saves, `config.toml` and `halo.log` are in
+`Documents/OpenCE/save` inside the app container. When that folder is not
+already there, the first launch copies `Documents/save`, then the older Halo
+support folder. Do not publish the app
+bundle or local signing logs.
 
 A physical phone joins a Mac game only when both use the same network protocol.
 

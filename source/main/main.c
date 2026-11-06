@@ -1833,10 +1833,10 @@ static void main_native_build_label(char *label, size_t capacity)
 	platform = "Linux";
 	#endif
 	if (HALO_BUILD_NUMBER > 0)
-		_snprintf(label, capacity - 1, "CoreCE %s | build %d (%s)",
+		_snprintf(label, capacity - 1, "OpenCE %s | build %d (%s)",
 			platform, HALO_BUILD_NUMBER, HALO_BUILD_FLAVOR);
 	else
-		_snprintf(label, capacity - 1, "CoreCE %s | local build (%s)",
+		_snprintf(label, capacity - 1, "OpenCE %s | local build (%s)",
 			platform, HALO_BUILD_FLAVOR);
 	label[capacity - 1] = 0;
 }

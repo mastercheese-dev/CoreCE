@@ -19,10 +19,22 @@ struct game_variant_options
 	byte loadout;
 	byte primary_weapon;
 	byte secondary_weapon;
-	byte pad;
+	boolean no_map_weapons;
+	byte mode;
+	boolean hardcore;
+	byte infection_initial_zombies;
+	byte infection_zombie_speed;
+	byte infection_skull_damage;
+	byte infection_respawn_time;
+	byte infection_countdown;
+	boolean infection_zombie_shields;
+	byte gun_game_order;
+	boolean gun_game_melee_demotes;
+	boolean force_team_spawns;
+	byte reserved[5];
 };
 
-typedef char verify_game_variant_options_size[sizeof(struct game_variant_options) == 0x1C ? 1 : -1];
+typedef char verify_game_variant_options_size[sizeof(struct game_variant_options) == 0x2C ? 1 : -1];
 
 /* Identical to upstream v11's Xbox-rule defaults: friendly fire on, category
  * loadout, no time/respawn/penalty/team-balancing overrides, the variant's radar

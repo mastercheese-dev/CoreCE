@@ -6,7 +6,7 @@ pictures of text, set again in a font at 4x their size:
     python tools/title_assets.py --map assets/maps/ui.map
 
 The maps' titles are set in a commercial typeface; they are set here in
-CoreCE (port/assets/fonts/CoreCE-Regular.ttf, SIL Open Font License), Roger
+OpenCE (port/assets/fonts/OpenCE-Regular.ttf, SIL Open Font License), Roger
 White's public-domain Newtown respaced to set them as the maps do
 (tools/title_font.py). Each
 title keeps the rest of its picture: the text is taken out of the map's
@@ -44,7 +44,7 @@ from hud_assets import FORMATS, XboxMap, decode_bitmap, level0_size, render_svg 
 
 ROOT = Path(__file__).resolve().parent.parent
 TITLES = ROOT / "port/assets/titles"
-FONT = ROOT / "port/assets/fonts/CoreCE-Regular.ttf"
+FONT = ROOT / "port/assets/fonts/OpenCE-Regular.ttf"
 SCALE = 4
 MAXIMUM_SIZE = 2048
 # the precision letters are placed with: eighths of the map's texels

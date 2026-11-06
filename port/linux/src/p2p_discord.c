@@ -4,13 +4,13 @@ P2P_DISCORD.C
 Discord invites for internet play (p2p.c), through the Discord desktop
 client's local RPC socket (a Unix socket, or a named pipe on Windows):
 while hosting, the game's activity carries a private party whose join
-secret is the invite. Discord shows the game as CoreCE, with the CoreCE
+secret is the invite. Discord shows the game as OpenCE, with the OpenCE
 icon on the presence and on the invite. The host can send the invite, and
 an ask to join is accepted, so either way the other person joins.
 
 It goes through the Discord application in discord.application_id
-(config.toml; the project's by default). The activity names the game CoreCE
-and uses the CoreCE wordmark. Without an application id, or without Discord
+(config.toml; the project's by default). The activity names the game OpenCE
+and uses the OpenCE wordmark. Without an application id, or without Discord
 running, invites are still links (p2p.c).
 
 The protocol: frames of a little-endian opcode and length, then JSON. The
@@ -150,10 +150,6 @@ static void discord_send(int opcode, const char *json, int size)
 	discord_flush();
 }
 
-/* the CoreCE wordmark. Discord fetches it for the presence and the invite. */
-static const char discord_icon[] =
-	"https://raw.githubusercontent.com/mastercheese-dev/CoreCE/main/port/assets/icon/corece-icon.png";
-
 static void send_activity(void)
 {
 	char json[1024];
@@ -165,19 +161,24 @@ static void send_activity(void)
 	{
 		size = snprintf(json, sizeof(json),
 			"{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%lu\",\"args\":{\"pid\":%lu,\"activity\":{"
-			"\"name\":\"CoreCE\",\"type\":0,"
+			"\"name\":\"OpenCE\",\"type\":0,"
 			"\"details\":\"Hosting a game\",\"state\":\"Invite only\","
-			"\"assets\":{\"large_image\":\"%s\",\"large_text\":\"CoreCE\","
-			"\"invite_cover_image\":\"%s\"},"
+			/* the image uploaded as "logo" under the application's Rich
+			Presence art assets */
+			"\"assets\":{\"large_image\":\"logo\",\"large_text\":\"Halo: Combat Evolved\","
+			"\"invite_cover_image\":\"logo\"},"
 			"\"party\":{\"id\":\"%s\",\"size\":[%d,%d]},"
 			"\"secrets\":{\"join\":\"%s\"},\"instance\":false}}}",
-			++discord.nonce, (unsigned long)posix_process_id(), discord_icon, discord_icon, party,
+			++discord.nonce, (unsigned long)posix_process_id(), party,
 			discord.player_count, discord.maximum_player_count, discord.secret);
 	}
 	else
 	{
 		size = snprintf(json, sizeof(json),
-			"{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%lu\",\"args\":{\"pid\":%lu}}",
+			"{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%lu\",\"args\":{\"pid\":%lu,\"activity\":{"
+			"\"details\":\"In Menus\","
+			"\"assets\":{\"large_image\":\"logo\",\"large_text\":\"Halo: Combat Evolved\"},"
+			"\"instance\":false}}}",
 			++discord.nonce, (unsigned long)posix_process_id());
 	}
 	if (size > 0 && size < (int)sizeof(json))
@@ -376,7 +377,7 @@ void p2p_discord_update(void)
 			running; the game then receives the invite once connected */
 			snprintf(scheme, sizeof(scheme), "discord-%s", application);
 			/* (it lets go of the p2p lock while it may wait) */
-			p2p_register_url_scheme(scheme, "CoreCE");
+			p2p_register_url_scheme(scheme, "OpenCE");
 		}
 	}
 	if (!discord.enabled)

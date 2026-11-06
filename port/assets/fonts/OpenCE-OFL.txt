@@ -1,5 +1,5 @@
-Copyright 2026 The CoreCE Project Authors, for its changes to Newtown's spacing.
-CoreCE is based on Newtown, by Roger White (1994), which its author released
+Copyright 2026 The OpenCE Project Authors, for its changes to Newtown's spacing.
+OpenCE is based on Newtown, by Roger White (1994), which its author released
 into the public domain (Newtown-LICENSE.txt).
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Builds CoreCE, the typeface of the menus' titles
+"""Builds OpenCE, the typeface of the menus' titles
 (port/assets/fonts):
 
-    python tools/title_font.py             # port/assets/fonts/CoreCE-Regular.ttf
+    python tools/title_font.py             # port/assets/fonts/OpenCE-Regular.ttf
     python tools/title_font.py --measure   # its spacing, measured from titles.json
 
 The maps' titles are set in a commercial typeface, which cannot be shipped.
-CoreCE is Newtown (Roger White, 1994), a typeface in the same style that its
+OpenCE is Newtown (Roger White, 1994), a typeface in the same style that its
 author released into the public domain (port/assets/fonts/Newtown-LICENSE.txt),
 respaced to set the titles as the maps do. Only its spacing is changed: its
 outlines are Newtown's (port/assets/fonts/Newtown-Regular.ttf, unmodified),
@@ -22,7 +22,7 @@ SPACE and KERNING. Newtown's own kerning pairs between letters left as they
 were are kept; its pairs with a respaced letter are replaced by the measured
 ones.
 
-CoreCE is under the SIL Open Font License 1.1 (CoreCE-OFL.txt). Needs
+OpenCE is under the SIL Open Font License 1.1 (OpenCE-OFL.txt). Needs
 fontTools (and NumPy for --measure).
 """
 
@@ -33,12 +33,12 @@ from fontTools.ttLib import TTFont
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "port/assets/fonts/Newtown-Regular.ttf"
-OUTPUT = ROOT / "port/assets/fonts/CoreCE-Regular.ttf"
+OUTPUT = ROOT / "port/assets/fonts/OpenCE-Regular.ttf"
 TITLES = ROOT / "port/assets/titles/titles.json"
-FAMILY = "CoreCE"
+FAMILY = "OpenCE"
 VERSION = "2.000"
-COPYRIGHT = ("CoreCE: Newtown, by Roger White (1994), released by its author into the public domain; "
-             "respaced by The CoreCE Project Authors (2026)")
+COPYRIGHT = ("OpenCE: Newtown, by Roger White (1994), released by its author into the public domain; "
+             "respaced by The OpenCE Project Authors (2026)")
 
 # the space beside each respaced character (left, right of its ink), in font
 # units (1000 to the em, capitals 719 tall)

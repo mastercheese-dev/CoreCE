@@ -242,12 +242,17 @@ from, so that a second copy of the game on one computer, on a port of its
 own, plays too; version 32 sends the host's mouse aim assist policy
 (distributed message 90, `network_aim_assist.c`), which a client must not
 ignore; version 36 tells every machine where a player's blast went off
-(distributed message 96), including one that damaged nobody.
+(distributed message 101), including one that damaged nobody; version 41
+uses OpenCE's game record, 16 bytes longer, and OpenCE's message numbers
+91 through 95 (shield effects, a client's build, a shot's origin, and a
+dedicated server's map vote). This build's match start, split screen, and
+blasts are messages 96 through 101. A host that never sends the match start
+is joined once its clock is moving.
 
 This Mac build plays that options record (time limit, loadout, friendly fire,
 vehicle respawn, team balance, radar, vehicle sets, and no-map-weapons) and
-keeps CoreCE capability on advertisement flag `0x04`, distinct from the in-progress
-flag `0x02`. An enabled CoreCE session advertises version `0x800B`.
+keeps OpenCE capability on advertisement flag `0x04`, distinct from the in-progress
+flag `0x02`. An enabled OpenCE session advertises version `0x800B`.
 
 A client plays by its host's rules: in another's game (searching for it,
 in its lobby, or playing it) the developer console, the telnet console

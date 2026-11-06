@@ -268,7 +268,7 @@ static int save_copy_file(int source_directory, int destination_directory, const
 	if (errno != ENOENT) goto done;
 	for (attempt = 0; attempt < 32; attempt++)
 	{
-		snprintf(temporary, sizeof(temporary), ".corece-migration-%ld-%u.partial", (long)getpid(), ++counter);
+		snprintf(temporary, sizeof(temporary), ".OpenCE-migration-%ld-%u.partial", (long)getpid(), ++counter);
 		destination = openat(destination_directory, temporary,
 			O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
 		if (destination >= 0) break;

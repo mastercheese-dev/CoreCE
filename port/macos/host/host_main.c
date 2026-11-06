@@ -177,7 +177,7 @@ int main(int argc, char **argv) {
     if (!home)
         host_fatal("HOME is not set");
     snprintf(default_saves, sizeof(default_saves),
-             "%s/Library/Application Support/CoreCE", home);
+             "%s/Library/Application Support/OpenCE", home);
     const char *saves = getenv("HALO_SAVE_ROOT");
     if (!saves)
         saves = !image_argument ? default_saves : "build/macos/saves";

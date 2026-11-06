@@ -58,7 +58,7 @@ static int import_progress(void *context, const char *file, uint64_t done, uint6
     icon.contentMode=UIViewContentModeScaleAspectFill;icon.clipsToBounds=YES;icon.layer.cornerRadius=16;
     [icon.widthAnchor constraintEqualToConstant:72].active=YES;[icon.heightAnchor constraintEqualToConstant:72].active=YES;
     [stack addArrangedSubview:icon];
-    UILabel *title=[UILabel new];title.text=@"CoreCE";title.font=[UIFont preferredFontForTextStyle:UIFontTextStyleLargeTitle];
+    UILabel *title=[UILabel new];title.text=@"OpenCE";title.font=[UIFont preferredFontForTextStyle:UIFontTextStyleLargeTitle];
     title.adjustsFontForContentSizeCategory=YES;title.textAlignment=NSTextAlignmentCenter;[stack addArrangedSubview:title];
     UILabel *body=[UILabel new];body.text=@"Choose your own Halo: Combat Evolved Xbox XISO.\nWe'll verify and keep a private copy, then start the game.";
     body.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody];body.adjustsFontForContentSizeCategory=YES;
@@ -139,7 +139,7 @@ static int import_progress(void *context, const char *file, uint64_t done, uint6
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self.spinner stopAnimating];self.cancelButton.hidden=YES;self.importing=NO;
                 if (self.backgroundTask!=UIBackgroundTaskInvalid) { [UIApplication.sharedApplication endBackgroundTask:self.backgroundTask];self.backgroundTask=UIBackgroundTaskInvalid; }
-                if (imported) {self.statusLabel.text=@"Ready. Starting CoreCE…";self.ready=YES;}
+                if (imported) {self.statusLabel.text=@"Ready. Starting OpenCE…";self.ready=YES;}
                 else {self.statusLabel.text=failure?:@"Could not import this disc image.";self.chooseButton.hidden=NO;self.progress.hidden=YES;}
             });
         }

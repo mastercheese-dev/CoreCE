@@ -1020,7 +1020,7 @@ TITLES = {
 
 def title_backdrop(width: float) -> str:
     """a header's dark backdrop, as the PC headers' redraws have it, for text
-    width units wide (the text is set over it in CoreCE: ce_menus.py)"""
+    width units wide (the text is set over it in OpenCE: ce_menus.py)"""
     return "\n".join([
         '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="64" viewBox="0 0 512 64">',
         "  <defs>",

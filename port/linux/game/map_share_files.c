@@ -61,7 +61,7 @@ enum
 
 /* what a hash is of: these bytes, the file's size (4 bytes, little-endian)
 and its pieces' hashes */
-static char const file_hash_label[] = "CoreCE map 1";
+static char const file_hash_label[] = "OpenCE map 1";
 #define FILE_HASH_LABEL_BYTES 12
 
 enum

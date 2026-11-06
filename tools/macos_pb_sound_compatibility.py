@@ -52,7 +52,7 @@ def run_case(name, args, output):
             if name == 'live_gate':
                 for flags in (8, 16, 31):
                     refusal = pair.native_command('host', flags)
-                    checks[f'flags_{flags}_refused'] = 'CoreCE options change refused:' in refusal
+                    checks[f'flags_{flags}_refused'] = 'OpenCE options change refused:' in refusal
                     checks[f'flags_{flags}_unchanged'] = (
                         pair.status('host')['flags'] == 7 and pair.status('client')['flags'] == 7)
                 pair.native_command('host', 0)

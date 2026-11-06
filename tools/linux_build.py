@@ -194,7 +194,7 @@ def updater_defines(release: bool) -> str:
     channel = os.environ.get("HALO_BUILD_CHANNEL", "main")
     if channel not in ("main", "testing"):
         raise RuntimeError("HALO_BUILD_CHANNEL must be main or testing")
-    repository = os.environ.get("HALO_UPDATE_REPOSITORY", "mastercheese-dev/CoreCE")
+    repository = os.environ.get("HALO_UPDATE_REPOSITORY", "mastercheese-dev/OpenCE")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise RuntimeError("HALO_UPDATE_REPOSITORY must be owner/name")
     flavor = "release" if release else "debug"

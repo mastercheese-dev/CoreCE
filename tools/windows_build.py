@@ -76,7 +76,7 @@ def updater_defines(release: bool) -> str:
     channel = os.environ.get("HALO_BUILD_CHANNEL", "main")
     if channel not in ("main", "testing"):
         raise RuntimeError("HALO_BUILD_CHANNEL must be main or testing")
-    repository = os.environ.get("HALO_UPDATE_REPOSITORY", "mastercheese-dev/CoreCE")
+    repository = os.environ.get("HALO_UPDATE_REPOSITORY", "mastercheese-dev/OpenCE")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise RuntimeError("HALO_UPDATE_REPOSITORY must be owner/name")
     flavor = "release" if release else "debug"
@@ -321,7 +321,7 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
         description="WINDOWS RC $out",
     )
     resources = BUILD / "halo.res"
-    n.build(outputs=resources, rule="windows_rc", inputs=PORT_DIR / "halo.rc", implicit=[PORT_DIR / "corece-icon.ico"])
+    n.build(outputs=resources, rule="windows_rc", inputs=PORT_DIR / "halo.rc", implicit=[PORT_DIR / "opence-icon.ico"])
     n.rule(
         name="windows_copy",
         command="$python -c \"import shutil,sys; shutil.copyfile(sys.argv[1], sys.argv[2])\" $in $out",

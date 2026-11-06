@@ -43,7 +43,7 @@ you use your own account.
 From the root of this repository, run:
 
 ```sh
-./tools/ios_resign.sh ~/Downloads/CoreCE-unsigned.ipa \
+./tools/ios_resign.sh ~/Downloads/OpenCE-unsigned.ipa \
   --identity 'Apple Development: Your Name (IDENTITY_ID)' \
   --profile ~/Downloads/embedded.mobileprovision \
   --bundle-id com.yourname.haloce \
@@ -117,7 +117,7 @@ the compiled runtime's fixed base address as a signing workaround.
 
 The startup preflight now checks memory before importing an ISO. Failures show
 a scrollable native screen with **Copy details** and **Close**, and log the
-requested address/size and kernel result in `Documents/save/halo.log` (or the
+requested address/size and kernel result in `Documents/OpenCE/save/halo.log` (or the
 existing legacy save directory). Existing imports and saves are preserved.
 
 ## Build it yourself
