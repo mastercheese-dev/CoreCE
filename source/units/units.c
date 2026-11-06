@@ -3301,6 +3301,52 @@ void unit_exit_seat_end(
 	return;
 }
 
+/* port: the riders of a vehicle that has landed on its side or its roof.
+Said from the vehicle's own update, and again when the host takes a
+client's roll, which arrives after the rider update that would have
+thrown them. */
+void unit_eject_flipped_riders(
+	long vehicle_index)
+{
+	struct unit_datum *vehicle;
+	long child_index;
+	extern boolean rider_ejection;
+	extern void network_distributed_note_ejection(long unit_index);
+
+	vehicle = (struct unit_datum *)object_try_and_get_and_verify_type(vehicle_index, _object_mask_vehicle);
+	/* vehicle_is_flipped's test: on its side or its roof, and on the ground.
+	A warthog that has come to rest on its side has up.k near 0. */
+	if (!rider_ejection || !vehicle || vehicle->object.up.k>=0.2f ||
+		!TEST_FLAG(vehicle->object.flags, _object_on_ground_bit))
+	{
+		return;
+	}
+	child_index = vehicle->object.first_child_object_index;
+	while (child_index!=NONE)
+	{
+		struct object_datum *child = object_try_and_get(child_index);
+		long next_index;
+
+		if (!child)
+			break;
+		next_index = child->object.next_object_index;
+		if (child->object.type==_object_type_biped)
+		{
+			struct unit_datum *rider = (struct unit_datum *)child;
+
+			if (rider->unit.parent_seat_index!=NONE &&
+				rider->object.parent_object_index==vehicle_index)
+			{
+				/* the rider's own machine tells the host, before the exit
+				clears the seat the notice names */
+				network_distributed_note_ejection(child_index);
+				unit_exit_seat_end(child_index);
+			}
+		}
+		child_index = next_index;
+	}
+}
+
 void unit_impulse(
 	long unit_index,
 	long impulse_index,

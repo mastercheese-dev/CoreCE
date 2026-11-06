@@ -2304,6 +2304,15 @@ static void distributed_apply_predictions(
 	}
 }
 
+/* the same object, including one each machine numbered alike */
+static boolean distributed_same_object(
+	long first,
+	long second)
+{
+	return first == second || (first != NONE && second != NONE &&
+		DATUM_INDEX_TO_ABSOLUTE_INDEX(first) == DATUM_INDEX_TO_ABSOLUTE_INDEX(second));
+}
+
 /* a client: the host's unit state still has this player in the vehicle
 they were thrown from */
 static boolean distributed_ejection_holding(
@@ -2317,7 +2326,7 @@ static boolean distributed_ejection_holding(
 		struct distributed_ejection_notice *notice = &distributed_ejections[local_player_index];
 
 		if (notice->pending && notice->player_index == player_index &&
-			notice->vehicle_index == vehicle_index)
+			distributed_same_object(notice->vehicle_index, vehicle_index))
 		{
 			return TRUE;
 		}
@@ -2338,7 +2347,7 @@ static void distributed_ejection_hear(
 		struct distributed_ejection_notice *notice = &distributed_ejections[local_player_index];
 
 		if (notice->pending && notice->player_index == player_index &&
-			(!alive || notice->vehicle_index != vehicle_index))
+			(!alive || !distributed_same_object(notice->vehicle_index, vehicle_index)))
 		{
 			notice->pending = FALSE;
 		}
@@ -2433,6 +2442,8 @@ static void distributed_handle_ejection(
 		struct distributed_ejection notice;
 		struct player_datum *player;
 		struct unit_datum *unit;
+		long unit_index;
+		long now;
 
 		csmemcpy(&notice, (byte const *)entries + index * sizeof(notice), sizeof(notice));
 		if (notice.player_index >= MAXIMUM_TRACKED_PLAYERS ||
@@ -2441,20 +2452,34 @@ static void distributed_handle_ejection(
 			continue;
 		}
 		player = distributed_player((short)notice.player_index);
-		if (!player || player->unit_index != notice.unit_index ||
-			notice.stamp <= distributed_ejection_applied[notice.player_index])
+		if (!player)
+			continue;
+		/* the player as this machine has them, which is the unit the seat
+		correction will put back. The index they sent is theirs. */
+		unit_index = player->unit_index;
+		unit = (struct unit_datum *)object_try_and_get_and_verify_type(unit_index, _object_mask_unit);
+		if (!unit)
+			continue;
+		now = game_time_get();
+		if (unit->unit.parent_seat_index == NONE ||
+			!distributed_same_object(unit->object.parent_object_index, notice.vehicle_index))
 		{
+			/* already out of that vehicle: the throw is done. A copy that
+			arrives after they sit again must not throw them a second time. */
+			if (notice.stamp > distributed_ejection_applied[notice.player_index] &&
+				distributed_same_object(unit->unit.last_vehicle_index, notice.vehicle_index) &&
+				now - unit->unit.game_time_at_last_vehicle_exit >= 0 &&
+				now - unit->unit.game_time_at_last_vehicle_exit < EJECTION_NOTICE_TICKS)
+			{
+				distributed_ejection_applied[notice.player_index] = notice.stamp;
+			}
 			continue;
 		}
-		unit = (struct unit_datum *)object_try_and_get_and_verify_type(notice.unit_index, _object_mask_unit);
-		if (!unit || unit->unit.parent_seat_index == NONE ||
-			unit->object.parent_object_index != notice.vehicle_index)
-		{
+		if (notice.stamp <= distributed_ejection_applied[notice.player_index])
 			continue;
-		}
-		if (!object_try_and_get_and_verify_type(notice.vehicle_index, _object_mask_vehicle))
+		if (!object_try_and_get_and_verify_type(unit->object.parent_object_index, _object_mask_vehicle))
 			continue;
-		unit_exit_seat_end(notice.unit_index);
+		unit_exit_seat_end(unit_index);
 		distributed_ejection_applied[notice.player_index] = notice.stamp;
 	}
 }

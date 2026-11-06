@@ -2040,6 +2040,9 @@ void network_objects_apply_vehicle_predictions(
 
 			network_objects_reconcile(state->object_index, &state->position, &forward, &up, &velocity,
 				&angular_velocity, HOST_VEHICLE_BLEND_DISTANCE);
+			/* the client's roll is this pose. The vehicle update that would
+			throw the rider already ran, and the next one may have righted it. */
+			unit_eject_flipped_riders(state->object_index);
 			/* (a copy at rest runs no physics, and so neither falls nor
 			counts its ticks in the air: one the client moved from where it
 			came to rest (a little at a time too), or says moves, wakes, and

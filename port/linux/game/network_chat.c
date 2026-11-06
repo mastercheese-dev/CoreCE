@@ -10,7 +10,7 @@ whose keys the stick moves through and A types, a tap types (the
 touchscreen), and the controller then drives nothing else (xinput_sdl.c's
 halo_chat_pad_buttons, halo_chat_taps). The lines are
 drawn above the motion sensor, each with its player's name in their team's
-colour, wrapped to a column a little over half the view wide, and fade after a
+colour, the host's name white, wrapped to a column a little over half the view wide, and fade after a
 while; where the touch controls hold the bottom left (Android, and a browser
 whose touch controls are used), they go at the top left under the weapon's
 panel, the newest highest. Each local player's view shows the lines that
@@ -197,6 +197,9 @@ enum
 	_chat_config_allowed_bit,
 	/* their lines may have links */
 	_chat_config_links_bit,
+	/* pad[0] is the machine running the game. a build that does not set
+	this leaves that byte 0, which is that machine when it joined first */
+	_chat_config_host_machine_bit,
 };
 
 /* who a line is to (network_chat.h's _chat_channel_*) */
@@ -348,6 +351,9 @@ static struct
 	byte flags;
 	/* (the host, system_milliseconds) */
 	unsigned long sent;
+	/* the machine running the game, once its settings have named it */
+	boolean host_named;
+	short host_machine;
 } chat_config;
 
 /* each local player's motion sensor as last drawn (the window's units),
@@ -976,19 +982,30 @@ static void chat_host_update_config(
 {
 	byte flags = chat_host_config_flags();
 	unsigned long now = system_milliseconds();
+	short host_machine = network_game_client_get_local_machine_index();
 	struct
 	{
 		struct distributed_message_header header;
 		struct distributed_chat_config config;
 	} message;
 
-	if (chat_config.known && flags == chat_config.flags && now - chat_config.sent < CHAT_CONFIG_MILLISECONDS)
+	if (chat_config.known && flags == chat_config.flags &&
+		chat_config.host_named == (host_machine != NONE) &&
+		(!chat_config.host_named || chat_config.host_machine == host_machine) &&
+		now - chat_config.sent < CHAT_CONFIG_MILLISECONDS)
 		return;
 	chat_config.known = TRUE;
 	chat_config.flags = flags;
+	chat_config.host_named = host_machine != NONE;
+	chat_config.host_machine = host_machine;
 	chat_config.sent = now;
 	csmemset(&message, 0, sizeof(message));
 	message.config.flags = flags;
+	if (host_machine != NONE)
+	{
+		message.config.flags |= (byte)FLAG(_chat_config_host_machine_bit);
+		message.config.pad[0] = (byte)host_machine;
+	}
 	chat_send_to_clients(&message, _distributed_message_chat_config, (word)sizeof(message));
 }
 
@@ -1002,7 +1019,9 @@ void network_chat_handle_config(
 		return;
 	csmemcpy(&config, entries, sizeof(config));
 	chat_config.known = TRUE;
-	chat_config.flags = config.flags;
+	chat_config.host_named = TEST_FLAG(config.flags, _chat_config_host_machine_bit) != 0;
+	chat_config.host_machine = chat_config.host_named ? (short)config.pad[0] : 0;
+	chat_config.flags = (byte)(config.flags & (byte)~(byte)FLAG(_chat_config_host_machine_bit));
 }
 
 word network_chat_config_entry_size(
@@ -1084,18 +1103,45 @@ static short chat_local_players(
 
 static short chat_local_hearers(struct player_datum const *sender, short player_index, short channel);
 
-/* a person on the machine running the game, not one of its bots */
+/* the machine running the game: this one, when it is the host; the machine
+its settings named; or the first machine, which a host that does not say
+still is */
+static short chat_host_machine(
+	void)
+{
+	if (chat_host())
+		return network_game_client_get_local_machine_index();
+	if (chat_config.host_named)
+		return chat_config.host_machine;
+	return 0;
+}
+
+/* a generated bot (Bot, Bot1, Bot16), not a person whose name begins that way */
+static boolean chat_name_is_bot(
+	wchar_t const *name)
+{
+	if (!name || ustrncmp(name, L"Bot", 3) != 0)
+		return FALSE;
+	return name[3] == 0 || (name[3] >= L'0' && name[3] <= L'9');
+}
+
+/* a person on the machine running the game, not one of its bots. a client
+says so from that machine, including when the host did not mark the line */
 static boolean chat_player_is_host(
 	struct player_datum const *player)
 {
 	short host_machine;
+	short machine;
 
-	if (!chat_host() || !player)
+	if (!player)
 		return FALSE;
-	host_machine = network_game_client_get_local_machine_index();
-	if (host_machine == NONE || (short)player->network_player_data.machine_index != host_machine)
+	host_machine = chat_host_machine();
+	machine = (short)player->network_player_data.machine_index;
+	if (host_machine == NONE || machine != host_machine)
 		return FALSE;
-	return !bot_controller_is_bot(host_machine, player->network_player_data.controller_index);
+	if (bot_controller_is_bot(machine, player->network_player_data.controller_index))
+		return FALSE;
+	return !chat_name_is_bot(player->name);
 }
 
 /* a line shown, from a player (absolute index). host_name: their name is white */
@@ -1113,6 +1159,8 @@ static void chat_add_line(
 	and its lines, here alone) */
 	if (!player || network_voice_machine_muted(player->network_player_data.machine_index))
 		return;
+	if (!host_name)
+		host_name = chat_player_is_host(player);
 	line = chat_new_line(text);
 	csmemcpy(line->name, player->name, chat_player_name_length(player) * sizeof(line->name[0]));
 	line->color = host_name ? _chat_color_host :
@@ -1801,6 +1849,8 @@ void network_chat_update(
 	if (!chat_network_game() || !game_in_progress())
 	{
 		chat_config.known = FALSE;
+		chat_config.host_named = FALSE;
+		chat_config.host_machine = 0;
 		chat_in_game = FALSE;
 	}
 	else
