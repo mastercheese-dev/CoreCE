@@ -167,6 +167,11 @@ enum
 	the blast is played there even when it hit nobody. A machine of version
 	36 hides another player's blast and waits for this. */
 	_distributed_message_blasts = 101,
+	/* a client's own player was thrown from a vehicle that landed upside
+	down. The host takes them out of that seat. The client says so each
+	tick until the host's unit state shows them out. A build that does not
+	know the message drops it. */
+	_distributed_message_ejection = 102,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };
@@ -275,6 +280,9 @@ long distributed_player_from_byte(byte player_index);
 boolean distributed_player_is_local(long player_index);
 /* the player's living unit, or NONE */
 long distributed_living_unit(struct player_datum const *player);
+/* a client: its own player is leaving a vehicle that landed upside down.
+said before the local exit, and repeated until the host shows them out. */
+void network_distributed_note_ejection(long unit_index);
 /* whether the player is one of that client machine's (the host) */
 boolean distributed_machine_has_player(long machine_index, short player_index);
 void distributed_count_correction(void);

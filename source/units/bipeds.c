@@ -283,6 +283,7 @@ symbols in this file:
 /* port: port/linux/game/network_objects.c's (a client deletes the host's
 objects on the host's word alone) */
 boolean network_objects_may_delete(long object_index);
+void network_distributed_note_ejection(long unit_index);
 
 /* port: an unarmed player's melee's length, in ticks (a weapon's is about
 this: its first person melee animation, sped up a quarter) */
@@ -4276,6 +4277,9 @@ boolean biped_update(
 				vehicle->object.up.k<0.f &&
 				TEST_FLAG(vehicle->object.flags, _object_on_ground_bit))
 			{
+				/* port: the host keeps this seat unless it is told, and
+				then puts the rider back */
+				network_distributed_note_ejection(biped_index);
 				unit_exit_seat_end(biped_index);
 			}
 		}
