@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .embed_assets import hud_assets_build, hud_configure_inputs
+from .embed_assets import hardcore_assets_build, hud_assets_build, hud_configure_inputs
 from .ninja_syntax import Writer
 
 PORT_DIR = Path("port/linux")
@@ -540,6 +540,7 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
 
     # the high-res HUD's textures (port/assets/hud; port/linux/src/hud_hires.c)
     embedded_assets = hud_assets_build(n, "linux", build_dir / "generated" / "hud_hires_assets.c")
+    embedded_assets += hardcore_assets_build(n, "linux", build_dir / "generated" / "hardcore_assets_data.c")
 
     # the portable build's system root and SDL3, or the build machine's
     if getattr(sln, "port_portable", False):

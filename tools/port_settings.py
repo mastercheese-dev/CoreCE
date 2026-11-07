@@ -724,6 +724,7 @@ AIM_ASSIST_HELP = [
 ]
 
 STRING_INSERTS = {
+    f"{PE}/profile_edit_options": [(10, ["MODS"])],
     f"{PLAYER_EDIT}/player_options_labels": [(8, ["AIM ASSIST:"])],
     f"{PLAYER_EDIT}/cap_player_options": [(28, AIM_ASSIST_HELP)],
     # (Teamplay Options' voice chat and vote kick rows, after its own:
@@ -847,6 +848,10 @@ WIDGET_PATCHES = {
     # button settings, BITMAP_FRAMES; menu_functions.c's
     # profile_gamepad_layout)
     f"{PE}/profile_edit_extended_desc_pic": {"inputs": ["port gamepad layout preview"]},
+    # Mods is the row before About. Its description and picture stay the
+    # profile list's last (menu_functions.c's profile_rows_apply).
+    f"{PE}/profile_edit_select_list": {"insert_before": {
+        f"{PE}/about_item": [f'<child widget="{PE}/mods_profile_item"/>']}},
     # (straight to their screens: no "checking for updates" dialog, which
     # asked the PC version's servers)
     f"{MT}/multiplayer_type_join_internet_item": {"set": {"string_index": 6}, "handlers": [
@@ -1197,8 +1202,9 @@ def _server_settings() -> list:
     whether the server browser lists it (PUBLIC or PRIVATE: an internet
     game's)"""
     base = f"{MT}/server_settings"
-    # (thirteen rows: the help and the buttons sit under Hardcore)
-    spec = {"screen": "server_settings_screen", "spacing": 20, "help_top": 350, "help_height": 60,
+    # (fourteen rows: the last sits just above the help, and the buttons
+    # sit under Hardcore)
+    spec = {"screen": "server_settings_screen", "spacing": 20, "help_top": 356, "help_height": 54,
             "button_y": 414,
             "header": ("header_server_settings", f"{base}/header_server_settings")}
     rows, extra = [], []
@@ -1263,6 +1269,28 @@ def _server_settings() -> list:
                      ['<on event="created" run="port setting load"/>',
                       '<on event="left_mouse" run="mouse spinner 1wide click"/>'])
     rows.append((f"{base}/op_text_chat", None))
+    # MODS (network.mods_allowed): ALLOWED, or NOT ALLOWED, which makes every
+    # machine play the map's own tags (menu_functions.c, network_mods.c)
+    extra += _widget(f"{base}/op_mods", [("width", 512), ("height", 20),
+                                         ("flags", "pass_unhandled_to_focused_child"),
+                                         ("bitmap", "bitmaps/option_bkds_short"), ("color", "#FF2896FF")],
+                     [f'<child widget="{base}/mods_label"/>',
+                      f'<child widget="{base}/server_mods_spinner" x="320" y="1"/>'])
+    extra += _widget(f"{base}/mods_label", [("type", "text"), ("controller", 1), ("width", 300),
+                                            ("height", 20), ("string_list", f"{base}/labels"),
+                                            ("string_index", 15), ("font", "ui\\small_ui"),
+                                            ("color", "#FF2896FF"), ("text_x", 13), ("text_y", 1)], [])
+    extra += _widget(f"{base}/server_mods_spinner",
+                     [("type", "spinner"), ("left", 3), ("top", 0), ("width", 147), ("height", 18),
+                      ("flags", "pass_unhandled_to_focused_child left_right_tabs_items"),
+                      ("strings", "ALLOWED|NOT ALLOWED"), ("setting", "network.mods_allowed"),
+                      ("values", "true|false"), ("font", "ui\\small_ui"), ("color", "#FF2896FF"),
+                      ("align", "center"), ("text_y", 0),
+                      ("header_bitmap", "bitmaps/arrow_sm_left"), ("footer_bitmap", "bitmaps/arrow_sm_right"),
+                      ("header_bounds", "3 -6 15 0"), ("footer_bounds", "3 150 15 156")],
+                     ['<on event="created" run="port setting load"/>',
+                      '<on event="left_mouse" run="mouse spinner 1wide click"/>'])
+    rows.append((f"{base}/op_mods", None))
     # PASSWORD (a public internet game's: menu_functions.c's server_settings_update),
     # which players from the server browser must type
     extra += _value_row(base, "password", 10 + len(COOP_SETUP_SCREENS), "ss edit server password", compact=True)
@@ -1331,7 +1359,7 @@ def _server_settings() -> list:
                                          "PLAYER OPTIONS:", "ITEM OPTIONS:", "VEHICLE OPTIONS:", "INDICATOR OPTIONS:",
                                          "TEAMPLAY OPTIONS:", "LISTING:",
                                          *(f"{title}:" for _, title, _, _ in COOP_SETUP_SCREENS), "PASSWORD:",
-                                         f"{MAP_SHARE_SETUP[1]}:", "TEXT CHAT:"])
+                                         f"{MAP_SHARE_SETUP[1]}:", "TEXT CHAT:", "MODS:"])
     extra += _strings(f"{base}/help_strings", [
         "",
         "The name the game shows in the lists of games.\\nEnter changes it.",
@@ -1355,6 +1383,8 @@ def _server_settings() -> list:
         # (TEXT CHAT's: the second while LISTING is PUBLIC)
         "Text chat for this game. A public listed game stays off.",
         "Text chat is off while this game is public.",
+        # (MODS': menu_functions.c's MODS_HELP)
+        "Players may play mods, or this game uses the map's own tags.\\nA player whose game cannot turn mods off is dropped.",
     ])
     lines = _screen(base, spec, rows, ["server settings update"],
                     ['<on event="created" run="server settings init"/>'], extra)
@@ -1432,9 +1462,9 @@ MAP_SHARE_SETUP = ("map_share_options", "MAP SHARING",
      ["The most you send of maps, so that the game\\nkeeps the rest of your upload."] * len(MAP_SHARE_UPLOADS)),
 ])
 # (Server Setup's place of its options' rows, co-op's or the gametype's: after
-# MAP SHARING's. TEXT CHAT and PASSWORD sit above that, so the first options
-# row is place 7.)
-SETUP_OPTIONS_PLACE = 7
+# MAP SHARING's. TEXT CHAT, MODS and PASSWORD sit above that, so the first
+# options row is place 8.)
+SETUP_OPTIONS_PLACE = 8
 # (their screens' titles)
 TITLES.update({f"{MT}/server_settings/{key}/header_{key}": title
                for key, title, _, _ in [*COOP_SETUP_SCREENS, MAP_SHARE_SETUP]})
@@ -2223,9 +2253,10 @@ def _hardcore_screen() -> list:
                       f'<child widget="{base}/op_invite" x="54" y="133"/>',
                       f'<child widget="{base}/op_listing" x="54" y="163"/>',
                       f'<child widget="{base}/op_text_chat" x="54" y="193"/>',
-                      f'<child widget="{base}/op_password" x="54" y="223"/>',
-                      f'<child widget="{base}/op_map_share" x="54" y="253"/>',
-                      f'<child widget="{base}/op_game_rules" x="54" y="283"/>',
+                      f'<child widget="{base}/op_mods" x="54" y="223"/>',
+                      f'<child widget="{base}/op_password" x="54" y="253"/>',
+                      f'<child widget="{base}/op_map_share" x="54" y="283"/>',
+                      f'<child widget="{base}/op_game_rules" x="54" y="313"/>',
                       f'<child widget="{base}/server_button_bar" y="414"/>'])
     lines += _hardcore_field(base, "server_name", "GAME NAME", "ss edit server name")
     lines += _widget(f"{base}/op_max_players", [("width", 512), ("height", 20),
@@ -2279,6 +2310,24 @@ def _hardcore_screen() -> list:
                       ("header_bounds", "3 -6 15 0"), ("footer_bounds", "3 150 15 156")],
                      ['<on event="created" run="port setting load"/>',
                       '<on event="left_mouse" run="mouse spinner 1wide click"/>'])
+    lines += _widget(f"{base}/op_mods", [("width", 512), ("height", 20),
+                                         ("flags", "pass_unhandled_to_focused_child"),
+                                         ("bitmap", "bitmaps/option_bkds_short"), ("color", "#FF2896FF")],
+                     [f'<child widget="{base}/mods_label"/>',
+                      f'<child widget="{base}/server_mods_spinner" x="320" y="1"/>'])
+    lines += _widget(f"{base}/mods_label", [("type", "text"), ("controller", 1), ("width", 300),
+                                            ("height", 20), ("text", "MODS"), ("font", "ui\\small_ui"),
+                                            ("color", "#FF2896FF"), ("text_x", 13), ("text_y", 1)], [])
+    lines += _widget(f"{base}/server_mods_spinner",
+                     [("type", "spinner"), ("left", 3), ("top", 0), ("width", 147), ("height", 18),
+                      ("flags", "pass_unhandled_to_focused_child left_right_tabs_items"),
+                      ("strings", "ALLOWED|NOT ALLOWED"), ("setting", "network.mods_allowed"),
+                      ("values", "true|false"), ("font", "ui\\small_ui"), ("color", "#FF2896FF"),
+                      ("align", "center"), ("text_y", 1),
+                      ("header_bitmap", "bitmaps/arrow_sm_left"), ("footer_bitmap", "bitmaps/arrow_sm_right"),
+                      ("header_bounds", "3 -6 15 0"), ("footer_bounds", "3 150 15 156")],
+                     ['<on event="created" run="port setting load"/>',
+                      '<on event="left_mouse" run="mouse spinner 1wide click"/>'])
     lines += _hardcore_field(base, "password", "PASSWORD", "ss edit server password")
     lines += _widget(f"{base}/op_map_share", [("width", 512), ("height", 20),
                                               ("flags", "pass_unhandled_to_focused_child"),
@@ -2316,6 +2365,7 @@ def _hardcore_screen() -> list:
         "Slayer, CTF, oddball or crazy king, and the\\nhardcore rules.",
         "Text chat for this game. A public listed game stays off.",
         "Text chat is off while this game is public.",
+        "Players may play mods, or this game uses the map's own tags.\\nA player whose game cannot turn mods off is dropped.",
     ])
     lines += _widget(f"{base}/server_button_bar", [("type", "column_list"), ("width", 640), ("height", 28),
                                                    ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
@@ -2355,14 +2405,16 @@ def multiplayer_files() -> dict:
         TEAMPLAY_EDIT.replace("/", ".") + ".port.xml": head + _teamplay_options_extras() + ["</menus>", ""],
         "main_menu/settings_select/multiplayer_setup/hardcore_options_edit".replace("/", ".") + ".xml":
             head + _hardcore_screen() + ["</menus>", ""],
+        MODS.replace("/", ".") + ".xml": [head[0], "<!-- The port's Mods screen, in the PC version's style "
+                                          "(tools/port_settings.py) -->", head[2]] + _mods() + ["</menus>", ""],
     }
 
 
 REPLACED_FOLDERS = [f"{MT}/server_settings"]
 
 
-# ---------- the mods (port/linux/game/mods.c): the main menu's
-# MODS, which opens the list of the mods folder's mods, in their load order,
+# ---------- the mods (port/linux/game/mods.c): Settings' MODS row, which
+# opens the list of the mods folder's mods, in their load order,
 # each turned on or off and moved up or down (menu_functions.c's "port mods"
 # functions)
 
@@ -2438,26 +2490,30 @@ def mod_status_frames(icons: Path, size: int = 24) -> list:
         for icon, color in MOD_STATUS_ICONS]
 
 
-def _text_button(name: str, text: str, handlers: list) -> list:
+def _text_button(name: str, text: str, handlers: list, width: int = 96) -> list:
     """a button of the button bar with its own words"""
-    pairs = [("type", "text"), ("width", 96), ("height", 20), ("bitmap", "bitmaps/text_button_background"),
+    pairs = [("type", "text"), ("width", width), ("height", 20), ("bitmap", "bitmaps/text_button_background"),
              ("text", text), ("font", "ui\\small_ui"), ("color", "#FFFFFFFF"), ("align", "center"), ("text_y", 1)]
     return _widget(name, pairs, handlers + ['<on event="left_mouse" run="mouse emit accept event"/>'])
 
 
 def _mods() -> list:
-    """the main menu's MODS and its screen, laid out as the lobby is: on the
-    left two thirds the mods as a resource pack list has them (the one at the
-    top playing over those below it: the load order upside down), a row each
-    with its status icon, name and ON or OFF; on the right third, in the
-    lobby's frame, the mod chosen: its name, what is wrong with it, whether it
-    is on and its priority, and what its mod.toml says. A turns the mod chosen
-    on or off, left and right (and MOVE UP and MOVE DOWN, for the mouse) move
-    it; OK keeps it all (load_order.toml) and plays them, Cancel forgets it
-    (menu_functions.c)"""
+    """Settings' MODS row and its screen, laid out as the lobby is: on the
+    left the mods as a resource pack list has them (the one at the top playing
+    over those below it: the load order upside down), a row each with its
+    status icon, name and ON or OFF; on the right, in the lobby's frame, the
+    mod chosen: its name, what is wrong with it, whether it is on and its
+    priority, and what its mod.toml says. A turns the mod chosen on or off,
+    left and right (and MOVE UP and MOVE DOWN, for the mouse) move it; OK
+    keeps it all (load_order.toml) and plays them, Cancel forgets it
+    (menu_functions.c). The row is Settings' own (option_bkds_join_field),
+    and the list's rows are the lobby's."""
     base = MODS
-    lines = _widget("main_menu/main_menu_item_mods",
-                    [("type", "text"), ("width", 256), ("height", 33), ("bitmap", "main_menu/menu_mods")],
+    lines = _widget(f"{PE}/mods_profile_item",
+                    [("type", "text"), ("left", 51), ("top", 218), ("width", 226), ("height", 20),
+                     ("bitmap", "bitmaps/option_bkds_join_field"),
+                     ("string_list", f"{PE}/profile_edit_options"), ("string_index", 10),
+                     ("font", "ui\\small_ui"), ("color", "#FF2896FF"), ("text_x", 13), ("text_y", 1)],
                     [f'<on event="a" open="{base}/mods_screen"/>', f'<on event="start" open="{base}/mods_screen"/>',
                      '<on event="left_mouse" run="mouse emit accept event"/>'])
     lines += _widget(f"{base}/mods_screen", [("width", 640), ("height", 480),
@@ -2468,8 +2524,8 @@ def _mods() -> list:
                       f'<child widget="{base}/mods_list"/>',
                       f'<child widget="{base}/header_mods"/>'])
     lines += _header(f"{base}/header_mods", f"{base}/header_mods")
-    # (the lobby's rows, MOD_ROWS of them, scrolling over more mods)
-    rows = [f'<child widget="{base}/op_mod_{index + 1}" x="20" y="{73 + 30 * index}"/>' for index in range(MOD_ROWS)]
+    # (the lobby's rows, MOD_ROWS of them, 20 apart, scrolling over more mods)
+    rows = [f'<child widget="{base}/op_mod_{index + 1}" x="20" y="{73 + 20 * index}"/>' for index in range(MOD_ROWS)]
     lines += _widget(f"{base}/mods_list", [("type", "column_list"), ("width", 640), ("height", 480),
                                            ("flags", "pass_unhandled_to_focused_child up_down_tabs_children"),
                                            ("description", f"{base}/mod_details")],
@@ -2478,22 +2534,23 @@ def _mods() -> list:
                       f'<child widget="{base}/button_bar" y="414"/>'])
     for index in range(MOD_ROWS):
         lines += _widget(f"{base}/op_mod_{index + 1}",
-                         [("width", 390), ("height", 20), ("flags", "pass_unhandled_to_focused_child"),
-                          ("bitmap", "bitmaps/sel_list_item_bkd_top" if index == 0 else "bitmaps/sel_list_item_bkd"),
+                         [("width", 398 if index == 0 else 382), ("height", 20),
+                          ("flags", "pass_unhandled_to_focused_child"),
+                          ("bitmap", "bitmaps/option_bkds_join_top" if index == 0 else "bitmaps/option_bkds_join"),
                           ("color", "#FF2896FF")],
                          ['<on event="a" run="port mods toggle"/>', '<on event="start" run="port mods toggle"/>',
                           '<on event="left" run="port mods move up"/>', '<on event="right" run="port mods move down"/>',
                           '<on event="left_mouse" run="mouse emit accept event"/>',
                           f'<child widget="{base}/mod_status" x="8" y="2"/>',
-                          f'<child widget="{base}/mod_name" x="34"/>',
-                          f'<child widget="{base}/mod_state" x="318"/>'])
-    lines += _widget(f"{base}/mod_status", [("controller", 1), ("width", 24), ("height", 24),
-                                            ("bitmap", "mods/status")], [])
+                          f'<child widget="{base}/mod_name" x="28"/>',
+                          f'<child widget="{base}/mod_state" x="326"/>'])
+    lines += _widget(f"{base}/mod_status", [("controller", 1), ("width", 16), ("height", 16),
+                                            ("bitmap", "mods/status_small")], [])
     lines += _widget(f"{base}/mod_name",
-                     [("type", "text"), ("controller", 1), ("width", 284), ("height", 20), ("font", "ui\\small_ui"),
+                     [("type", "text"), ("controller", 1), ("width", 290), ("height", 20), ("font", "ui\\small_ui"),
                       ("color", "#FF2896FF"), ("text_y", 1)], [])
     lines += _widget(f"{base}/mod_state",
-                     [("type", "text"), ("controller", 1), ("width", 66), ("height", 20), ("font", "ui\\small_ui"),
+                     [("type", "text"), ("controller", 1), ("width", 48), ("height", 20), ("font", "ui\\small_ui"),
                       ("color", "#FF2896FF"), ("align", "center"), ("text_y", 1), ("text_flags", "no_focus_test")], [])
     # (in the lobby's frame, sel_list_desc_bkd's: the mod chosen's name, the
     # icon of what is wrong with it, and the rest)
@@ -2511,13 +2568,14 @@ def _mods() -> list:
     lines += _widget(f"{base}/button_bar",
                      [("type", "column_list"), ("width", 640), ("height", 28),
                       ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
-                     [f'<child widget="{base}/button_up" y="1"/>', f'<child widget="{base}/button_down" x="130" y="1"/>',
-                      f'<child widget="{base}/button_ok" x="380" y="1"/>',
+                     [f'<child widget="{base}/button_up" x="20" y="1"/>',
+                      f'<child widget="{base}/button_down" x="146" y="1"/>',
+                      f'<child widget="{base}/button_ok" x="406" y="1"/>',
                       '<child widget="common_button_cancel" x="510" y="1"/>'])
     lines += _text_button(f"{base}/button_up", "MOVE UP", ['<on event="a" run="port mods move up"/>',
-                                                          '<on event="start" run="port mods move up"/>'])
+                                                          '<on event="start" run="port mods move up"/>'], 120)
     lines += _text_button(f"{base}/button_down", "MOVE DOWN", ['<on event="a" run="port mods move down"/>',
-                                                              '<on event="start" run="port mods move down"/>'])
+                                                              '<on event="start" run="port mods move down"/>'], 120)
     lines += _button(f"{base}/button_ok", 1, ['<on event="a" run="port mods save" back="true"/>',
                                               '<on event="start" run="port mods save" back="true"/>'])
     return lines

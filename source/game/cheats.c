@@ -187,12 +187,16 @@ void cheats_network_client_enforce(
 		allowed.bottomless_clip = hardcore_rules_live()->infinite_ammo == 1;
 		allowed.infinite_ammo = hardcore_rules_live()->infinite_ammo == 2;
 	}
-	changed = csmemcmp(&cheat, &allowed, sizeof(cheat)) != 0 || !rider_ejection || !player_autoaim_flag ||
-		!player_magnetism_flag;
+	changed = csmemcmp(&cheat, &allowed, sizeof(cheat)) != 0 || !player_autoaim_flag ||
+		!player_magnetism_flag ||
+		(!hs_scenario_sets_rider_ejection() && !rider_ejection);
 	csmemset(&cheat, 0, sizeof(cheat));
 	cheat.bottomless_clip = allowed.bottomless_clip;
 	cheat.infinite_ammo = allowed.infinite_ammo;
-	rider_ejection = TRUE;
+	/* a map whose scripts set rider_ejection owns that switch. One that
+	never mentions it stays on, so a console cheat cannot turn the throw off. */
+	if (!hs_scenario_sets_rider_ejection())
+		rider_ejection = TRUE;
 	player_autoaim_flag = TRUE;
 	player_magnetism_flag = TRUE;
 	changed |= game_time_reset_speed();

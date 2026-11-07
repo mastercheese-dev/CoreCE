@@ -1381,6 +1381,7 @@
 		<string text="SAVE CHANGES " map="7"/>
 		<string text="NETWORK SETUP " map="8"/>
 		<string text="ABOUT" map="9"/>
+		<string text="MODS"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/cap_video_settings_strings" map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\video_settings\cap_video_settings_strings">
 		<string text="Select a display resolution." map="0"/>

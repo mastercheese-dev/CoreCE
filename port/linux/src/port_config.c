@@ -330,6 +330,9 @@ static const struct config_setting config_settings[] =
 		"Moving the mouse forward looks down." },
 	{ "network.block_mouse_aim_assist", _config_boolean, "false", "HALO_NET_BLOCK_MOUSE_AIM_ASSIST", _environment_value,
 		_platform_all, "Host: disable mouse aim assist for mouse/keyboard players. The view does not stick, and shots are not pulled onto a target. Controllers and touch keep their own assist." },
+	{ "network.mods_allowed", _config_boolean, "true", "HALO_NET_MODS_ALLOWED", _environment_value, _platform_all,
+		"Host: whether players in this game may play mods. false makes every\n"
+		"machine use the map's own tags. A machine that does not confirm is dropped." },
 	{ "input.mouse_aim_assist", _config_boolean, "false", "HALO_MOUSE_AIM_ASSIST", _environment_value, _platform_desktop,
 		"Magnetism while aiming with the mouse, as with a controller: the view\n"
 		"slowed and dragged along by a target. The last of the mouse and the\n"

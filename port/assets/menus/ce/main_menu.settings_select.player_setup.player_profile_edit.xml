@@ -82,6 +82,7 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings_profile_item"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_settings_profile_item"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/color_profile_item"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mods_profile_item"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/about_item"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/profile_edit_button_bar" y="414"/>
 	</widget>

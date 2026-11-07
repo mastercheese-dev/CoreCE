@@ -9,7 +9,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/header_server_settings" controller="1" left="35" top="11" width="605" height="59" bitmap="main_menu/multiplayer_type_select/server_settings/header_server_settings">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/help" type="text" controller="1" left="68" top="350" width="482" height="60" string_list="main_menu/multiplayer_type_select/server_settings/help_strings" font="ui\large_ui" color="#FFFFFFFF">
+	<widget name="main_menu/multiplayer_type_select/server_settings/help" type="text" controller="1" left="68" top="356" width="482" height="54" string_list="main_menu/multiplayer_type_select/server_settings/help_strings" font="ui\large_ui" color="#FFFFFFFF">
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/options_menu" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_children" description="main_menu/multiplayer_type_select/server_settings/help">
 		<data input="server settings update"/>
@@ -19,24 +19,24 @@
 		<child widget="main_menu/multiplayer_type_select/server_settings/op_invite" x="54" y="113"/>
 		<child widget="main_menu/multiplayer_type_select/server_settings/op_listing" x="54" y="133"/>
 		<child widget="main_menu/multiplayer_type_select/server_settings/op_text_chat" x="54" y="153"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/op_password" x="54" y="173"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/op_map_share_options" x="54" y="193"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/op_coop_options" x="54" y="213"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/op_voice_options" x="54" y="233"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/op_game_type" x="54" y="213"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/op_player_options" x="54" y="233"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/op_item_options" x="54" y="253"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/op_vehicle_options" x="54" y="273"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/op_indicator_options" x="54" y="293"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/op_team_options" x="54" y="313"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/op_mods" x="54" y="173"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/op_password" x="54" y="193"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/op_map_share_options" x="54" y="213"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/op_coop_options" x="54" y="233"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/op_voice_options" x="54" y="253"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/op_game_type" x="54" y="233"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/op_player_options" x="54" y="253"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/op_item_options" x="54" y="273"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/op_vehicle_options" x="54" y="293"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/op_indicator_options" x="54" y="313"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/op_team_options" x="54" y="333"/>
 		<child widget="main_menu/multiplayer_type_select/server_settings/button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		
-		<child widget="main_menu/multiplayer_type_select/server_settings/button_ok" x="406" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/button_ok" x="380" y="1"/>
 		<child widget="common_button_cancel" x="510" y="1"/>
-		<on event="right_trigger" run="mouse emit accept event"/>
-</widget>
+	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/op_server_name" width="512" height="20" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds_short" color="#FF2896FF">
 		<on event="a" run="ss edit server name"/>
 		<on event="start" run="ss edit server name"/>
@@ -87,6 +87,16 @@
 	<widget name="main_menu/multiplayer_type_select/server_settings/text_chat_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/labels" string_index="14" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/server_text_chat_spinner" type="spinner" left="3" top="0" width="147" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="ON|OFF" setting="network.text_chat" values="on|off" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 150 15 156">
+		<on event="created" run="port setting load"/>
+		<on event="left_mouse" run="mouse spinner 1wide click"/>
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/server_settings/op_mods" width="512" height="20" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds_short" color="#FF2896FF">
+		<child widget="main_menu/multiplayer_type_select/server_settings/mods_label"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/server_mods_spinner" x="320" y="1"/>
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/server_settings/mods_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/labels" string_index="15" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
+	</widget>
+	<widget name="main_menu/multiplayer_type_select/server_settings/server_mods_spinner" type="spinner" left="3" top="0" width="147" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="ALLOWED|NOT ALLOWED" setting="network.mods_allowed" values="true|false" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 -6 15 0" footer_bounds="3 150 15 156">
 		<on event="created" run="port setting load"/>
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
@@ -196,7 +206,7 @@
 	<widget name="main_menu/multiplayer_type_select/server_settings/button_defaults" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="3" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/button_ok" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" text="START GAME" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
+	<widget name="main_menu/multiplayer_type_select/server_settings/button_ok" type="text" width="128" height="20" bitmap="bitmaps/text_button_background" text="START GAME" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="ss start game" open="main_menu/multiplayer_type_select/lobby/lobby_screen"/>
 		<on event="start" run="ss start game" open="main_menu/multiplayer_type_select/lobby/lobby_screen"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
@@ -217,6 +227,7 @@
 		<string text="PASSWORD:"/>
 		<string text="MAP SHARING:"/>
 		<string text="TEXT CHAT:"/>
+		<string text="MODS:"/>
 	</strings>
 	<strings name="main_menu/multiplayer_type_select/server_settings/help_strings">
 		<string text=""/>
@@ -237,6 +248,7 @@
 		<string text="Sending players who join without the game's\nCustom Edition map the map, and how fast."/>
 		<string text="Text chat for this game. A public listed game stays off."/>
 		<string text="Text chat is off while this game is public."/>
+		<string text="Players may play mods, or this game uses the map's own tags.\nA player whose game cannot turn mods off is dropped."/>
 	</strings>
 	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_options_screen" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/gradient">
 		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/header_coop_options"/>
@@ -250,20 +262,19 @@
 		<data input="game settings lists text update"/>
 		<on event="created" run="port setup options init"/>
 		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/op_coop_friendly_fire" x="54" y="73"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/op_coop_extra_enemies" x="54" y="93"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/op_coop_extra_pickups" x="54" y="113"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/op_coop_extra_vehicles" x="54" y="133"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/op_coop_enemies_multiplier" x="54" y="153"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/op_coop_enemies_per_player" x="54" y="173"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/op_coop_player_collisions" x="54" y="193"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/op_coop_extra_enemies" x="54" y="103"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/op_coop_extra_pickups" x="54" y="133"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/op_coop_extra_vehicles" x="54" y="163"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/op_coop_enemies_multiplier" x="54" y="193"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/op_coop_enemies_per_player" x="54" y="223"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/op_coop_player_collisions" x="54" y="253"/>
 		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/coop_options_button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_options_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		<data input="common button bar update"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/coop_options_button_ok" x="406" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/coop_options/coop_options_button_ok" x="380" y="1"/>
 		<child widget="common_button_cancel" x="510" y="1"/>
-		<on event="right_trigger" run="mouse emit accept event"/>
-</widget>
+	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_options_button_ok" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="port setup options save" back="true"/>
 		<on event="start" run="port setup options save" back="true"/>
@@ -275,7 +286,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_friendly_fire_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/coop_options_labels" string_index="0" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_friendly_fire_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_friendly_fire" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
+	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_friendly_fire_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_friendly_fire" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_friendly_fire">
@@ -290,7 +301,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_extra_enemies_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/coop_options_labels" string_index="1" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_extra_enemies_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_extra_enemies" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
+	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_extra_enemies_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_extra_enemies" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_extra_enemies">
@@ -304,7 +315,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_extra_pickups_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/coop_options_labels" string_index="2" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_extra_pickups_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_extra_pickups" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
+	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_extra_pickups_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_extra_pickups" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_extra_pickups">
@@ -318,7 +329,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_extra_vehicles_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/coop_options_labels" string_index="3" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_extra_vehicles_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_extra_vehicles" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
+	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_extra_vehicles_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_extra_vehicles" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_extra_vehicles">
@@ -332,7 +343,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_enemies_multiplier_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/coop_options_labels" string_index="4" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_enemies_multiplier_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_enemies_multiplier" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
+	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_enemies_multiplier_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_enemies_multiplier" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_enemies_multiplier">
@@ -348,7 +359,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_enemies_per_player_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/coop_options_labels" string_index="5" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_enemies_per_player_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_enemies_per_player" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
+	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_enemies_per_player_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_enemies_per_player" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_enemies_per_player">
@@ -364,7 +375,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_player_collisions_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/coop_options_labels" string_index="6" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_player_collisions_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_player_collisions" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
+	<widget name="main_menu/multiplayer_type_select/server_settings/coop_options/coop_player_collisions_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_player_collisions" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/coop_options/var_coop_player_collisions">
@@ -419,17 +430,16 @@
 		<data input="game settings lists text update"/>
 		<on event="created" run="port setup options init"/>
 		<child widget="main_menu/multiplayer_type_select/server_settings/voice_options/op_voice_lobby" x="54" y="73"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/voice_options/op_voice_kbps" x="54" y="93"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/voice_options/op_voice_proximity" x="54" y="113"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/voice_options/op_votekick" x="54" y="133"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/voice_options/op_voice_kbps" x="54" y="103"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/voice_options/op_voice_proximity" x="54" y="133"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/voice_options/op_votekick" x="54" y="163"/>
 		<child widget="main_menu/multiplayer_type_select/server_settings/voice_options/voice_options_button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/voice_options_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		<data input="common button bar update"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/voice_options/voice_options_button_ok" x="406" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/voice_options/voice_options_button_ok" x="380" y="1"/>
 		<child widget="common_button_cancel" x="510" y="1"/>
-		<on event="right_trigger" run="mouse emit accept event"/>
-</widget>
+	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/voice_options_button_ok" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="port setup options save" back="true"/>
 		<on event="start" run="port setup options save" back="true"/>
@@ -441,7 +451,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/voice_lobby_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/voice_options/voice_options_labels" string_index="0" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/voice_lobby_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/voice_options/var_voice_lobby" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
+	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/voice_lobby_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/voice_options/var_voice_lobby" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/voice_options/var_voice_lobby">
@@ -454,7 +464,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/voice_kbps_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/voice_options/voice_options_labels" string_index="1" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/voice_kbps_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/voice_options/var_voice_kbps" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
+	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/voice_kbps_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/voice_options/var_voice_kbps" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/voice_options/var_voice_kbps">
@@ -472,7 +482,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/voice_proximity_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/voice_options/voice_options_labels" string_index="2" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/voice_proximity_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/voice_options/var_voice_proximity" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
+	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/voice_proximity_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/voice_options/var_voice_proximity" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/voice_options/var_voice_proximity">
@@ -489,7 +499,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/votekick_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/voice_options/voice_options_labels" string_index="3" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/votekick_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/voice_options/var_votekick" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
+	<widget name="main_menu/multiplayer_type_select/server_settings/voice_options/votekick_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/voice_options/var_votekick" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/voice_options/var_votekick">
@@ -533,15 +543,14 @@
 		<data input="game settings lists text update"/>
 		<on event="created" run="port setup options init"/>
 		<child widget="main_menu/multiplayer_type_select/server_settings/map_share_options/op_map_share" x="54" y="73"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/map_share_options/op_map_share_upload" x="54" y="93"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/map_share_options/op_map_share_upload" x="54" y="103"/>
 		<child widget="main_menu/multiplayer_type_select/server_settings/map_share_options/map_share_options_button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/map_share_options/map_share_options_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		<data input="common button bar update"/>
-		<child widget="main_menu/multiplayer_type_select/server_settings/map_share_options/map_share_options_button_ok" x="406" y="1"/>
+		<child widget="main_menu/multiplayer_type_select/server_settings/map_share_options/map_share_options_button_ok" x="380" y="1"/>
 		<child widget="common_button_cancel" x="510" y="1"/>
-		<on event="right_trigger" run="mouse emit accept event"/>
-</widget>
+	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/map_share_options/map_share_options_button_ok" type="text" width="96" height="20" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="1">
 		<on event="a" run="port setup options save" back="true"/>
 		<on event="start" run="port setup options save" back="true"/>
@@ -553,7 +562,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/map_share_options/map_share_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/map_share_options/map_share_options_labels" string_index="0" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/map_share_options/map_share_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/map_share_options/var_map_share" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
+	<widget name="main_menu/multiplayer_type_select/server_settings/map_share_options/map_share_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/map_share_options/var_map_share" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/map_share_options/var_map_share">
@@ -566,7 +575,7 @@
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/server_settings/map_share_options/map_share_upload_label" type="text" controller="1" width="300" height="20" string_list="main_menu/multiplayer_type_select/server_settings/map_share_options/map_share_options_labels" string_index="1" font="ui\small_ui" color="#FF2896FF" text_x="13" text_y="1">
 	</widget>
-	<widget name="main_menu/multiplayer_type_select/server_settings/map_share_options/map_share_upload_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/map_share_options/var_map_share_upload" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
+	<widget name="main_menu/multiplayer_type_select/server_settings/map_share_options/map_share_upload_spinner" type="spinner" top="0" width="206" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/multiplayer_type_select/server_settings/map_share_options/var_map_share_upload" font="ui\small_ui" color="#FF2896FF" align="center" text_y="1" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="3 28 15 34" footer_bounds="3 184 15 190">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/map_share_options/var_map_share_upload">

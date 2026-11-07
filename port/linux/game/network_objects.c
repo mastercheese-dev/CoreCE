@@ -2769,6 +2769,16 @@ void network_objects_handle_states(
 		{
 			struct unit_datum *vehicle = unit_get(state->object_index);
 
+			/* thrown from it this moment: the host's word is still the
+			roll, and taking it fights this machine's copy until the host
+			has the vehicle at rest */
+			if (network_distributed_ejected_vehicle(state->object_index))
+			{
+				if (TEST_FLAG(state->flags, _distributed_object_at_rest_bit))
+					network_distributed_ejected_vehicle_rested(state->object_index);
+				if (network_distributed_ejected_vehicle(state->object_index))
+					continue;
+			}
 			if (blend_distance > 0.0f)
 				blend_distance = REMOTE_VEHICLE_BLEND_DISTANCE;
 			/* (one no player drives follows every move the host sends, however small) */

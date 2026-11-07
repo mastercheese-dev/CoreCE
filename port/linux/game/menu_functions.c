@@ -1235,7 +1235,7 @@ static void visible_set(struct widget_instance *widget, boolean visible);
 /* "port profile rows": show one set, packed from the top. a game's pause
 menu settings drops the profile name and Gamepads (Controls Setup has
 those rows) and closes the rest up, including the slot Gamepads held
-between Controls and Mouse. */
+between Controls and Mouse. Mods is a row of Settings, just before About. */
 static int profile_row_named(char const *const *names, short count, char const *name)
 {
 	short index;
@@ -1255,7 +1255,7 @@ static void profile_rows_apply(struct widget_instance *list)
 	static char const *const machine[] =
 	{
 		"controller_setup_profile_item", "mouse_settings_profile_item", "audio_settings_profile_item",
-		"video_settings_profile_item", "network_settings_profile_item", "about_item"
+		"video_settings_profile_item", "network_settings_profile_item", "mods_profile_item", "about_item"
 	};
 	static char const *const profile[] =
 	{
@@ -1322,6 +1322,27 @@ static void profile_rows_apply(struct widget_instance *list)
 				list->focused_child = child;
 				break;
 			}
+		}
+	}
+	/* Mods is placed before About, so About stays the last row. Their
+	descriptions and pictures are the profile list's own indexes (8 About,
+	9 Mods: its card is that frame), not their places among the children.
+	The list's own update has already set those from the place. */
+	if (list->focused_child && list->focused_child->name && list->parameters.list.extended_description)
+	{
+		short description = NONE;
+		struct widget_instance *text;
+
+		if (!strcmp(list->focused_child->name, "about_item"))
+			description = 8;
+		else if (!strcmp(list->focused_child->name, "mods_profile_item"))
+			description = 9;
+		text = list->parameters.list.extended_description->child;
+		if (description != NONE && text)
+		{
+			text->parameters.text_box.string_list_index = description;
+			if (text->next)
+				text->next->animation.current_frame_index = description;
 		}
 	}
 }
@@ -3616,7 +3637,7 @@ static void controls_update(struct widget_instance *list)
 	}
 }
 
-/* ---------- Mods (the main menu's: tools/port_settings.py's _mods), laid
+/* ---------- Mods (Settings' row: tools/port_settings.py's _mods), laid
 out as the lobby is: the mods folder's mods, a row each (op_mod_<n>), as a
 resource pack list is, the one that plays over the others at the top (the
 load order upside down: the mod loaded last first), turned on or off and
@@ -5132,6 +5153,8 @@ VOTING), PASSWORD's and MAP SHARING's (its help_strings, tools/port_settings.py)
 /* TEXT CHAT's help, then the line shown while LISTING is PUBLIC */
 #define TEXT_CHAT_HELP 16
 #define TEXT_CHAT_LOCKED_HELP 17
+/* MODS' help (tools/port_settings.py's server settings help_strings) */
+#define MODS_HELP 18
 
 /* co-op's EXTRA ENEMIES' choices (network.coop_enemies_mode's values, as
 gametype_options' coop_extra_enemies_spinner has them, in this order): its
@@ -5251,6 +5274,16 @@ static void server_text_chat_apply(struct widget_instance *list)
 		setting_save(spinner);
 }
 
+/* MODS on Server Setup and the hardcore server page (network.mods_allowed).
+Left and right write the choice the same way the mouse does. */
+static void server_mods_apply(struct widget_instance *list)
+{
+	struct widget_instance *spinner = named(list, "server_mods_spinner", 0);
+
+	if (spinner)
+		setting_save(spinner);
+}
+
 /* "server settings update" */
 static struct game_variant *edit_variant(void);
 
@@ -5343,7 +5376,10 @@ static void server_settings_update(struct widget_instance *list)
 		if (help && list->focused_child == named(list, "op_text_chat", 0))
 			help->parameters.text_box.string_list_index =
 				(short)(p2p_hosting_listed() ? TEXT_CHAT_LOCKED_HELP : TEXT_CHAT_HELP);
+		else if (help && list->focused_child == named(list, "op_mods", 0))
+			help->parameters.text_box.string_list_index = MODS_HELP;
 	}
+	server_mods_apply(list);
 }
 
 static void server_password_done(char const *text)
@@ -10842,6 +10878,7 @@ static void hardcore_server_update(struct widget_instance *list)
 		text_field_show(named(list, "password_value", 0), index ? text : "NONE", text_field_editing(row));
 	}
 	server_text_chat_apply(list);
+	server_mods_apply(list);
 	if (!help || !list->focused_child)
 		return;
 	if (!strcmp(list->focused_child->name, "op_server_name"))
@@ -10863,6 +10900,8 @@ static void hardcore_server_update(struct widget_instance *list)
 		help->parameters.text_box.string_list_index = 8;
 	else if (!strcmp(list->focused_child->name, "op_text_chat"))
 		help->parameters.text_box.string_list_index = p2p_hosting_listed() ? 10 : 9;
+	else if (!strcmp(list->focused_child->name, "op_mods"))
+		help->parameters.text_box.string_list_index = 11;
 	else
 		help->parameters.text_box.string_list_index = 0;
 }

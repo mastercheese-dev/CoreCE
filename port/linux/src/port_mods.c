@@ -1351,6 +1351,67 @@ void port_mods_disable_conflicting(void)
 
 void port_mods_startup(void)
 {
-	/* this tree does not play tag mods, and does not ask about them */
-	return;
+	char conflicts[2048];
+	char names[256];
+	char message[2400];
+	char disable[96];
+	const char *labels[3];
+	int answer;
+
+	port_mods_scan();
+	if (!port_mods_conflicts(conflicts, sizeof(conflicts)))
+		return;
+	port_mods_conflicting_names(names, sizeof(names));
+	platform_log("mods: %s", conflicts);
+	/* (not for runs nobody is watching, as platform_show_message's
+	messages are not: they play them) */
+	if (config_boolean("debug.hidden_window") || config_boolean("debug.null_renderer") ||
+		config_real("debug.exit_after") > 0.0 || *config_string("debug.network_test"))
+	{
+		platform_log("mods: played as they are, nobody being asked");
+		return;
+	}
+	snprintf(message, sizeof(message),
+		"Mods in the mods folder say they cannot be played together:\n\n%s\n\n"
+		"Play them all anyway, turn off %s, or quit? (Settings' Mods turns mods on and off.)",
+		conflicts, names);
+	snprintf(disable, sizeof(disable), "Turn off %s", names);
+	/* (a long list of names is cut short on its button, at a whole
+	character) */
+	if (strlen(disable) > 40)
+	{
+		disable[37] = 0;
+		utf8_trim(disable);
+		strcat(disable, "...");
+	}
+	labels[0] = "Play anyway";
+	labels[1] = disable;
+	labels[2] = "Quit";
+	answer = platform_ask("Halo: mods that cannot be played together", message, labels, 3, 0);
+	if (answer == 1)
+	{
+		/* (played so even when load_order.toml cannot be written:
+		port_mods_save keeps it) */
+		port_mods_disable_conflicting();
+		port_mods_save();
+		port_mods_scan();
+	}
+	else if (answer == 2)
+	{
+		platform_log("mods: quitting, as asked, over mods that cannot be played together");
+#ifdef HALO_WEB
+		/* (the page starts again: a worker's exit does not end the page's
+		game) */
+		web_js_post(4, "quit");
+#endif
+		exit(EXIT_SUCCESS);
+	}
+	else if (answer < 0)
+	{
+		platform_log("mods: cannot ask (%s): played all anyway", SDL_GetError());
+	}
+	else
+	{
+		platform_log("mods: played all anyway");
+	}
 }

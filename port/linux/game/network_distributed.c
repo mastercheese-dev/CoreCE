@@ -81,6 +81,7 @@ machine (their datum identifiers need not be).
 #include "network_voice.h"
 #include "map_share.h"
 #include "network_aim_assist.h"
+#include "network_mods.h"
 #include "profile_sections.h"
 #include "memory/data.h"
 #include "../src/matchmaking.h"
@@ -547,6 +548,10 @@ the host's unit state shows them out of it */
 static struct distributed_ejection_notice
 {
 	boolean pending;
+	/* the vehicle's position stays this machine's until the host has it at
+	rest. The host's copies until then are from before the throw, and
+	taking them moves the vehicle back and forth. */
+	boolean settling;
 	byte player_index;
 	long unit_index;
 	long vehicle_index;
@@ -2354,6 +2359,68 @@ static void distributed_ejection_hear(
 	}
 }
 
+boolean network_distributed_ejected_vehicle(
+	long vehicle_index)
+{
+	struct unit_datum *vehicle;
+	short local_player_index;
+	long now;
+
+	if (game_connection() != _game_connection_network_client || vehicle_index == NONE)
+		return FALSE;
+	vehicle = (struct unit_datum *)object_try_and_get_and_verify_type(vehicle_index, _object_mask_vehicle);
+	if (vehicle && vehicle->unit.driver_object_index != NONE)
+	{
+		struct unit_datum *driver = (struct unit_datum *)object_try_and_get_and_verify_type(
+			vehicle->unit.driver_object_index, _object_mask_unit);
+
+		if (driver && driver->unit.player_index != NONE &&
+			distributed_player_is_local(driver->unit.player_index))
+		{
+			for (local_player_index = 0; local_player_index < MAXIMUM_LOCAL_PLAYERS; local_player_index++)
+			{
+				struct distributed_ejection_notice *notice = &distributed_ejections[local_player_index];
+
+				if (notice->settling && distributed_same_object(notice->vehicle_index, vehicle_index))
+					notice->settling = FALSE;
+			}
+			return FALSE;
+		}
+	}
+	now = game_time_get();
+	for (local_player_index = 0; local_player_index < MAXIMUM_LOCAL_PLAYERS; local_player_index++)
+	{
+		struct distributed_ejection_notice *notice = &distributed_ejections[local_player_index];
+
+		if (!notice->settling || !distributed_same_object(notice->vehicle_index, vehicle_index))
+			continue;
+		if (now - notice->time >= EJECTION_NOTICE_TICKS)
+		{
+			notice->settling = FALSE;
+			continue;
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+void network_distributed_ejected_vehicle_rested(
+	long vehicle_index)
+{
+	short local_player_index;
+
+	for (local_player_index = 0; local_player_index < MAXIMUM_LOCAL_PLAYERS; local_player_index++)
+	{
+		struct distributed_ejection_notice *notice = &distributed_ejections[local_player_index];
+
+		if (notice->settling && !notice->pending &&
+			distributed_same_object(notice->vehicle_index, vehicle_index))
+		{
+			notice->settling = FALSE;
+		}
+	}
+}
+
 void network_distributed_note_ejection(
 	long unit_index)
 {
@@ -2379,6 +2446,7 @@ void network_distributed_note_ejection(
 	if (local_player_index < 0 || local_player_index >= MAXIMUM_LOCAL_PLAYERS)
 		return;
 	distributed_ejections[local_player_index].pending = TRUE;
+	distributed_ejections[local_player_index].settling = TRUE;
 	distributed_ejections[local_player_index].player_index = distributed_player_to_byte(player_index);
 	distributed_ejections[local_player_index].unit_index = unit_index;
 	distributed_ejections[local_player_index].vehicle_index = vehicle_index;
@@ -2430,6 +2498,9 @@ static void distributed_client_send_ejections(
 	}
 }
 
+/* bipeds.c's: false when the map's scripts have turned the throw off */
+extern boolean rider_ejection;
+
 static void distributed_handle_ejection(
 	long machine_index,
 	void const *entries,
@@ -2478,6 +2549,9 @@ static void distributed_handle_ejection(
 		if (notice.stamp <= distributed_ejection_applied[notice.player_index])
 			continue;
 		if (!object_try_and_get_and_verify_type(unit->object.parent_object_index, _object_mask_vehicle))
+			continue;
+		/* the map turned the throw off. A notice does not put them out. */
+		if (!rider_ejection)
 			continue;
 		unit_exit_seat_end(unit_index);
 		distributed_ejection_applied[notice.player_index] = notice.stamp;
@@ -3706,6 +3780,7 @@ void network_distributed_new_game(
 	network_actors_new_game();
 	network_coop_new_game();
 	network_aim_assist_reset();
+	network_mods_reset();
 	network_votekick_new_game();
 }
 
@@ -4638,6 +4713,11 @@ void network_distributed_handle_message(
 		network_aim_assist_handle_message(machine_index, message, size);
 		return;
 	}
+	if (network_mods_handles_message(message, size))
+	{
+		network_mods_handle_message(machine_index, message, size);
+		return;
+	}
 	if (network_voice_handles_message(message, size))
 	{
 		network_voice_handle_message(machine_index, message, size);
@@ -5038,6 +5118,7 @@ void network_distributed_handle_message(
 		/* (its count 1: the client asks again, having failed to make one of
 		the host's objects) */
 		network_aim_assist_send_policy(machine_index);
+		network_mods_send_policy(machine_index);
 		network_objects_client_asked(machine_index, header.count != 0);
 		/* (a machine new at its index, which may have joined the game in
 		progress: every player's statistics and the game type's state, after

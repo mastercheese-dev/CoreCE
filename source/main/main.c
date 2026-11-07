@@ -384,6 +384,7 @@ symbols in this file:
 #include "network_chat.h" /* port: port/linux/game/network_chat.c */
 #include "map_share.h" /* port: port/linux/game/map_share.c */
 #include "network_aim_assist.h" /* port: port/linux/game/network_aim_assist.c */
+#include "network_mods.h" /* port: port/linux/game/network_mods.c */
 #include "clips.h" /* port: play a clip with its own seed, and drive its viewer */
 #include "profile_sections.h" /* port: port/linux/include/profile_sections.h */
 #ifdef HALO_PROFILE
@@ -3685,6 +3686,8 @@ void main_loop(
 			network_chat_update();
 			/* port: apply and replicate the host's mouse aim-assist policy. */
 			network_aim_assist_update();
+			/* port: the host's mods choice, and a client playing by it. */
+			network_mods_update();
 			profile_scope_enter(main_network_start_frame_section)
 			connection = main_globals.connection;
 			if (connection==_game_connection_network_client)

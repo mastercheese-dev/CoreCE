@@ -23,7 +23,7 @@ from .linux_build import (LINUX_PROFILE, MINIUPNPC_DIR, OPTIMISATION, STB_VORBIS
                           game_defines_and_includes, game_sources, musl_math_cflags, musl_math_sources, opus_cflags,
                           opus_sources, pgo_profile, profile_use_flags, recast_compile_flags, recast_sources,
                           xdk_headers)
-from .embed_assets import hud_assets_build, hud_configure_inputs
+from .embed_assets import hardcore_assets_build, hud_assets_build, hud_configure_inputs
 from .ninja_syntax import Writer
 
 LINUX_DIR = Path("port/linux")
@@ -330,6 +330,7 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
 
     # the high-res HUD's textures (port/assets/hud; port/linux/src/hud_hires.c)
     embedded_assets = hud_assets_build(n, "windows", BUILD / "generated" / "hud_hires_assets.c")
+    embedded_assets += hardcore_assets_build(n, "windows", BUILD / "generated" / "hardcore_assets_data.c")
 
     # (a debug build checks its stack frames (/GS), and stops at the first
     # one overrun, as at the first failed assertion; a release build does

@@ -415,6 +415,16 @@ change. Clients take it only from the host and default to blocked until it
 arrives. This adds distributed message 90; network version 32 requires
 matching builds so an older client cannot silently ignore the rule.
 
+Server Setup's MODS is ALLOWED or NOT ALLOWED (`network.mods_allowed`,
+default allowed). NOT ALLOWED makes the host and every client play the
+map's own tags for that game. The host sends distributed message 103
+reliably when a client is ready and when the choice changes. A client
+answers with message 104. The network version stays 41. A machine that
+does not answer is dropped from a game that does not allow mods, so an
+older client cannot keep its mods there. A game that allows mods still
+takes an older client. The choice is this machine's config. It is not a
+simulated rule, and a mod still changes no tag the game simulates.
+
 ## Joining a game in progress
 
 A game stays open when it starts (on the Xbox it closed, since every

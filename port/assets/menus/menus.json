@@ -6,6 +6,7 @@
   "ce/main_menu.campaign_select.xml",
   "ce/main_menu.difficulty_select.xml",
   "ce/main_menu.gametype_select.xml",
+  "ce/main_menu.mods.xml",
   "ce/main_menu.multiplayer_type_select.connected.4way_profile_select.xml",
   "ce/main_menu.multiplayer_type_select.connected.xml",
   "ce/main_menu.multiplayer_type_select.coop.xml",

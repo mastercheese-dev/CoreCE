@@ -861,6 +861,19 @@ void _rasterizer_detail_objects_draw(
 							"IDirect3DDevice8_SetVertexData4f(global_d3d_device, 2, (real)(cell->cell_x*DETAIL_OBJECT_CELL_SIZE), (real)(cell->cell_y*DETAIL_OBJECT_CELL_SIZE), (cell->cell_z*(real)DETAIL_OBJECT_CELL_SIZE), 1.0f)");
 					}
 					z_reference_vector = cell->z_reference_vector;
+					/* a missing or nonfinite plane stays the upright default.
+					   the value is left in the vertex registers, and a later
+					   quad (the match timer) would submit it and be rejected. */
+					if (!z_reference_vector ||
+						z_reference_vector->i != z_reference_vector->i ||
+						z_reference_vector->j != z_reference_vector->j ||
+						z_reference_vector->k != z_reference_vector->k ||
+						z_reference_vector->l != z_reference_vector->l)
+					{
+						static real_vector4d const upright = { 0.0f, 0.0f, 1.0f, 0.0f };
+
+						z_reference_vector = &upright;
+					}
 					if (IDirect3DDevice8_SetVertexData4f(
 						global_d3d_device,
 						3,

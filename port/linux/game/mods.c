@@ -5,8 +5,8 @@ Mods: tag files played over a map's tags on this machine, as a resource
 pack is: a map's sounds (mod_sounds.c), bitmaps (mod_bitmaps.c), text
 (mod_strings.c) and models (mod_models.c) from Halo PC tag files, as the
 Halo Editing Kit and Invader write them, in the mods of the mods folder that
-are on, in their load order (port/linux/src/port_mods.c; the main menu's
-Mods chooses: menu_functions.c). Nothing a
+are on, in their load order (port/linux/src/port_mods.c; Settings' Mods
+chooses: menu_functions.c). Nothing a
 mod plays is anything the machines of a network game must agree on: no tag
 that the game simulates is played from a file (a model's nodes, markers and
 regions must be the map's: only what is drawn of it is the file's), and no
@@ -32,6 +32,7 @@ back until mods_enable true, or until the map changes.
 #include "cseries.h"
 #include "main/console.h"
 #include "mods.h"
+#include "network_mods.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -238,10 +239,21 @@ void mods_tags_loaded(
 	if (mods_globals.map_loaded)
 		mods_let_go(FALSE);
 	mods_globals.map_loaded = TRUE;
-	/* this tree does not play a mod's tags over the map's */
-	mods_globals.enabled = FALSE;
+	mods_globals.enabled = TRUE;
 	csstrncpy(mods_globals.map_name, map_name ? map_name : "", sizeof(mods_globals.map_name) - 1);
 	mods_globals.map_name[sizeof(mods_globals.map_name) - 1] = 0;
+	/* (found again, unless the menus of this map just found them: the
+	first map's, menu_tags.c) */
+	if (port_mods_scans() == mods_globals.scans)
+		port_mods_scan();
+	mods_globals.scans = port_mods_scans();
+	if (port_mods_played())
+	{
+		mods_update(FALSE, TRUE);
+	}
+	/* a host that does not allow mods, or a client told the same, gives
+	the map's tags back before anything draws this map */
+	network_mods_map_loaded();
 
 	return;
 }
@@ -287,14 +299,41 @@ boolean mods_say(
 void mods_reload(
 	void)
 {
+	if (!mods_globals.map_loaded)
+	{
+		return;
+	}
+	if (!mods_globals.enabled)
+	{
+		console_warning("the mods are off until mods_enable true, or the map changes");
+		return;
+	}
+	console_printf(FALSE, "mods: %ld played", port_mods_scan());
+	mods_globals.scans = port_mods_scans();
+	mods_globals.say = TRUE;
+	mods_update(FALSE, FALSE);
+	mods_globals.say = FALSE;
+
 	return;
 }
 
-/* (the Mods menu's OK, menu_functions.c) The mods found again and played
+/* (Settings' Mods OK, menu_functions.c) The mods found again and played
 on the map in their new order, quietly. */
 void mods_apply(
 	void)
 {
+	if (!mods_globals.map_loaded)
+	{
+		port_mods_scan();
+		return;
+	}
+	port_mods_scan();
+	mods_globals.scans = port_mods_scans();
+	if (mods_globals.enabled)
+	{
+		mods_update(FALSE, FALSE);
+	}
+
 	return;
 }
 
@@ -303,7 +342,20 @@ map's back, until the map changes. */
 void mods_enable(
 	boolean enabled)
 {
-	(void)enabled;
+	if (!mods_globals.map_loaded || enabled == mods_globals.enabled)
+	{
+		return;
+	}
+	mods_globals.enabled = enabled;
+	if (enabled)
+	{
+		port_mods_scan();
+		mods_globals.scans = port_mods_scans();
+	}
+	mods_globals.say = TRUE;
+	mods_update(!enabled, FALSE);
+	mods_globals.say = FALSE;
+
 	return;
 }
 
@@ -311,5 +363,36 @@ void mods_enable(
 void mods_list(
 	void)
 {
+	long count = port_mods_count();
+	long index;
+
+	if (!count)
+	{
+		console_printf(FALSE, "mods: none in the mods folder");
+	}
+	/* (in their load order) */
+	for (index = 0; index < count; index++)
+	{
+		char text[512];
+
+		if (port_mods_describe(port_mods_at(index), text, sizeof(text), mods_globals.map_name))
+		{
+			console_printf(FALSE, "%s", text);
+		}
+	}
+	if (mods_globals.map_loaded)
+	{
+		if (mods_globals.enabled)
+		{
+			console_printf(FALSE, "mods: on %s, %ld string lists, %ld bitmaps, %ld sounds and %ld models are theirs (%lu KB kept)",
+				mods_globals.map_name, mods_globals.string_count, mods_globals.bitmap_count, mods_globals.sound_count,
+				mods_globals.model_count, mods_globals.kept_bytes / 1024);
+		}
+		else
+		{
+			console_printf(FALSE, "mods: off on %s until mods_enable true", mods_globals.map_name);
+		}
+	}
+
 	return;
 }
